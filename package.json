@@ -1,0 +1,39 @@
+{
+  "name": "caint",
+  "version": "0.1.0",
+  "description": "Self-hosted IRC client with persistent server-side connection and a Vue web UI",
+  "main": "server/server.js",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently \"npm run server:dev\" \"npm run client:dev\"",
+    "server:dev": "nodemon server/server.js",
+    "server": "node server/server.js",
+    "client:dev": "npm run dev --prefix vue_client",
+    "client:build": "npm run build --prefix vue_client",
+    "client:preview": "npm run preview --prefix vue_client",
+    "install:all": "npm install && npm install --prefix vue_client",
+    "start": "node server/server.js"
+  },
+  "keywords": [
+    "irc",
+    "self-hosted",
+    "vue",
+    "express"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "bcrypt": "^6.0.0",
+    "better-sqlite3": "^11.7.0",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.0",
+    "irc-framework": "^4.13.1",
+    "uuid": "^10.0.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "concurrently": "^9.0.1",
+    "nodemon": "^3.1.7"
+  }
+}

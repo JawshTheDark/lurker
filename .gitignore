@@ -1,0 +1,21 @@
+node_modules/
+.env
+.env.local
+*.log
+npm-debug.log*
+
+# SQLite database files
+data/
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+
+# Build output
+vue_client/dist/
+
+# Editor
+.DS_Store
+.vscode/
+.idea/
+*.swp
