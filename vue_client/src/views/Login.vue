@@ -57,9 +57,9 @@ async function submit() {
   flex-direction: column;
   gap: 12px;
 }
-h1 { margin: 0; color: var(--accent); font-size: 18px; font-weight: 600; }
+h1 { margin: 0; color: var(--accent); font-weight: 600; }
 .subtitle { margin: 0; color: var(--fg-muted); }
 label { display: flex; flex-direction: column; gap: 3px; color: var(--fg-muted); }
-label span { text-transform: uppercase; letter-spacing: 0.04em; font-size: 11px; }
+label span { text-transform: uppercase; letter-spacing: 0.04em; }
 .error { margin: 0; color: var(--bad); }
 </style>

@@ -30,10 +30,12 @@ const placeholder = computed(() => {
   return 'try /help';
 });
 const promptLabel = computed(() => {
-  const t = active.value?.target;
-  if (!t) return '[—]';
-  if (t.startsWith(':server:')) return '[server]';
-  return `[${t}]`;
+  if (!active.value) return '[—]';
+  const state = networks.states[active.value.networkId];
+  const nick = state?.nick;
+  if (!nick) return '[—]';
+  const modes = state?.userModes || '';
+  return modes ? `[${nick}(${modes})]` : `[${nick}]`;
 });
 
 let typingState = null;
@@ -172,7 +174,6 @@ function handleCommand(line, networkId, target) {
   align-items: center;
   gap: 6px;
   padding: 4px 12px;
-  border-top: 1px solid var(--border);
 }
 .prompt {
   color: var(--accent);

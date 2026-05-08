@@ -1,9 +1,5 @@
 <template>
   <div class="members">
-    <header>
-      <span>Members</span>
-      <span class="count">{{ members.length }}</span>
-    </header>
     <ul>
       <li v-for="m in sorted" :key="nickOf(m)" :class="prefixClass(m)">
         <span class="prefix">{{ prefixOf(m) }}</span>
@@ -69,16 +65,6 @@ const sorted = computed(() => [...members.value].sort((a, b) => {
 
 <style scoped>
 .members { display: flex; flex-direction: column; height: 100%; min-height: 0; }
-header {
-  padding: 6px 10px;
-  border-bottom: 1px solid var(--border);
-  color: var(--fg-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  display: flex;
-  justify-content: space-between;
-  flex: 0 0 auto;
-}
 ul {
   list-style: none;
   margin: 0;

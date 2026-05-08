@@ -1,23 +1,34 @@
 <template>
   <div ref="scroller" class="message-list" @scroll="onScroll">
-    <div v-if="buffer?.loadingHistory" class="loading">loading older messages…</div>
-    <div v-else-if="!buffer?.hasMore && messages.length" class="loading">— start of history —</div>
-    <p v-if="!messages.length" class="empty">No messages yet.</p>
-    <div v-for="(m, i) in messages" :key="m.id ?? `live:${i}`" class="line" :class="lineClass(m)">
+    <div v-if="buffer?.loadingHistory" class="notice">loading older messages…</div>
+    <div v-else-if="!buffer?.hasMore && messages.length" class="notice">— start of history —</div>
+    <p v-if="!messages.length" class="notice empty">No messages yet.</p>
+    <div
+      v-for="(m, i) in messages"
+      :key="m.id ?? `live:${i}`"
+      class="line"
+      :class="lineClass(m)"
+    >
       <span class="time">{{ time(m.time) }}</span>
-      <span v-if="m.type === 'message'" class="nick" :class="{ self: m.self }" :style="nickStyle(m)">&lt;{{ m.nick }}&gt;</span>
-      <span v-else-if="m.type === 'action'" class="nick action" :class="{ self: m.self, italic: actionItalic }" :style="nickStyle(m)">* {{ m.nick }}</span>
-      <span v-else-if="m.type === 'notice'" class="nick" :class="{ self: m.self }" :style="nickStyle(m)">-{{ m.nick }}-</span>
-      <span v-else-if="m.type === 'join'" class="meta">→ <NickRef :nick="m.nick" /> joined</span>
-      <span v-else-if="m.type === 'part'" class="meta">← <NickRef :nick="m.nick" /> left{{ m.text ? ' (' + m.text + ')' : '' }}</span>
-      <span v-else-if="m.type === 'quit'" class="meta">⤫ <NickRef :nick="m.nick" /> quit{{ m.text ? ' (' + m.text + ')' : '' }}</span>
-      <span v-else-if="m.type === 'kick'" class="meta">⚠ <NickRef :nick="m.kicked" /> kicked by <NickRef :nick="m.nick" />{{ m.text ? ' (' + m.text + ')' : '' }}</span>
-      <span v-else-if="m.type === 'nick'" class="meta"><NickRef :nick="m.nick" /> is now <NickRef :nick="m.newNick" /></span>
-      <span v-else-if="m.type === 'mode'" class="meta">mode by <NickRef :nick="m.nick" />:</span>
-      <span v-else-if="m.type === 'topic'" class="meta">topic by <NickRef :nick="m.nick" />:</span>
-      <span v-else-if="m.type === 'motd'" class="meta">[motd]</span>
-      <span v-else-if="m.type === 'error'" class="meta error">[error]</span>
-      <span class="text"><template v-for="(seg, j) in textSegments(m)" :key="j"><span v-if="seg.color" :style="{ color: seg.color }">{{ seg.text }}</span><span v-else-if="seg.self" :style="{ color: selfColor }">{{ seg.text }}</span><template v-else>{{ seg.text }}</template></template></span>
+      <span class="prefix" :class="prefixClass(m)" :style="prefixStyle(m)">{{ prefixText(m) }}</span>
+      <span class="body" :class="bodyClass(m)">
+        <template v-if="hasInlineText(m)">
+          <template v-for="(seg, j) in textSegments(m)" :key="j">
+            <span v-if="seg.color" :style="{ color: seg.color }">{{ seg.text }}</span>
+            <span v-else-if="seg.self" :style="{ color: selfColor }">{{ seg.text }}</span>
+            <template v-else>{{ seg.text }}</template>
+          </template>
+        </template>
+        <template v-else-if="m.type === 'join'"><NickRef :nick="m.nick" /> joined</template>
+        <template v-else-if="m.type === 'part'"><NickRef :nick="m.nick" /> left<template v-if="m.text"> ({{ m.text }})</template></template>
+        <template v-else-if="m.type === 'quit'"><NickRef :nick="m.nick" /> quit<template v-if="m.text"> ({{ m.text }})</template></template>
+        <template v-else-if="m.type === 'kick'"><NickRef :nick="m.kicked" /> kicked by <NickRef :nick="m.nick" /><template v-if="m.text"> ({{ m.text }})</template></template>
+        <template v-else-if="m.type === 'nick'"><NickRef :nick="m.nick" /> is now <NickRef :nick="m.newNick" /></template>
+        <template v-else-if="m.type === 'mode'">mode by <NickRef :nick="m.nick" />{{ m.text ? ': ' + m.text : '' }}</template>
+        <template v-else-if="m.type === 'topic'">topic set by <NickRef :nick="m.nick" /><template v-if="m.text">: {{ m.text }}</template></template>
+        <template v-else-if="m.type === 'motd'">{{ m.text }}</template>
+        <template v-else-if="m.type === 'error'">{{ m.text }}</template>
+      </span>
     </div>
   </div>
 </template>
@@ -39,7 +50,7 @@ const nicks = useNickColors();
 
 const actionItalic = computed(() => !!settings.effective('look.action.italic'));
 const selfColor = computed(() => settings.effective('look.nick.self_color'));
-const tsFormat = computed(() => settings.effective('look.timestamp.format'));
+const tsFormat = computed(() => settings.effective('look.buffer.time_format'));
 
 const scroller = ref(null);
 const stickToBottom = ref(true);
@@ -61,7 +72,6 @@ const nickSet = computed(() => {
     const n = typeof mem === 'string' ? mem : mem.nick;
     if (n) set.add(n);
   }
-  // For DM/query buffers (non-channel, non-server), the target itself is a nick.
   if (b.target && !b.target.startsWith('#') && !b.target.startsWith(':server:')) {
     set.add(b.target);
   }
@@ -81,13 +91,64 @@ function lineClass(m) {
   };
 }
 
-function nickStyle(m) {
-  if (m.self) return { color: selfColor.value };
-  const c = nicks.color(m.nick);
-  return c ? { color: c } : null;
+// What goes in column 2. For chat lines this is the nick (right-aligned);
+// for system events it's a tiny indicator glyph (-->, <--, --, !!).
+function prefixText(m) {
+  switch (m.type) {
+    case 'message': return m.nick;
+    case 'action':  return '*';
+    case 'notice':  return `-${m.nick}-`;
+    case 'join':    return '-->';
+    case 'part':
+    case 'quit':
+    case 'kick':    return '<--';
+    case 'nick':
+    case 'mode':
+    case 'topic':
+    case 'motd':    return '--';
+    case 'error':   return '!!';
+    default:        return '';
+  }
+}
+
+function prefixClass(m) {
+  return {
+    nick: m.type === 'message' || m.type === 'notice',
+    'action-marker': m.type === 'action',
+    italic: m.type === 'action' && actionItalic.value,
+    self: m.self,
+    [`p-${m.type}`]: true,
+  };
+}
+
+function prefixStyle(m) {
+  if (m.type === 'message' || m.type === 'notice') {
+    if (m.self) return { color: selfColor.value };
+    const c = nicks.color(m.nick);
+    return c ? { color: c } : null;
+  }
+  return null;
+}
+
+function bodyClass(m) {
+  return {
+    italic: m.type === 'action' && actionItalic.value,
+    'meta-body': m.type !== 'message' && m.type !== 'action' && m.type !== 'notice',
+  };
+}
+
+// True for any line type whose body is just `m.text` and should be split
+// through the nick-coloring helper. Action lines render their author's nick
+// at the start of the body, with `m.text` after.
+function hasInlineText(m) {
+  return m.type === 'message' || m.type === 'notice' || m.type === 'action';
 }
 
 function textSegments(m) {
+  if (m.type === 'action') {
+    // Body is "<nick> <text>" — author's nick then the action text.
+    return nicks.splitText(`${m.nick} ${m.text || ''}`, nickSet.value, selfLower.value);
+  }
   return nicks.splitText(m.text || '', nickSet.value, selfLower.value);
 }
 
@@ -123,20 +184,28 @@ function scrollToBottom() {
   el.scrollTop = el.scrollHeight;
 }
 
+// Watch length and first-id explicitly. pushMessage mutates the array via
+// .push(), which a `watch(messages)` with deep:false would never see — Vue
+// only re-evaluates when a tracked dep changes, and push() doesn't change
+// the array's reference. Reading .length inside the getter creates a
+// dependency on the array length, so live messages now reliably fire here.
 let preloadHeight = 0;
-watch(messages, async (newVal, oldVal) => {
-  const el = scroller.value;
-  const grew = newVal.length > (oldVal?.length || 0);
-  const prepended = newVal.length && oldVal?.length && newVal[0]?.id !== oldVal[0]?.id;
-  if (prepended && el) {
-    preloadHeight = el.scrollHeight;
+watch(
+  [() => messages.value.length, () => messages.value[0]?.id],
+  async ([newLen, newFirstId], [oldLen, oldFirstId]) => {
+    const el = scroller.value;
+    const grew = newLen > (oldLen || 0);
+    const prepended = (oldLen || 0) > 0 && newFirstId !== oldFirstId && newLen > (oldLen || 0);
+    if (prepended && el) {
+      preloadHeight = el.scrollHeight;
+      await nextTick();
+      el.scrollTop = el.scrollHeight - preloadHeight + el.scrollTop;
+      return;
+    }
     await nextTick();
-    el.scrollTop = el.scrollHeight - preloadHeight + el.scrollTop;
-    return;
-  }
-  await nextTick();
-  if (stickToBottom.value && grew) scrollToBottom();
-}, { deep: false });
+    if (stickToBottom.value && grew) scrollToBottom();
+  },
+);
 
 watch(() => networks.activeKey, async () => {
   stickToBottom.value = true;
@@ -146,31 +215,72 @@ watch(() => networks.activeKey, async () => {
 </script>
 
 <style scoped>
+/* WeeChat-style 3-column layout: time | nick | body, with column 2 sized to
+   the widest nick currently visible. Each .line is a subgrid row, so the
+   columns line up across every message in the pane.
+
+   Gaps come from per-cell padding (column-gap is 0) so we can put a thin
+   vertical separator centered between the nick and body columns. */
 .message-list {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
   padding: 4px 12px;
+  display: grid;
+  grid-template-columns: max-content max-content minmax(0, 1fr);
+  grid-auto-rows: min-content;
+  align-content: start;
+  column-gap: 0;
+  row-gap: 0;
   line-height: 1.45;
 }
+
 .line {
   display: grid;
-  grid-template-columns: 44px max-content 1fr;
-  gap: 8px;
-  padding: 0;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
+  align-items: baseline;
 }
 .line:hover { background: var(--bg-soft); }
-.time { color: var(--fg-muted); }
-.loading {
+
+.time {
+  color: var(--fg-muted);
+  padding-right: 1ch;
+}
+
+.prefix {
+  justify-self: end;
+  white-space: nowrap;
+  padding-right: 1ch;
+  border-right: 1px solid var(--border);
+}
+.prefix.italic { font-style: italic; }
+.prefix.action-marker { color: var(--fg-muted); }
+.prefix.p-join  { color: var(--good); }
+.prefix.p-part,
+.prefix.p-quit  { color: var(--fg-muted); }
+.prefix.p-kick,
+.prefix.p-error { color: var(--bad); }
+.prefix.p-nick,
+.prefix.p-mode,
+.prefix.p-topic,
+.prefix.p-motd  { color: var(--fg-muted); }
+
+.body {
+  min-width: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  padding-left: 1ch;
+}
+.body.meta-body { color: var(--fg-muted); font-style: italic; }
+.body.italic { font-style: italic; }
+
+.notice {
+  grid-column: 1 / -1;
   text-align: center;
   color: var(--fg-muted);
-  padding: 6px 0;
   font-style: italic;
+  padding: 6px 0;
+  margin: 0;
 }
-.nick { color: var(--accent); }
-.nick.italic { font-style: italic; }
-.meta { color: var(--fg-muted); font-style: italic; }
-.meta.error { color: var(--bad); }
-.text { white-space: pre-wrap; word-break: break-word; }
-.empty { color: var(--fg-muted); font-style: italic; padding: 8px 0; }
 </style>

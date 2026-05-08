@@ -1,11 +1,10 @@
 <template>
-  <div v-if="segments.length" class="typing">
+  <span v-if="segments.length" class="typing">
     <span class="who">
       <template v-for="(seg, i) in segments" :key="i"><span :style="seg.color ? { color: seg.color } : null">{{ seg.text }}</span></template>
     </span>
     <span class="dots"><span></span><span></span><span></span></span>
-  </div>
-  <div v-else class="typing empty"></div>
+  </span>
 </template>
 
 <script setup>
@@ -48,18 +47,14 @@ const segments = computed(() => {
 
 <style scoped>
 .typing {
-  height: 18px;
-  padding: 0 16px;
-  display: flex;
-  align-items: center;
+  display: inline-flex;
+  align-items: baseline;
   gap: 6px;
-  font-size: 12px;
   color: var(--fg-muted);
   font-style: italic;
 }
-.typing.empty { padding: 0; }
 
-.dots { display: inline-flex; gap: 2px; }
+.dots { display: inline-flex; gap: 2px; align-self: center; }
 .dots span {
   width: 4px;
   height: 4px;

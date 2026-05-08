@@ -53,6 +53,9 @@ function applyEvent(event) {
     case 'mode':
       buffers.pushMessage(event);
       break;
+    case 'usermode':
+      networks.applyUserMode(event);
+      break;
     case 'names':
       buffers.setMembers(event.networkId, event.target, event.members);
       break;

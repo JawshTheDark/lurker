@@ -8,26 +8,18 @@
       </div>
       <BufferList @edit-network="openEditNetwork" />
       <div class="sidebar-foot">
-        <span class="user">{{ auth.user?.username }}</span>
         <RouterLink class="link" to="/settings">settings</RouterLink>
         <button class="link" @click="signOut">sign out</button>
       </div>
     </aside>
 
     <main class="main">
-      <header v-if="active" class="topic">
-        <div>
-          <strong>{{ activeLabel }}</strong>
-          <span v-if="topic" class="topic-text">— {{ topic }}</span>
-        </div>
-        <div class="meta">{{ active.network?.name }} · {{ networkState }}</div>
-      </header>
-      <header v-else class="topic">
-        <div><em>No buffer selected</em></div>
+      <header v-if="active && topic" class="topic">
+        <div class="topic-text">{{ topic }}</div>
       </header>
 
       <MessageList />
-      <TypingIndicator />
+      <StatusBar />
       <MessageInput />
     </main>
 
@@ -57,7 +49,7 @@ import MessageList from '../components/MessageList.vue';
 import MessageInput from '../components/MessageInput.vue';
 import MemberList from '../components/MemberList.vue';
 import NetworkForm from '../components/NetworkForm.vue';
-import TypingIndicator from '../components/TypingIndicator.vue';
+import StatusBar from '../components/StatusBar.vue';
 
 const auth = useAuthStore();
 const networks = useNetworksStore();
@@ -86,17 +78,6 @@ function closeNetworkForm() {
 const active = computed(() => networks.activeBuffer);
 const activeBuf = computed(() => (activeKey.value ? buffers.byKey(activeKey.value) : null));
 const topic = computed(() => activeBuf.value?.topic);
-const activeLabel = computed(() => {
-  const t = active.value?.target;
-  if (!t) return '';
-  if (t.startsWith(':server:')) return '(server console)';
-  return t;
-});
-const networkState = computed(() => {
-  const id = active.value?.networkId;
-  if (id == null) return '';
-  return networks.states[id]?.state || 'unknown';
-});
 
 onMounted(async () => {
   if (!settings.loaded) settings.fetchAll().catch(() => {});
@@ -133,7 +114,6 @@ async function signOut() {
   gap: 8px;
 }
 .logo { color: var(--accent); font-weight: bold; flex: 1; }
-.status { font-size: 12px; }
 .status.on { color: var(--good); }
 .status.off { color: var(--bad); }
 .sidebar-foot {
@@ -143,7 +123,6 @@ async function signOut() {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 12px;
 }
 .user { flex: 1; color: var(--fg-muted); }
 .link {
@@ -163,17 +142,16 @@ async function signOut() {
   min-height: 0;
 }
 .topic {
-  padding: 6px 12px;
+  padding: 0 12px 1ch;
   border-bottom: 1px solid var(--border);
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  font-size: 12px;
 }
 .topic strong { font-weight: 600; }
-.topic-text { color: var(--fg-muted); margin-left: 8px; }
-.meta { font-size: 12px; color: var(--fg-muted); }
+.topic-text { color: var(--fg-muted); }
+.meta { color: var(--fg-muted); }
 
 .members {
   border-left: 1px solid var(--border);

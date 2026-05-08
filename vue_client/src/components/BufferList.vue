@@ -4,7 +4,6 @@
       <div class="net-head" @click="toggleNet(net.id)">
         <span class="indicator" :class="stateClass(net.id)"></span>
         <span class="name">{{ net.name }}</span>
-        <span class="hostnick">{{ networks.states[net.id]?.nick || net.nick }}</span>
         <button
           class="settings"
           title="Edit network"
@@ -155,7 +154,6 @@ function toggleNet(_) {
   cursor: pointer;
 }
 .name { flex: 1; color: var(--fg); }
-.hostnick { color: var(--fg-muted); }
 .indicator {
   width: 7px;
   height: 7px;

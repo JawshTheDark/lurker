@@ -22,6 +22,7 @@
 
   --mono: 'Input Mono', 'Input', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --font-size: 14px;
+  --font-weight: 500;
 }
 
 * { box-sizing: border-box; }
@@ -33,6 +34,12 @@ html, body, #app {
   color: var(--fg);
   font-family: var(--mono);
   font-size: var(--font-size);
+  font-weight: var(--font-weight);
+  /* Try to coax Safari/Chrome into the denser rendering Terminal.app uses;
+     macOS ignores subpixel-antialiased on modern versions but it's harmless. */
+  -webkit-font-smoothing: subpixel-antialiased;
+  -moz-osx-font-smoothing: auto;
+  text-rendering: optimizeLegibility;
 }
 
 /* Whole app behaves like a CLI window — no body-level scroll. */

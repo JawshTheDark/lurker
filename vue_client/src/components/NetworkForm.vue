@@ -165,12 +165,11 @@ async function remove() {
 h2 {
   margin: 0 0 4px;
   color: var(--accent);
-  font-size: 14px;
   text-transform: lowercase;
   font-weight: 600;
 }
 label { display: flex; flex-direction: column; gap: 3px; color: var(--fg-muted); }
-label span { text-transform: uppercase; letter-spacing: 0.04em; font-size: 11px; }
+label span { text-transform: uppercase; letter-spacing: 0.04em; }
 label input { color: var(--fg); }
 .row { display: flex; gap: 8px; align-items: end; }
 .grow { flex: 1; }

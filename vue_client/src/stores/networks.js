@@ -60,5 +60,12 @@ export const useNetworksStore = defineStore('networks', {
         nick: event.nick || existing.nick,
       };
     },
+    applyUserMode(event) {
+      const existing = this.states[event.networkId] || { networkId: event.networkId, channels: [] };
+      this.states[event.networkId] = {
+        ...existing,
+        userModes: typeof event.modes === 'string' ? event.modes : '',
+      };
+    },
   },
 });

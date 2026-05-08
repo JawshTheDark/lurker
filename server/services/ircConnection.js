@@ -22,8 +22,17 @@ export class IrcConnection {
     this.client.requestCap('message-tags');
     this.state = 'disconnected';
     this.channels = new Map();
+    this.userModes = new Set();
     this.disposed = false;
     this.bind();
+  }
+
+  publishUserModes() {
+    this.publish({
+      type: 'usermode',
+      target: this.serverTarget(),
+      modes: [...this.userModes].join(''),
+    });
   }
 
   shouldPersist(event) {
@@ -77,11 +86,26 @@ export class IrcConnection {
   bind() {
     const c = this.client;
 
-    c.on('registered', () => this.setState('connected', { nick: c.user.nick }));
-    c.on('close', () => this.setState('disconnected'));
+    c.on('registered', () => {
+      this.userModes.clear();
+      this.setState('connected', { nick: c.user.nick });
+    });
+    c.on('close', () => {
+      this.userModes.clear();
+      this.setState('disconnected');
+    });
     c.on('socket close', () => this.setState('disconnected'));
     c.on('reconnecting', () => this.setState('reconnecting'));
     c.on('connecting', () => this.setState('connecting'));
+
+    // RPL_UMODEIS arrives when the server sends our current umode (e.g. on
+    // login or in response to /MODE <self>). irc-framework normalises it to
+    // 'user info' with the raw mode string ('+iwx').
+    c.on('user info', (event) => {
+      if (!c.user.nick || event.nick.toLowerCase() !== c.user.nick.toLowerCase()) return;
+      this.userModes = new Set((event.raw_modes || '').replace(/^[+-]/, '').split(''));
+      this.publishUserModes();
+    });
 
     c.on('motd', (event) => {
       this.publish({ type: 'motd', target: this.serverTarget(), text: event.motd });
@@ -173,6 +197,21 @@ export class IrcConnection {
 
     c.on('mode', (event) => {
       const target = event.target;
+
+      // Self user-mode change (e.g. server sets +i on connect, /OPER yields +o, etc.)
+      if (target && c.user.nick && target.toLowerCase() === c.user.nick.toLowerCase()) {
+        let changed = false;
+        for (const m of (event.modes || [])) {
+          if (!m || !m.mode) continue;
+          const sign = m.mode[0];
+          const letter = m.mode.slice(1);
+          if (sign === '+' && !this.userModes.has(letter)) { this.userModes.add(letter); changed = true; }
+          else if (sign === '-' && this.userModes.delete(letter)) { changed = true; }
+        }
+        if (changed) this.publishUserModes();
+        return;
+      }
+
       if (!target || !target.startsWith('#')) return;
       const ch = this.channels.get(target.toLowerCase());
       // Apply per-user prefix modes (+o/-o, +v/-v, etc.) to the member map so
@@ -305,6 +344,7 @@ export class IrcConnection {
       networkId: this.network.id,
       state: this.state,
       nick: this.client.user?.nick || this.network.nick,
+      userModes: [...this.userModes].join(''),
       channels: Array.from(this.channels.values()).map((ch) => ({
         name: ch.name,
         topic: ch.topic,

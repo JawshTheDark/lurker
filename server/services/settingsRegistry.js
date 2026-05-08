@@ -20,6 +20,18 @@ export const REGISTRY = Object.freeze([
     default: 14,
     description: 'Base font size in pixels for the whole UI.',
   },
+  {
+    key: 'look.font.weight',
+    type: 'int',
+    min: 100,
+    max: 900,
+    default: 500,
+    description:
+      'Default font weight (100–900, in CSS steps of 100). ' +
+      "Bumped above 400 to roughly match terminals' visual density on macOS, " +
+      'where browsers no longer apply subpixel antialiasing. ' +
+      'Set 400 if your font lacks a Medium face.',
+  },
 
   // ─── Core palette (Monokai Pro / Brad's iTerm theme) ───────────────────
   {
@@ -155,12 +167,20 @@ export const REGISTRY = Object.freeze([
     description: 'Render /me action messages in italics.',
   },
   {
-    key: 'look.timestamp.format',
+    key: 'look.buffer.time_format',
     type: 'string',
     default: 'HH:mm',
     description:
-      'Format for message timestamps. Tokens: YYYY MM DD HH mm ss. ' +
-      "Empty string hides timestamps.",
+      'Time format for the per-message timestamp column in chat buffers. ' +
+      'Tokens: YYYY MM DD HH mm ss. Empty string hides the column.',
+  },
+  {
+    key: 'look.bar.time_format',
+    type: 'string',
+    default: 'HH:mm',
+    description:
+      'Time format for the clock displayed in the status bar (above the input). ' +
+      'Tokens: YYYY MM DD HH mm ss. Empty string hides the clock.',
   },
 ]);
 
