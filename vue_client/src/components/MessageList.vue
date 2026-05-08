@@ -139,7 +139,7 @@ watch(() => networks.activeKey, async () => {
 }
 .nick { color: var(--accent); }
 .nick.action { font-style: italic; }
-.nick.self { color: var(--good); }
+.nick.self { color: var(--fg); }
 .meta { color: var(--fg-muted); font-style: italic; }
 .meta.error { color: var(--bad); }
 .text { white-space: pre-wrap; word-break: break-word; }

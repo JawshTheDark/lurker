@@ -90,5 +90,5 @@ li {
 li.mode-\@ .prefix, li.mode-\~ .prefix, li.mode-\& .prefix { color: var(--accent); }
 li.mode-\+ .prefix { color: var(--good); }
 .nick { font-family: var(--mono); color: var(--accent); }
-.nick.self { color: var(--good); }
+.nick.self { color: var(--fg); }
 </style>
