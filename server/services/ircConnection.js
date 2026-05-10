@@ -340,10 +340,26 @@ export class IrcConnection {
     });
 
     c.on('irc error', (event) => {
+      // irc-framework maps the IRC ERROR command (sent right before the
+      // server drops you) and ERR_* numerics to this event. `error` is a
+      // short tag like 'irc' / 'no_such_nick' / 'password_mismatch';
+      // `reason` is the human-readable trailing param from the server
+      // ("Closing Link: foo[u@h] (G-Lined)", etc.). The earlier handler
+      // returned the first truthy of (error, reason), so an ERROR command
+      // with both fields collapsed to the literal string "irc" and the
+      // actual disconnect reason was thrown away.
+      const tag = event?.error || 'irc error';
+      const reason = event?.reason;
+      const ctx = [event?.nick, event?.channel, event?.server].filter(Boolean).join(' ');
+      const parts = [tag];
+      if (ctx) parts.push(ctx);
+      if (reason) parts.push(`— ${reason}`);
+      const text = parts.join(' ');
+      console.warn(`[irc:${this.network.id}] ${text}`);
       this.publish({
         type: 'error',
         target: this.serverTarget(),
-        text: event.error || event.reason || 'IRC error',
+        text,
         raw: event,
       });
     });
