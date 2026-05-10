@@ -533,6 +533,21 @@ watch(() => props.pendingScrollId, async (id) => {
 .body.italic { font-style: italic; }
 /* .msg-link styling lives in src/assets/main.css (shared with the topic bar). */
 
+/* Mobile: phone widths can't spare the time column or the 16ch nick floor —
+   either alone would leave 10ch for the body. We drop the time column
+   entirely and let the nick column collapse to the widest currently-visible
+   nick. The breakpoint matches useViewport's, so the column count changes
+   in lockstep with Chat.vue's view dispatch. */
+@media (max-width: 768px) {
+  .message-list {
+    grid-template-columns: minmax(0, max-content) minmax(0, 1fr);
+    padding: 4px 8px;
+  }
+  .time { display: none; }
+  .prefix { padding-right: 0.5ch; }
+  .body { padding-left: 0.5ch; }
+}
+
 .notice {
   grid-column: 1 / -1;
   text-align: center;
