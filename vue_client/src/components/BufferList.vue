@@ -1,9 +1,20 @@
 <template>
   <nav class="buffer-list">
     <div v-for="net in networks.networks" :key="net.id" class="net">
-      <div class="net-head" @click="toggleNet(net.id)">
+      <div
+        class="net-head"
+        :class="{ active: isActive(net.id, serverTarget(net.id)) }"
+        :title="`Open ${net.name} server buffer`"
+        @click="select(net.id, serverTarget(net.id))"
+      >
         <span class="indicator" :class="stateClass(net.id)"></span>
         <span class="name">{{ net.name }}</span>
+        <span
+          v-if="serverHighlights(net.id) > 0"
+          class="badge highlight"
+          :title="`${serverHighlights(net.id)} highlight${serverHighlights(net.id) === 1 ? '' : 's'}`"
+        >●</span>
+        <span v-if="serverUnread(net.id) > 0" class="badge">{{ serverUnread(net.id) }}</span>
         <button
           class="settings"
           title="Edit network"
@@ -18,11 +29,9 @@
             active: isActive(net.id, buf.target),
             unread: buf.unread > 0,
             highlighted: buf.highlighted > 0,
-            server: isServerBuffer(buf),
           }"
           @click="select(net.id, buf.target)"
         >
-          <span class="bullet">{{ bulletFor(buf) }}</span>
           <span class="label" :style="labelStyle(buf)">{{ labelFor(buf) }}</span>
           <span
             v-if="buf.highlighted > 0"
@@ -31,7 +40,6 @@
           >●</span>
           <span v-if="buf.unread > 0" class="badge">{{ buf.unread }}</span>
           <button
-            v-if="!isServerBuffer(buf)"
             class="part"
             :title="closeTitleFor(buf)"
             @click.stop="closeBuffer(net.id, buf.target)"
@@ -73,6 +81,22 @@ function isDmBuffer(buf) {
   return !isServerBuffer(buf) && !buf.target.startsWith('#');
 }
 
+function serverTarget(networkId) {
+  return `:server:${networkId}`;
+}
+
+function serverBuf(networkId) {
+  return buffers.byKey(`${networkId}::${serverTarget(networkId)}`);
+}
+
+function serverUnread(networkId) {
+  return serverBuf(networkId)?.unread || 0;
+}
+
+function serverHighlights(networkId) {
+  return serverBuf(networkId)?.highlighted || 0;
+}
+
 function labelStyle(buf) {
   if (!isDmBuffer(buf)) return null;
   const selfNick = networks.states[buf.networkId]?.nick;
@@ -81,30 +105,25 @@ function labelStyle(buf) {
   return c ? { color: c } : null;
 }
 
-function bulletFor(buf) {
-  if (isServerBuffer(buf)) return '⚙';
-  if (buf.target.startsWith('#')) return '#';
-  return '@';
-}
-
 function labelFor(buf) {
-  if (isServerBuffer(buf)) return 'server';
-  return buf.target.replace(/^#/, '');
+  return buf.target;
 }
 
 function bufferOrder(buf) {
-  if (isServerBuffer(buf)) return 0;
-  if (buf.target.startsWith('#')) return 1;
-  return 2;
+  if (buf.target.startsWith('#')) return 0;
+  return 1;
 }
 
 function netBuffers(networkId) {
-  return buffers.forNetwork(networkId).sort((a, b) => {
-    const oa = bufferOrder(a);
-    const ob = bufferOrder(b);
-    if (oa !== ob) return oa - ob;
-    return a.target.localeCompare(b.target);
-  });
+  return buffers
+    .forNetwork(networkId)
+    .filter((b) => !isServerBuffer(b))
+    .sort((a, b) => {
+      const oa = bufferOrder(a);
+      const ob = bufferOrder(b);
+      if (oa !== ob) return oa - ob;
+      return a.target.localeCompare(b.target);
+    });
 }
 
 function select(networkId, target) {
@@ -137,10 +156,6 @@ function closeBuffer(networkId, target) {
 function closeTitleFor(buf) {
   return buf.target.startsWith('#') ? 'Leave and close channel' : 'Close conversation';
 }
-
-function toggleNet(_) {
-  // Reserved for collapse/expand later.
-}
 </script>
 
 <style scoped>
@@ -161,6 +176,12 @@ function toggleNet(_) {
   text-transform: uppercase;
   letter-spacing: 0.04em;
   cursor: pointer;
+  border-left: 2px solid transparent;
+}
+.net-head:hover { background: var(--bg-soft); }
+.net-head.active {
+  background: var(--bg-soft);
+  border-left-color: var(--accent);
 }
 .name { flex: 1; color: var(--fg); }
 .indicator {
@@ -179,9 +200,34 @@ function toggleNet(_) {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 2px 10px;
+  padding: 2px 10px 2px 24px;
   cursor: pointer;
   border-left: 2px solid transparent;
+  position: relative;
+}
+/* Tree guide: top-half vertical + horizontal arm. The arm meets the row's
+   vertical centerline and stops short of the label, producing ├─ / └─. */
+.channels li::before {
+  content: "";
+  position: absolute;
+  left: 12px;
+  top: 0;
+  height: 50%;
+  width: 8px;
+  border-left: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  pointer-events: none;
+}
+/* Bottom-half vertical: only when there's a sibling below — turns └─ into ├─. */
+.channels li:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  bottom: 0;
+  width: 0;
+  border-left: 1px solid var(--border);
+  pointer-events: none;
 }
 .channels li:hover { background: var(--bg-soft); }
 .channels li.active {
@@ -190,8 +236,6 @@ function toggleNet(_) {
 }
 .channels li.unread .label { font-weight: 600; color: var(--fg); }
 .channels li.highlighted .label { color: var(--warn); }
-.channels li.server .label { color: var(--fg-muted); font-style: italic; }
-.bullet { color: var(--fg-muted); width: 10px; text-align: center; }
 .label {
   flex: 1;
   white-space: nowrap;
