@@ -198,6 +198,20 @@
                     @change="onCommit(opt.key, $event.target.value.split('\n').map(s => s.trim()).filter(Boolean))"
                     rows="6"
                   ></textarea>
+                  <span v-else-if="opt.type === 'secret'" class="secret-edit">
+                    <input
+                      :type="revealedSecrets.has(opt.key) ? 'text' : 'password'"
+                      autocomplete="off"
+                      spellcheck="false"
+                      :value="settings.effective(opt.key)"
+                      @change="onCommit(opt.key, $event.target.value)"
+                    />
+                    <button
+                      type="button"
+                      class="link reveal"
+                      @click="toggleSecret(opt.key)"
+                    >{{ revealedSecrets.has(opt.key) ? 'hide' : 'show' }}</button>
+                  </span>
                   <input
                     v-else
                     type="text"
@@ -372,6 +386,7 @@ import { usePushSubscriptionsStore } from '../stores/pushSubscriptions.js';
 import { useAuthStore } from '../stores/auth.js';
 import { useAdminStore } from '../stores/admin.js';
 import { useSocket } from '../composables/useSocket.js';
+import { formatRelative } from '../utils/timestamp.js';
 import {
   isSupported as isPushSupported,
   registerSW,
@@ -390,6 +405,12 @@ const adminStore = useAdminStore();
 const router = useRouter();
 
 const isAdmin = computed(() => auth.user?.role === 'admin');
+const revealedSecrets = ref(new Set());
+function toggleSecret(key) {
+  const s = new Set(revealedSecrets.value);
+  if (s.has(key)) s.delete(key); else s.add(key);
+  revealedSecrets.value = s;
+}
 const adminError = ref('');
 const adminBusy = ref(false);
 const lastCreatedInviteUrl = ref('');
@@ -668,26 +689,6 @@ function formatUA(ua) {
   return os ? `${browser} on ${os}` : browser;
 }
 
-function formatRelative(iso) {
-  if (!iso) return '';
-  // SQLite's `datetime('now')` returns 'YYYY-MM-DD HH:MM:SS' with no TZ
-  // marker; Date.parse() then treats it as local time and reports a future
-  // moment for users east of UTC offset zero. Treat unmarked timestamps as UTC.
-  const hasTz = /[zZ]|[+-]\d{2}:?\d{2}$/.test(iso);
-  const normalized = hasTz ? iso : iso.replace(' ', 'T') + 'Z';
-  const t = Date.parse(normalized);
-  if (!t) return iso;
-  const diff = Date.now() - t;
-  const sec = Math.max(0, Math.round(diff / 1000));
-  if (sec < 60) return `${sec}s ago`;
-  const min = Math.round(sec / 60);
-  if (min < 60) return `${min}m ago`;
-  const hr = Math.round(min / 60);
-  if (hr < 24) return `${hr}h ago`;
-  const day = Math.round(hr / 24);
-  return `${day}d ago`;
-}
-
 async function onRuleField(rule, field, value) {
   rulesError.value = '';
   try {
@@ -727,11 +728,12 @@ async function onRuleAdd() {
 }
 
 // Category / group titles for the sidebar TOC and subheadings.
-const CATEGORY_ORDER = ['away', 'chat', 'appearance'];
+const CATEGORY_ORDER = ['uploads', 'away', 'chat', 'appearance'];
 const CATEGORY_TITLES = {
   appearance: 'appearance',
   chat: 'chat',
   away: 'away',
+  uploads: 'uploads',
 };
 const GROUP_TITLES = {
   fonts: 'fonts',
@@ -742,6 +744,10 @@ const GROUP_TITLES = {
   misc: 'misc',
   'smart-filter': 'smart filter',
   'auto-away': 'auto-away',
+  provider: 'provider',
+  pipeline: 'image pipeline',
+  catbox: 'catbox.moe',
+  hoarder: 'hoarder',
 };
 
 const filtersActive = computed(() => !!search.value.trim() || modifiedOnly.value);
@@ -1021,6 +1027,9 @@ async function onResetAll() {
 }
 .editor .bool { display: flex; align-items: center; gap: 6px; cursor: pointer; }
 .editor .color-edit { display: flex; align-items: center; gap: 8px; }
+.editor .secret-edit { display: flex; align-items: center; gap: 8px; }
+.editor .secret-edit input { flex: 1; }
+.editor .secret-edit .reveal { white-space: nowrap; }
 .editor .swatch {
   width: 14px;
   height: 14px;

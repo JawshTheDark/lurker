@@ -233,6 +233,29 @@ function migrate() {
       total_count INTEGER NOT NULL DEFAULT 0,
       FOREIGN KEY (network_id) REFERENCES networks(id) ON DELETE CASCADE
     );
+
+    -- Per-user log of every successful image upload. Thumbnail is a 128² JPEG
+    -- generated at upload time and served back via /api/uploads/:id/thumb,
+    -- so the recent-uploads modal stays cheap even if the original lives on a
+    -- third-party host. provider is the upload destination ('hoarder', 'catbox',
+    -- 'x0') so the modal can label rows and so we know whether to attempt any
+    -- provider-side delete (none today; tracked as a follow-up).
+    CREATE TABLE IF NOT EXISTS upload_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      provider TEXT NOT NULL,
+      url TEXT NOT NULL,
+      filename TEXT,
+      mime TEXT NOT NULL,
+      byte_size INTEGER NOT NULL,
+      width INTEGER,
+      height INTEGER,
+      thumbnail BLOB NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_upload_history_user
+      ON upload_history(user_id, id DESC);
   `);
 }
 

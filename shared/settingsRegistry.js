@@ -377,6 +377,95 @@ export const REGISTRY = Object.freeze([
       '" since YYYY-MM-DD HH:MM:SS±ZZZZ", so the default produces ' +
       '"afk since 2026-05-09 15:30:00-0500".',
   },
+
+  // ─── Image uploads ────────────────────────────────────────────────────
+  {
+    key: 'uploads.provider',
+    category: 'uploads',
+    group: 'provider',
+    type: 'enum',
+    choices: ['x0', 'catbox', 'hoarder'],
+    default: 'x0',
+    description:
+      'Where pasted/picked images are uploaded. x0.at and catbox.moe are ' +
+      'anonymous public hosts. hoarder uploads to your own self-hosted ' +
+      'Hoarder instance using the URL + API key configured below.',
+  },
+  {
+    key: 'uploads.image.max_dimension',
+    category: 'uploads',
+    group: 'pipeline',
+    type: 'int',
+    min: 256,
+    max: 8192,
+    default: 2048,
+    description:
+      'Longest-edge limit for static images before they are re-encoded as JPEG. ' +
+      'Animated GIF/WebP/APNG bypass this and are uploaded verbatim.',
+  },
+  {
+    key: 'uploads.image.quality',
+    category: 'uploads',
+    group: 'pipeline',
+    type: 'int',
+    min: 30,
+    max: 100,
+    default: 85,
+    description: 'JPEG quality for the re-encode pass on static images (30–100).',
+  },
+  {
+    key: 'uploads.image.max_upload_mb',
+    category: 'uploads',
+    group: 'pipeline',
+    type: 'int',
+    min: 1,
+    max: 200,
+    default: 25,
+    description:
+      'Hard cap on the raw upload size in megabytes. Anything larger is ' +
+      'rejected before the optimization pipeline runs.',
+  },
+  {
+    key: 'uploads.paste.enabled',
+    category: 'uploads',
+    group: 'pipeline',
+    type: 'bool',
+    default: true,
+    description:
+      'When enabled, pasting an image into the input area uploads it and ' +
+      'inserts the resulting URL. Disable to fall back to plain text paste.',
+  },
+  {
+    key: 'uploads.catbox.userhash',
+    category: 'uploads',
+    group: 'catbox',
+    type: 'secret',
+    default: '',
+    description:
+      'Optional catbox.moe account hash. Uploads made with a userhash can ' +
+      'be managed from your catbox account; without one they are anonymous.',
+  },
+  {
+    key: 'uploads.hoarder.url',
+    category: 'uploads',
+    group: 'hoarder',
+    type: 'string',
+    default: '',
+    description:
+      'Base URL of your Hoarder instance (e.g. https://upload.example.com). ' +
+      'Only used when the upload provider is set to hoarder.',
+  },
+  {
+    key: 'uploads.hoarder.api_key',
+    category: 'uploads',
+    group: 'hoarder',
+    type: 'secret',
+    default: '',
+    description:
+      'API key for your Hoarder instance. Generate one on the Hoarder server ' +
+      'with `node scripts/gen-api-key.js` and add it to ' +
+      'web.auth.api_keys in its config.json.',
+  },
 ]);
 
 const BY_KEY = new Map(REGISTRY.map((opt) => [opt.key, opt]));

@@ -1,5 +1,13 @@
 <template>
-  <form ref="formEl" class="input" @submit.prevent="submit">
+  <form
+    ref="formEl"
+    class="input"
+    :class="{ 'drag-over': dragOver }"
+    @submit.prevent="submit"
+    @dragover.prevent="onDragOver"
+    @dragleave.prevent="onDragLeave"
+    @drop.prevent="onDrop"
+  >
     <span class="prompt">{{ promptLabel }}<span v-if="awayLabel" class="away">&nbsp;{{ awayLabel }}</span>&nbsp;&gt;</span>
     <input
       ref="inputEl"
@@ -9,8 +17,23 @@
       autocomplete="off"
       spellcheck="false"
       @keydown="onKeydown"
+      @paste="onPaste"
       @blur="resetCompletion"
     />
+    <input
+      ref="fileInputEl"
+      type="file"
+      accept="image/*"
+      class="file-hidden"
+      @change="onFileSelected"
+    />
+    <button
+      type="button"
+      class="upload-btn"
+      :disabled="!sendable"
+      title="upload image"
+      @click="onPickFile"
+    ><i class="fa-solid fa-paperclip"></i></button>
     <NickPicker
       :open="pickerOpen"
       :query="pickerQuery"
@@ -24,19 +47,25 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onBeforeUnmount } from 'vue';
+import { ref, computed, watch, onBeforeUnmount, onMounted } from 'vue';
 import { useNetworksStore } from '../stores/networks.js';
 import { useBuffersStore } from '../stores/buffers.js';
 import { useInputHistoryStore } from '../stores/inputHistory.js';
+import { useSettingsStore } from '../stores/settings.js';
+import { useUploadsStore, onInsertUrl } from '../stores/uploads.js';
 import { socketSend } from '../composables/useSocket.js';
 import NickPicker from './NickPicker.vue';
 
 const networks = useNetworksStore();
 const buffers = useBuffersStore();
 const inputHistory = useInputHistoryStore();
+const settings = useSettingsStore();
+const uploads = useUploadsStore();
 const text = ref('');
 const inputEl = ref(null);
 const formEl = ref(null);
+const fileInputEl = ref(null);
+const dragOver = ref(false);
 const pickerOpen = ref(false);
 const pickerQuery = ref('');
 let pickerTokenStart = -1;
@@ -404,7 +433,87 @@ watch(active, (newActive, oldActive) => {
 
 onBeforeUnmount(() => {
   if (active.value) endTypingTo(active.value);
+  if (unsubInsert) { unsubInsert(); unsubInsert = null; }
 });
+
+function insertUrlAtCaret(url) {
+  const el = inputEl.value;
+  const current = text.value;
+  if (!el) {
+    text.value = current ? `${current} ${url}` : url;
+    return;
+  }
+  const start = el.selectionStart ?? current.length;
+  const end = el.selectionEnd ?? current.length;
+  const before = current.slice(0, start);
+  const after = current.slice(end);
+  const padLeft = before.length > 0 && !/\s$/.test(before) ? ' ' : '';
+  const padRight = after.length > 0 && !/^\s/.test(after) ? ' ' : '';
+  const inserted = `${padLeft}${url}${padRight}`;
+  cycling = true;
+  text.value = `${before}${inserted}${after}`;
+  cycling = false;
+  Promise.resolve().then(() => {
+    const e2 = inputEl.value;
+    if (!e2) return;
+    const caret = before.length + inserted.length;
+    e2.focus();
+    e2.setSelectionRange(caret, caret);
+  });
+}
+
+let unsubInsert = null;
+onMounted(() => {
+  unsubInsert = onInsertUrl(insertUrlAtCaret);
+});
+
+function blobFromClipboardItem(item) {
+  if (!item || !item.type || !item.type.startsWith('image/')) return null;
+  const file = item.getAsFile();
+  return file || null;
+}
+
+function onPaste(e) {
+  if (!sendable.value) return;
+  if (settings.effective('uploads.paste.enabled') === false) return;
+  const items = e.clipboardData?.items;
+  if (!items) return;
+  for (const item of items) {
+    const file = blobFromClipboardItem(item);
+    if (file) {
+      e.preventDefault();
+      uploads.upload(file).catch(() => { /* failure visible via status bar */ });
+      return;
+    }
+  }
+}
+
+function onPickFile() {
+  fileInputEl.value?.click();
+}
+
+function onFileSelected(e) {
+  const file = e.target.files?.[0];
+  e.target.value = '';
+  if (!file || !sendable.value) return;
+  uploads.upload(file, file.name).catch(() => {});
+}
+
+function onDragOver(e) {
+  if (!sendable.value) return;
+  if (!Array.from(e.dataTransfer?.types || []).includes('Files')) return;
+  dragOver.value = true;
+}
+function onDragLeave() {
+  dragOver.value = false;
+}
+function onDrop(e) {
+  dragOver.value = false;
+  if (!sendable.value) return;
+  const file = e.dataTransfer?.files?.[0];
+  if (!file || !file.type.startsWith('image/')) return;
+  uploads.upload(file, file.name).catch(() => {});
+}
 
 defineExpose({
   focus: () => inputEl.value?.focus(),
@@ -602,12 +711,27 @@ function handleCommand(line, networkId, target) {
   gap: 1ch;
   padding: 8px 12px;
 }
+.input.drag-over {
+  outline: 1px dashed var(--accent);
+  outline-offset: -4px;
+}
 .prompt {
   color: var(--accent);
   white-space: pre;
   user-select: none;
 }
 .prompt .away { color: var(--warn); }
+.upload-btn {
+  background: none;
+  border: none;
+  color: var(--fg-muted);
+  cursor: pointer;
+  padding: 0 2px;
+  font-size: inherit;
+}
+.upload-btn:hover:not(:disabled) { color: var(--accent); }
+.upload-btn:disabled { opacity: 0.4; cursor: default; }
+.file-hidden { display: none; }
 input {
   flex: 1;
   min-width: 0;

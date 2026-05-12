@@ -9,6 +9,9 @@
         <button class="icon" title="Highlights" @click="showHighlights = true">
           <i class="fa-regular fa-bell"></i>
         </button>
+        <button class="icon" title="Recent uploads" @click="showUploads = true">
+          <i class="fa-solid fa-paperclip"></i>
+        </button>
         <RouterLink class="icon" to="/settings" title="Settings">
           <i class="fa-solid fa-gear"></i>
         </RouterLink>
@@ -80,6 +83,10 @@
       :network-id="active.networkId"
       @close="showChannelList = false"
     />
+    <RecentUploadsModal
+      v-if="showUploads"
+      @close="showUploads = false"
+    />
   </div>
 </template>
 
@@ -98,6 +105,7 @@ import StatusBar from '../components/StatusBar.vue';
 import HighlightsModal from '../components/HighlightsModal.vue';
 import TopicModal from '../components/TopicModal.vue';
 import ChannelListModal from '../components/ChannelListModal.vue';
+import RecentUploadsModal from '../components/RecentUploadsModal.vue';
 
 const buffers = useBuffersStore();
 const { connected } = useSocket();
@@ -115,6 +123,7 @@ const screen = ref('list');
 const showHighlights = ref(false);
 const showTopic = ref(false);
 const showChannelList = ref(false);
+const showUploads = ref(false);
 const pendingScrollId = ref(null);
 const messageInputRef = ref(null);
 

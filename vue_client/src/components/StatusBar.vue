@@ -4,6 +4,7 @@
     <span class="seg buffer"><template v-if="targetLabel"><span v-if="networkLabel && !compact" class="net">{{ networkLabel }}/</span><span class="name">{{ targetLabel }}</span></template><span v-else class="name">{{ networkLabel }}</span><span v-if="modeSuffix && !compact" class="modes">{{ modeSuffix }}</span></span>
     <span v-if="memberCount != null && !compact" class="seg count"><span class="num">{{ memberCount }}</span> {{ memberCount === 1 ? 'user' : 'users' }}</span>
     <span v-if="lagLabel && !compact" class="seg lag">{{ lagLabel }}</span>
+    <span v-if="uploadLabel" class="seg upload" :class="{ failed: uploads.failedAt }">{{ uploadLabel }}</span>
     <button v-if="newBelow > 0 && !compact" class="seg jump" type="button" @click="onJumpToBottom">{{ newBelow }} new ↓</button>
     <span v-if="typingSegments.length" class="seg typing">Typing: <template v-for="(seg, i) in typingSegments" :key="i"><span :style="seg.color ? { color: seg.color } : null">{{ seg.text }}</span></template></span>
   </div>
@@ -14,6 +15,7 @@ import { computed, ref, onMounted, onBeforeUnmount } from 'vue';
 import { useNetworksStore } from '../stores/networks.js';
 import { useBuffersStore } from '../stores/buffers.js';
 import { useSettingsStore } from '../stores/settings.js';
+import { useUploadsStore } from '../stores/uploads.js';
 import { useNickColors } from '../composables/useNickColors.js';
 import { useScrollState, requestScrollToBottom } from '../composables/useScrollState.js';
 import { formatTimestamp } from '../utils/timestamp.js';
@@ -28,7 +30,16 @@ defineProps({
 const networks = useNetworksStore();
 const buffers = useBuffersStore();
 const settings = useSettingsStore();
+const uploads = useUploadsStore();
 const nickColors = useNickColors();
+
+const uploadLabel = computed(() => {
+  if (uploads.current) return `Uploading: ${uploads.current.progress}%`;
+  if (uploads.failedAt) {
+    return uploads.failedMessage ? `Upload failed — ${uploads.failedMessage}` : 'Upload failed';
+  }
+  return '';
+});
 const { newBelow } = useScrollState();
 
 const active = computed(() => networks.activeBuffer);
@@ -150,6 +161,8 @@ function onJumpToBottom() {
 .seg.count { color: var(--fg-muted); }
 .seg.count .num { color: var(--accent); }
 .seg.lag { color: var(--fg-muted); }
+.seg.upload { color: var(--accent); }
+.seg.upload.failed { color: var(--bad); }
 .seg.jump {
   background: none;
   border: none;

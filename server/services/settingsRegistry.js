@@ -23,6 +23,7 @@ export function validate(key, raw) {
       return { ok: true, value: n };
     }
     case 'string':
+    case 'secret':
     case 'color': {
       if (typeof raw !== 'string') return { ok: false, error: `${key} must be a string` };
       return { ok: true, value: raw };

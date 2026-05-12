@@ -9,6 +9,7 @@
       <div class="sidebar-foot">
         <RouterLink class="link" to="/settings" title="Settings"><i class="fa-solid fa-gear"></i></RouterLink>
         <button class="link" @click="showHighlights = true" title="Highlights"><i class="fa-regular fa-bell"></i></button>
+        <button class="link" @click="showUploads = true" title="Recent uploads"><i class="fa-solid fa-paperclip"></i></button>
         <button class="link" @click="openAddNetwork" title="Add network"><i class="fa-solid fa-plus"></i></button>
       </div>
     </aside>
@@ -65,6 +66,10 @@
       :network-id="active.networkId"
       @close="showChannelList = false"
     />
+    <RecentUploadsModal
+      v-if="showUploads"
+      @close="showUploads = false"
+    />
   </div>
 </template>
 
@@ -84,6 +89,7 @@ import HighlightsModal from '../components/HighlightsModal.vue';
 import LinkedText from '../components/LinkedText.vue';
 import TopicModal from '../components/TopicModal.vue';
 import ChannelListModal from '../components/ChannelListModal.vue';
+import RecentUploadsModal from '../components/RecentUploadsModal.vue';
 
 const buffers = useBuffersStore();
 const { connected } = useSocket();
@@ -94,6 +100,7 @@ const editingNetwork = ref(null);
 const showHighlights = ref(false);
 const showTopic = ref(false);
 const showChannelList = ref(false);
+const showUploads = ref(false);
 const pendingScrollId = ref(null);
 const messageInputRef = ref(null);
 
@@ -176,21 +183,21 @@ useChatBootstrap({ onJump: onJumpToMessage });
 }
 .logo { color: var(--accent); font-weight: bold; }
 .status.off { color: var(--bad); }
-/* Three-column grid pins the cog flush-left, bell perfectly centered, and
-   plus flush-right regardless of glyph width. matches the input bar's
-   single-line height (8px padding + 1lh content + 1px border) so the
-   sidebar-foot's top border lines up with the input bar's top border. */
+/* Pin the cog (settings) flush-left and the plus (add network) flush-right;
+   the middle icons distribute evenly between them. Flex with space-between
+   scales to any number of middle icons without re-tuning the column count.
+   Matches the input bar's single-line height (8px padding + 1lh content +
+   1px border) so the sidebar-foot's top border lines up with the input
+   bar's top border. */
 .sidebar-foot {
   margin-top: auto;
   padding: 8px 12px;
   border-top: 1px solid var(--border);
-  display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
+  display: flex;
   align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
-.sidebar-foot > :nth-child(1) { justify-self: start; }
-.sidebar-foot > :nth-child(2) { justify-self: center; }
-.sidebar-foot > :nth-child(3) { justify-self: end; }
 .link {
   background: none;
   border: none;

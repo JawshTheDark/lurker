@@ -14,6 +14,35 @@ export function formatTimestamp(iso, fmt) {
   return fmt.replace(TOKEN_RE, (t) => tokens[t]);
 }
 
+// SQLite's `datetime('now')` produces 'YYYY-MM-DD HH:MM:SS' with no timezone
+// marker, so Date.parse() interprets it as local time on most browsers (UTC
+// on a few) — which means for users east of UTC the rendered relative time
+// is wrong, and clamps to "0s ago" once Math.max(0, …) bottoms out. We
+// detect the absence of a TZ designator and explicitly mark these as UTC.
+export function parseServerTimestamp(iso) {
+  if (!iso) return NaN;
+  const hasTz = /[zZ]|[+-]\d{2}:?\d{2}$/.test(iso);
+  const normalized = hasTz ? iso : iso.replace(' ', 'T') + 'Z';
+  return Date.parse(normalized);
+}
+
+// Render a server timestamp as a human relative phrase. Past renders as
+// "Xs ago", future as "in Xs". Returns the raw string back if it doesn't
+// parse, so callers can use it as a title/tooltip fallback.
+export function formatRelative(iso) {
+  if (!iso) return '';
+  const t = parseServerTimestamp(iso);
+  if (!Number.isFinite(t)) return iso;
+  const diffMs = t - Date.now();
+  const past = diffMs <= 0;
+  const sec = Math.max(0, Math.round(Math.abs(diffMs) / 1000));
+  const label = sec < 60 ? `${sec}s`
+    : sec < 3600 ? `${Math.round(sec / 60)}m`
+    : sec < 86400 ? `${Math.round(sec / 3600)}h`
+    : `${Math.round(sec / 86400)}d`;
+  return past ? `${label} ago` : `in ${label}`;
+}
+
 // Format an interval between two ISO timestamps for the back-from-away
 // divider ("back (gone 1h 23m)"). Sub-minute durations round up to "1m"
 // instead of showing "0m" since the divider would otherwise look broken on
