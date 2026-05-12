@@ -246,7 +246,10 @@
                 {{ u.username }}
                 <span v-if="u.role === 'admin'" class="role-tag">admin</span>
               </span>
-              <span class="last-seen">joined {{ formatRelative(u.createdAt) }}</span>
+              <span class="last-seen" :title="`joined ${u.createdAt}${u.lastSeenAt ? ` · last seen ${u.lastSeenAt}` : ''}`">
+                <template v-if="u.lastSeenAt">last seen {{ formatRelative(u.lastSeenAt) }}</template>
+                <template v-else>joined {{ formatRelative(u.createdAt) }}</template>
+              </span>
               <button
                 class="link danger"
                 :disabled="u.id === auth.user?.id || adminBusy"

@@ -55,6 +55,7 @@ router.get('/users', (req, res) => {
       username: u.username,
       role: u.role,
       createdAt: u.created_at,
+      lastSeenAt: u.last_seen_at,
     })),
   });
 });

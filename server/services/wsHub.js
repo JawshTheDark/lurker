@@ -6,7 +6,7 @@ import settingsService from './settingsService.js';
 import highlightRulesService from './highlightRulesService.js';
 import * as pushService from './pushService.js';
 import { findSession } from '../db/sessions.js';
-import { findUserById } from '../db/users.js';
+import { findUserById, touchUserLastSeen } from '../db/users.js';
 import { listMessages, listBufferTargets, listSpeakers, countNewer, countHighlightsNewer } from '../db/messages.js';
 import { listReadStateForUser, setReadState } from '../db/bufferReads.js';
 import { addEntry as addInputHistory, listRecent as listRecentInputHistory } from '../db/inputHistory.js';
@@ -302,6 +302,7 @@ export function attachWsHub(httpServer, sessionSecret) {
     // current "last 50 per buffer" behavior. Hostname is irrelevant — URL
     // wants a base for relative parsing.
     const initialSinceId = parseSinceParam(req.url);
+    touchUserLastSeen(user.id);
     wss.handleUpgrade(req, socket, head, (ws) => {
       ws.userId = user.id;
       ws.sinceId = initialSinceId;

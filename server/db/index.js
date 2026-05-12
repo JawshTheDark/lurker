@@ -283,6 +283,7 @@ ensureColumn('messages', 'extra', 'TEXT');
 ensureColumn('networks', 'sasl_account', 'TEXT');
 ensureColumn('networks', 'sasl_password', 'TEXT');
 ensureColumn('users', 'password_hash', 'TEXT');
+ensureColumn('users', 'last_seen_at', 'TEXT');
 
 // Roles: 'admin' can manage invites and other users; 'user' is everyone else.
 // On a fresh install the first user (created via /api/auth/setup) is promoted

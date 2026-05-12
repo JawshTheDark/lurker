@@ -1,5 +1,5 @@
 import { findSession } from '../db/sessions.js';
-import { findUserById } from '../db/users.js';
+import { findUserById, touchUserLastSeen } from '../db/users.js';
 
 export const SESSION_COOKIE = 'lurker_session';
 
@@ -30,6 +30,7 @@ export function requireAuth(req, res, next) {
   if (!ctx) return res.status(401).json({ error: 'unauthorized' });
   req.user = ctx.user;
   req.session = ctx.session;
+  touchUserLastSeen(ctx.user.id);
   next();
 }
 
