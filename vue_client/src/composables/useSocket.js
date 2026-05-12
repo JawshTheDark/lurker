@@ -144,17 +144,21 @@ function applyEvent(event) {
       break;
     case 'chanlist-start': {
       const chanlist = useChanlistStore();
-      chanlist.start(event.networkId);
+      chanlist.applyStart(event.networkId);
       break;
     }
-    case 'chanlist-batch': {
+    case 'chanlist-progress': {
       const chanlist = useChanlistStore();
-      chanlist.addBatch(event.networkId, event.channels || []);
+      chanlist.applyProgress(event.networkId, event.total);
       break;
     }
     case 'chanlist-end': {
       const chanlist = useChanlistStore();
-      chanlist.end(event.networkId);
+      chanlist.applyEnd(event.networkId, event.total);
+      // Re-run the current search so the just-cached rows replace whatever
+      // was on screen. The modal listens for inProgress=false and triggers
+      // its own refresh; rather than couple the two paths, we let the modal
+      // own the resync since it knows the current filter + scroll position.
       break;
     }
   }
@@ -256,6 +260,16 @@ function handleMessage(raw) {
   if (payload.kind === 'input-history-added') {
     const inputHistory = useInputHistoryStore();
     inputHistory.add(payload.networkId, payload.target, payload.text);
+    return;
+  }
+  if (payload.kind === 'chanlist-state') {
+    const chanlist = useChanlistStore();
+    chanlist.applyState(payload);
+    return;
+  }
+  if (payload.kind === 'chanlist-result') {
+    const chanlist = useChanlistStore();
+    chanlist.applyResult(payload);
     return;
   }
   if (payload.kind === 'buffer-reopened') {

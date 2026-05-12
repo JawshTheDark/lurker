@@ -209,6 +209,30 @@ function migrate() {
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     );
     CREATE INDEX IF NOT EXISTS idx_webauthn_user ON webauthn_credentials(user_id);
+
+    -- Per-network cache of /LIST results. Populated by ircConnection on each
+    -- explicit refresh, then served as paginated search slices via wsHub.
+    -- COLLATE NOCASE on name handles ASCII channel-name search; topic uses
+    -- LIKE COLLATE NOCASE without an index (≤low thousands of rows per
+    -- network after the network_id filter, scan is fine).
+    CREATE TABLE IF NOT EXISTS chanlist_channels (
+      network_id INTEGER NOT NULL,
+      name TEXT NOT NULL COLLATE NOCASE,
+      topic TEXT,
+      num_users INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (network_id, name),
+      FOREIGN KEY (network_id) REFERENCES networks(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_chanlist_users
+      ON chanlist_channels(network_id, num_users DESC);
+
+    CREATE TABLE IF NOT EXISTS chanlist_meta (
+      network_id INTEGER PRIMARY KEY,
+      fetched_at TEXT,
+      in_progress INTEGER NOT NULL DEFAULT 0,
+      total_count INTEGER NOT NULL DEFAULT 0,
+      FOREIGN KEY (network_id) REFERENCES networks(id) ON DELETE CASCADE
+    );
   `);
 }
 

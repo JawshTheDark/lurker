@@ -17,6 +17,7 @@ import {
   closedKeySetForUser,
 } from '../db/closedBuffers.js';
 import { upsertChannel, ownsNetwork } from '../db/networks.js';
+import * as chanlistDb from '../db/chanlist.js';
 import { getUserSettings } from '../db/settings.js';
 import { defaultsAsObject } from './settingsRegistry.js';
 import { SESSION_COOKIE } from '../middleware/auth.js';
@@ -91,6 +92,12 @@ export function attachWsHub(httpServer, sessionSecret) {
   // Per-user pending auto-away timers. Set when a user goes from 1→0 sockets;
   // cleared on 0→1 or when the timer fires.
   const autoAwayTimers = new Map();
+  // In-flight /LIST refreshes, keyed by network_id. We belt-and-suspender the
+  // chanlist_meta.in_progress column with this in-memory set so a duplicate
+  // `list-channels` from a second tab is rejected without first reading the
+  // DB, and so a crash mid-/LIST self-clears on next process boot (the set
+  // resets but the meta row can be cleaned by the next start handler).
+  const chanlistInFlight = new Set();
 
   function clearAutoAwayTimer(userId) {
     const t = autoAwayTimers.get(userId);
@@ -211,6 +218,19 @@ export function attachWsHub(httpServer, sessionSecret) {
     }
     fanOut(decorated.userId, { ...decorated, kind: 'irc' });
     maybePush(decorated.userId, decorated);
+
+    if (event.type === 'chanlist-end' && event.networkId) {
+      chanlistInFlight.delete(event.networkId);
+    }
+    // A disconnect mid-/LIST means RPL_LISTEND will never arrive — release
+    // the in-flight guard and reconcile the meta row so the next attempt
+    // (after reconnect) isn't blocked by stale state.
+    if (event.type === 'state' && event.state === 'disconnected' && event.networkId) {
+      if (chanlistInFlight.delete(event.networkId)) {
+        try { chanlistDb.setMeta(event.networkId, { inProgress: false }); }
+        catch (_) { /* ignore */ }
+      }
+    }
 
     // After an IRC (re)connect, only auto-rejoined channels fire JOIN events,
     // so any buffer the user had parted (or any buffer that simply pre-dates
@@ -433,17 +453,62 @@ export function attachWsHub(httpServer, sessionSecret) {
         ircManager.getConnection(userId, msg.networkId)?.raw(msg.line);
         break;
       case 'list-channels': {
-        // Kicks off a /LIST cycle on the given network. Results stream back
-        // as `chanlist-start` / `chanlist-batch` / `chanlist-end` IRC events
-        // from ircConnection — clients filter by networkId and accumulate.
-        const conn = ircManager.getConnection(userId, msg.networkId);
+        // Kicks off a /LIST refresh on the given network. Results are written
+        // to the chanlist DB cache by ircConnection; progress comes through
+        // as `chanlist-start` / `chanlist-progress` / `chanlist-end` events,
+        // and the actual rows are fetched via `chanlist-search` against the
+        // cache. We always echo a `chanlist-state` so the caller learns the
+        // current state even when the refresh was dropped as a duplicate.
+        const networkId = Number(msg.networkId);
+        if (!networkId || !ownsNetwork(userId, networkId)) {
+          send(ws, { kind: 'error', text: 'network not accessible' });
+          break;
+        }
+        const meta = chanlistDb.getMeta(networkId);
+        if (chanlistInFlight.has(networkId) || meta.inProgress) {
+          send(ws, { kind: 'chanlist-state', networkId, ...meta });
+          break;
+        }
+        const conn = ircManager.getConnection(userId, networkId);
         if (!conn) {
           send(ws, { kind: 'error', text: 'network not connected' });
           break;
         }
-        const filter = typeof msg.filter === 'string' ? msg.filter.trim() : '';
-        try { conn.raw(filter ? `LIST ${filter}` : 'LIST'); }
-        catch (_) { /* ignore — server will reject if not allowed */ }
+        chanlistInFlight.add(networkId);
+        try { conn.raw('LIST'); }
+        catch (_) { chanlistInFlight.delete(networkId); }
+        send(ws, { kind: 'chanlist-state', networkId, ...chanlistDb.getMeta(networkId) });
+        break;
+      }
+      case 'chanlist-search': {
+        const networkId = Number(msg.networkId);
+        if (!networkId || !ownsNetwork(userId, networkId)) {
+          send(ws, { kind: 'error', text: 'network not accessible' });
+          break;
+        }
+        const query = typeof msg.query === 'string' ? msg.query : '';
+        const sortBy = msg.sortBy === 'name' ? 'name' : 'users';
+        const sortDir = msg.sortDir === 'asc' ? 'asc' : 'desc';
+        const offset = Math.max(Number(msg.offset) || 0, 0);
+        const limit = Math.min(Math.max(Number(msg.limit) || 200, 1), 500);
+        const { rows, total } = chanlistDb.searchChannels(networkId, {
+          query, sortBy, sortDir, offset, limit,
+        });
+        const meta = chanlistDb.getMeta(networkId);
+        send(ws, {
+          kind: 'chanlist-result',
+          networkId,
+          query,
+          sortBy,
+          sortDir,
+          offset,
+          limit,
+          rows,
+          total,
+          fetchedAt: meta.fetchedAt,
+          inProgress: meta.inProgress,
+          totalCount: meta.totalCount,
+        });
         break;
       }
       case 'away': {

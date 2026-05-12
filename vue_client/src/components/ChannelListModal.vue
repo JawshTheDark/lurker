@@ -8,30 +8,30 @@
       <div class="controls">
         <input
           ref="filterEl"
-          v-model="filter"
+          v-model="filterInput"
           class="filter"
           type="text"
           placeholder="filter (name or topic)"
           autocomplete="off"
           spellcheck="false"
         />
-        <button class="btn" :disabled="!canRefresh" @click="refresh">
-          {{ state.loading ? 'Listing…' : 'Refresh' }}
+        <button class="btn" :disabled="state.inProgress" @click="refresh">
+          {{ state.inProgress ? `Streaming… ${state.totalCount}` : 'Refresh' }}
         </button>
-        <span class="meta">{{ stateLabel }}</span>
+        <span class="meta">{{ headerLabel }}</span>
       </div>
-      <div class="list-wrap">
-        <table v-if="filtered.length" class="list">
+      <div ref="listEl" class="list-wrap" @scroll="onScroll">
+        <table v-if="state.rows.length" class="list">
           <thead>
             <tr>
               <th class="col-name">
                 <button class="sort" @click="setSort('name')">
-                  name<span v-if="sortKey === 'name'">{{ sortDir === 'asc' ? ' ▲' : ' ▼' }}</span>
+                  name<span v-if="state.sortBy === 'name'">{{ state.sortDir === 'asc' ? ' ▲' : ' ▼' }}</span>
                 </button>
               </th>
               <th class="col-users">
                 <button class="sort" @click="setSort('users')">
-                  users<span v-if="sortKey === 'users'">{{ sortDir === 'asc' ? ' ▲' : ' ▼' }}</span>
+                  users<span v-if="state.sortBy === 'users'">{{ state.sortDir === 'asc' ? ' ▲' : ' ▼' }}</span>
                 </button>
               </th>
               <th class="col-topic">topic</th>
@@ -39,7 +39,7 @@
           </thead>
           <tbody>
             <tr
-              v-for="ch in filtered"
+              v-for="ch in state.rows"
               :key="ch.channel"
               class="row"
               @click="onJoin(ch)"
@@ -49,10 +49,13 @@
               <td class="col-users">{{ ch.num_users }}</td>
               <td class="col-topic">{{ ch.topic }}</td>
             </tr>
+            <tr v-if="state.loading"><td colspan="3" class="loading">Loading…</td></tr>
           </tbody>
         </table>
-        <p v-else-if="state.loading" class="empty">Loading channels…</p>
-        <p v-else-if="!state.channels.length" class="empty">No channels yet — try Refresh.</p>
+        <p v-else-if="state.loading || state.inProgress" class="empty">
+          {{ state.inProgress ? `Streaming channels… ${state.totalCount}` : 'Loading…' }}
+        </p>
+        <p v-else-if="!state.totalCount" class="empty">No channels cached yet — Refresh to fetch.</p>
         <p v-else class="empty">No matches.</p>
       </div>
     </div>
@@ -60,11 +63,14 @@
 </template>
 
 <script setup>
-import { computed, ref, onMounted } from 'vue';
-import { useChanlistStore } from '../stores/chanlist.js';
+import { computed, ref, onMounted, watch, onBeforeUnmount } from 'vue';
+import { useChanlistStore, resultKey } from '../stores/chanlist.js';
 import { useNetworksStore } from '../stores/networks.js';
 import { useBuffersStore } from '../stores/buffers.js';
 import { socketSend } from '../composables/useSocket.js';
+
+const PAGE_LIMIT = 200;
+const FILTER_DEBOUNCE_MS = 200;
 
 const props = defineProps({
   networkId: { type: Number, required: true },
@@ -77,54 +83,101 @@ const buffers = useBuffersStore();
 
 const cardEl = ref(null);
 const filterEl = ref(null);
-const filter = ref('');
-const sortKey = ref('users');
-const sortDir = ref('desc');
+const listEl = ref(null);
+const filterInput = ref('');
+let filterTimer = null;
+let prevInProgress = false;
 
-const state = computed(() => chanlist.forNetwork(props.networkId) || { loading: false, channels: [], lastUpdated: null });
-const canRefresh = computed(() => !state.value.loading);
+// Lazy-init the store entry so v-if/.rows reads don't return null.
+chanlist.ensure(props.networkId);
+const state = computed(() => chanlist.forNetwork(props.networkId));
+
+// Seed the filter input from any prior session so reopening the modal doesn't
+// silently throw away a search the user had typed before they closed it.
+filterInput.value = state.value.query;
 
 const networkLabel = computed(() => {
   const net = networks.networks.find((n) => n.id === props.networkId);
   return net?.name || `net:${props.networkId}`;
 });
 
-const stateLabel = computed(() => {
+const headerLabel = computed(() => {
   const s = state.value;
-  if (s.loading) return `streaming… ${s.channels.length}`;
-  if (s.lastUpdated) return `${s.channels.length} total`;
+  if (s.inProgress) return `streaming · ${s.totalCount}`;
+  if (s.fetchedAt) {
+    return `${s.total.toLocaleString()} match · ${s.totalCount.toLocaleString()} total · fetched ${relTime(s.fetchedAt)}`;
+  }
   return '';
 });
 
-const filtered = computed(() => {
-  const q = filter.value.trim().toLowerCase();
-  const list = state.value.channels;
-  const matched = q
-    ? list.filter((ch) =>
-        ch.channel.toLowerCase().includes(q)
-        || (ch.topic || '').toLowerCase().includes(q))
-    : list.slice();
-  const sign = sortDir.value === 'asc' ? 1 : -1;
-  matched.sort((a, b) => {
-    if (sortKey.value === 'users') {
-      return ((a.num_users || 0) - (b.num_users || 0)) * sign;
-    }
-    return a.channel.localeCompare(b.channel) * sign;
-  });
-  return matched;
-});
+function relTime(iso) {
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return '';
+  const sec = Math.max(0, Math.floor((Date.now() - t) / 1000));
+  if (sec < 60) return `${sec}s ago`;
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h ago`;
+  const days = Math.floor(hr / 24);
+  return `${days}d ago`;
+}
 
-function setSort(key) {
-  if (sortKey.value === key) {
-    sortDir.value = sortDir.value === 'asc' ? 'desc' : 'asc';
-  } else {
-    sortKey.value = key;
-    sortDir.value = key === 'users' ? 'desc' : 'asc';
-  }
+function sendSearch(offset) {
+  const s = state.value;
+  const key = resultKey({ query: s.query, sortBy: s.sortBy, sortDir: s.sortDir });
+  chanlist.setLoading(props.networkId, true, key);
+  socketSend({
+    type: 'chanlist-search',
+    networkId: props.networkId,
+    query: s.query,
+    sortBy: s.sortBy,
+    sortDir: s.sortDir,
+    offset,
+    limit: PAGE_LIMIT,
+  });
 }
 
 function refresh() {
   socketSend({ type: 'list-channels', networkId: props.networkId });
+}
+
+function setSort(key) {
+  const s = state.value;
+  let dir;
+  if (s.sortBy === key) {
+    dir = s.sortDir === 'asc' ? 'desc' : 'asc';
+  } else {
+    dir = key === 'users' ? 'desc' : 'asc';
+  }
+  chanlist.setSort(props.networkId, key, dir);
+  sendSearch(0);
+}
+
+watch(filterInput, (next) => {
+  if (filterTimer) clearTimeout(filterTimer);
+  filterTimer = setTimeout(() => {
+    chanlist.setQuery(props.networkId, next);
+    sendSearch(0);
+  }, FILTER_DEBOUNCE_MS);
+});
+
+// When a refresh completes (inProgress flips true→false), re-pull page 1 so
+// the just-cached rows replace whatever was on screen. The transition matters
+// — running on every false reading would also fire on initial open.
+watch(() => state.value.inProgress, (next) => {
+  if (prevInProgress && !next) sendSearch(0);
+  prevInProgress = next;
+});
+
+function onScroll() {
+  const el = listEl.value;
+  if (!el || state.value.loading) return;
+  const s = state.value;
+  const haveAll = s.rows.length >= s.total;
+  if (haveAll) return;
+  const dist = el.scrollHeight - el.scrollTop - el.clientHeight;
+  if (dist < 240) sendSearch(s.rows.length);
 }
 
 function onJoin(ch) {
@@ -135,12 +188,22 @@ function onJoin(ch) {
 
 onMounted(() => {
   cardEl.value?.focus();
-  // Auto-kick a /LIST on open if we've never run one for this network. The
-  // user explicitly opened the modal — silence and a Refresh button would
-  // feel broken.
-  if (!state.value.lastUpdated && !state.value.loading) refresh();
-  // Move focus to the filter after the auto-load fires so typing is immediate.
+  prevInProgress = state.value.inProgress;
+  // Always pull a fresh first page on open so the rows match whatever the
+  // current search snapshot is, and so a stale `rows` list left over from a
+  // prior session is replaced by current cache state.
+  sendSearch(0);
+  // If we've never refreshed for this network, kick a LIST so the user sees
+  // results without an explicit click. fetchedAt is null until the first
+  // chanlist-end persists.
+  if (!state.value.fetchedAt && !state.value.inProgress && state.value.totalCount === 0) {
+    refresh();
+  }
   setTimeout(() => filterEl.value?.focus(), 0);
+});
+
+onBeforeUnmount(() => {
+  if (filterTimer) clearTimeout(filterTimer);
 });
 </script>
 
@@ -214,9 +277,10 @@ onMounted(() => {
   font: inherit;
   padding: 4px 10px;
   cursor: pointer;
+  white-space: nowrap;
 }
 .btn:hover:not(:disabled) { border-color: var(--accent); background: var(--bg-soft); }
-.btn:disabled { opacity: 0.5; cursor: default; }
+.btn:disabled { opacity: 0.6; cursor: default; }
 .meta { color: var(--fg-muted); font-size: 0.9em; }
 
 .list-wrap {
@@ -257,6 +321,11 @@ onMounted(() => {
 .row { cursor: pointer; }
 .row:hover { background: var(--bg-soft); }
 .row:hover .col-topic { color: var(--fg); }
+.loading {
+  text-align: center;
+  color: var(--fg-muted);
+  font-style: italic;
+}
 .empty {
   text-align: center;
   color: var(--fg-muted);

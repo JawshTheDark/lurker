@@ -1,6 +1,7 @@
 import IRC from 'irc-framework';
 import { insertMessage } from '../db/messages.js';
 import { upsertChannel } from '../db/networks.js';
+import * as chanlistDb from '../db/chanlist.js';
 import highlightRulesService from './highlightRulesService.js';
 import { matchEvent } from './highlightEngine.js';
 
@@ -467,24 +468,45 @@ export class IrcConnection {
     });
 
     // Channel list (`/LIST`). irc-framework batches RPL_LIST every 50 rows and
-    // again at RPL_LISTEND, so we forward each batch as it arrives — the UI
-    // can stream results into a growing list rather than blocking on the end
-    // sentinel. Targetless: not associated with any buffer.
+    // again at RPL_LISTEND. Each batch lands in the per-network SQLite cache;
+    // clients only see progress events (running count) — the actual rows are
+    // fetched via the chanlist-search WS handler against the cache. Keeps a
+    // 6k-row libera.chat list off the wire and out of client memory.
     c.on('channel list start', () => {
+      const nid = this.network.id;
+      try {
+        chanlistDb.clearChannels(nid);
+        chanlistDb.setMeta(nid, { inProgress: true, totalCount: 0, fetchedAt: null });
+      } catch (e) {
+        console.warn(`[chanlist:${nid}] start failed:`, e?.message || e);
+      }
       this.publishEphemeral({ type: 'chanlist-start' });
     });
     c.on('channel list', (channels) => {
-      this.publishEphemeral({
-        type: 'chanlist-batch',
-        channels: (channels || []).map((ch) => ({
-          channel: ch.channel,
-          num_users: ch.num_users,
-          topic: ch.topic || '',
-        })),
-      });
+      const nid = this.network.id;
+      try {
+        chanlistDb.upsertChannels(nid, channels || []);
+        const total = chanlistDb.countChannels(nid);
+        chanlistDb.setMeta(nid, { totalCount: total, inProgress: true });
+        this.publishEphemeral({ type: 'chanlist-progress', total });
+      } catch (e) {
+        console.warn(`[chanlist:${nid}] batch failed:`, e?.message || e);
+      }
     });
     c.on('channel list end', () => {
-      this.publishEphemeral({ type: 'chanlist-end' });
+      const nid = this.network.id;
+      let total = 0;
+      try {
+        total = chanlistDb.countChannels(nid);
+        chanlistDb.setMeta(nid, {
+          inProgress: false,
+          totalCount: total,
+          fetchedAt: new Date().toISOString(),
+        });
+      } catch (e) {
+        console.warn(`[chanlist:${nid}] end failed:`, e?.message || e);
+      }
+      this.publishEphemeral({ type: 'chanlist-end', total });
     });
 
     c.on('irc error', (event) => {
