@@ -280,6 +280,42 @@ export const REGISTRY = Object.freeze([
       'Time format for the clock displayed in the status bar (above the input). ' +
       'Tokens: YYYY MM DD HH mm ss. Empty string hides the clock.',
   },
+  {
+    key: 'look.bar.lag_min_show_ms',
+    category: 'appearance',
+    group: 'misc',
+    type: 'int',
+    min: 0,
+    max: 60000,
+    default: 500,
+    description:
+      'Minimum lag (in milliseconds) before the status-bar lag indicator appears. ' +
+      'Below this threshold the indicator stays hidden. Modeled on weechat\'s ' +
+      'irc.network.lag_min_show.',
+  },
+  {
+    key: 'look.bar.lag_alarm_ms',
+    category: 'appearance',
+    group: 'misc',
+    type: 'int',
+    min: 0,
+    max: 60000,
+    default: 2000,
+    description:
+      'Lag (in milliseconds) at which the status-bar indicator turns red to call ' +
+      'attention to a connection problem. Between the show threshold and this value ' +
+      'the indicator renders in the warning color.',
+  },
+  {
+    key: 'look.bar.lag_always_show',
+    category: 'appearance',
+    group: 'misc',
+    type: 'bool',
+    default: false,
+    description:
+      'Always display the lag value in the status bar, even when it is below the ' +
+      'show threshold. Useful if you want to keep an eye on round-trip latency.',
+  },
 
   // ─── Smart filter (join/part/quit/nick noise) ─────────────────────────
   {

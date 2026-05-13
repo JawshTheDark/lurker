@@ -4,7 +4,7 @@
     <span class="seg buffer"><template v-if="targetLabel"><span v-if="networkLabel && !compact" class="net">{{ networkLabel }}/</span><span class="name">{{ targetLabel }}</span></template><span v-else class="name">{{ networkLabel }}</span><span v-if="modeSuffix && !compact" class="modes">{{ modeSuffix }}</span></span>
     <span v-if="memberCount != null && !compact" class="seg count"><span class="num">{{ memberCount }}</span> {{ memberCount === 1 ? 'user' : 'users' }}</span>
     <span v-if="peerStatusLabel" class="seg peer-status" :class="peerStatusClass">{{ peerStatusLabel }}</span>
-    <span v-if="lagLabel && !compact" class="seg lag">{{ lagLabel }}</span>
+    <span v-if="lagLabel && !compact" class="seg lag" :class="lagClass">{{ lagLabel }}</span>
     <span v-if="uploadLabel" class="seg upload" :class="{ failed: uploads.failedAt }">{{ uploadLabel }}</span>
     <button v-if="newBelow > 0 && !compact" class="seg jump" type="button" @click="onJumpToBottom">{{ newBelow }} new ↓</button>
     <span v-if="typingSegments.length" class="seg typing">Typing: <template v-for="(seg, i) in typingSegments" :key="i"><span :style="seg.color ? { color: seg.color } : null">{{ seg.text }}</span></template></span>
@@ -132,11 +132,28 @@ const lagMs = computed(() => {
   return typeof v === 'number' ? v : null;
 });
 
+// Weechat-style visibility: hide entirely when lag is below the show threshold,
+// unless the user has opted into always-show. Above the threshold we render the
+// raw value (no "lag: " prefix), warn-colored normally and bad-colored once the
+// alarm threshold is crossed so a real spike is impossible to miss.
+const lagMinShowMs = computed(() => settings.effective('look.bar.lag_min_show_ms'));
+const lagAlarmMs = computed(() => settings.effective('look.bar.lag_alarm_ms'));
+const lagAlwaysShow = computed(() => settings.effective('look.bar.lag_always_show'));
+
 const lagLabel = computed(() => {
   const v = lagMs.value;
   if (v == null) return '';
-  if (v < 1000) return `lag: ${v}ms`;
-  return `lag: ${(v / 1000).toFixed(1)}s`;
+  if (!lagAlwaysShow.value && v < lagMinShowMs.value) return '';
+  if (v < 1000) return `${v}ms`;
+  return `${(v / 1000).toFixed(1)}s`;
+});
+
+const lagClass = computed(() => {
+  const v = lagMs.value;
+  if (v == null) return '';
+  if (v >= lagAlarmMs.value) return 'alarm';
+  if (v >= lagMinShowMs.value) return 'warn';
+  return '';
 });
 
 // Clock lives in the status bar now. Same 1s tick + same format setting as
@@ -194,6 +211,8 @@ function onJumpToBottom() {
 .seg.count { color: var(--fg-muted); }
 .seg.count .num { color: var(--accent); }
 .seg.lag { color: var(--fg-muted); }
+.seg.lag.warn { color: var(--warn); }
+.seg.lag.alarm { color: var(--bad); }
 .seg.peer-status.offline { color: var(--warn); }
 .seg.peer-status.away { color: var(--fg-muted); }
 .seg.upload { color: var(--accent); }
