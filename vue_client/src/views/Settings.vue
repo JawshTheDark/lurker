@@ -441,6 +441,30 @@
             <button class="link danger" @click="signOut">sign out</button>
           </div>
         </section>
+
+        <!-- ─── About ──────────────────────────────────────────────────── -->
+        <section v-if="showBespoke" id="about" class="section">
+          <h2>about</h2>
+          <p class="section-desc">
+            Lurker is a self-hosted IRC bouncer and web client — your networks stay
+            connected on the server, and every device picks up where you left off.
+          </p>
+          <p class="muted small">version {{ appVersion }}</p>
+          <ul class="about-links">
+            <li>
+              <span class="about-label">source</span>
+              <a href="https://github.com/amiantos/lurker" target="_blank" rel="noopener noreferrer">github.com/amiantos/lurker</a>
+            </li>
+            <li>
+              <span class="about-label">discuss</span>
+              <a href="https://discuss.bradroot.me/tags/c/projects/13/lurker/39" target="_blank" rel="noopener noreferrer">discuss.bradroot.me</a>
+            </li>
+            <li>
+              <span class="about-label">chat</span>
+              <a href="ircs://irc.libera.chat/lurker" target="_blank" rel="noopener noreferrer">#lurker on Libera.Chat</a>
+            </li>
+          </ul>
+        </section>
       </main>
     </div>
   </div>
@@ -476,6 +500,8 @@ const adminStore = useAdminStore();
 const router = useRouter();
 
 const isAdmin = computed(() => auth.user?.role === 'admin');
+// Build-time constant injected by vite.config.js (define).
+const appVersion = __APP_VERSION__;
 const revealedSecrets = ref(new Set());
 function toggleSecret(key) {
   const s = new Set(revealedSecrets.value);
@@ -883,6 +909,7 @@ const visibleSections = computed(() => {
   if (showBespoke.value) {
     if (isAdmin.value) sections.push({ id: 'users', title: 'users' });
     sections.push({ id: 'account', title: 'account' });
+    sections.push({ id: 'about', title: 'about' });
   }
   return sections;
 });
@@ -1255,6 +1282,30 @@ async function onResetAll() {
   display: flex;
   justify-content: flex-start;
 }
+
+/* ── About ──────────────────────────────────────────────────────── */
+.about-links {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.about-links li {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.about-links .about-label {
+  color: var(--fg-muted);
+  text-transform: uppercase;
+  font-size: 0.8em;
+  letter-spacing: 0.04em;
+  min-width: 60px;
+}
+.about-links a { color: var(--accent); }
+.about-links a:hover { color: var(--fg); }
 
 /* ── Admin: users + invites ─────────────────────────────────────── */
 .user-row .role-tag {

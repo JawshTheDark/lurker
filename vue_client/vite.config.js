@@ -1,9 +1,15 @@
 // Copyright (c) 2026 Brad Root
 // SPDX-License-Identifier: Elastic-2.0
 
+import { readFileSync } from 'fs';
+import { fileURLToPath } from 'url';
 import { defineConfig, loadEnv } from 'vite';
 import vue from '@vitejs/plugin-vue';
 import mkcert from 'vite-plugin-mkcert';
+
+const pkg = JSON.parse(
+  readFileSync(fileURLToPath(new URL('./package.json', import.meta.url)), 'utf8')
+);
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
@@ -15,6 +21,11 @@ export default defineConfig(({ mode }) => {
 
   return {
     plugins: [vue(), mkcert()],
+    // Build-time constant so the About panel can show the app version without
+    // an API round-trip.
+    define: {
+      __APP_VERSION__: JSON.stringify(pkg.version),
+    },
     server: {
       host,
       port: 5173,
