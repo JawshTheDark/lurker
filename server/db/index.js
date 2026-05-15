@@ -339,6 +339,24 @@ function migrate() {
       FOREIGN KEY (network_id) REFERENCES networks(id) ON DELETE CASCADE
     );
     CREATE INDEX IF NOT EXISTS idx_user_drafts_user ON user_drafts(user_id);
+
+    -- Per-(user, network) ignore list. A mask is either a plain nick (no '!'
+    -- or '@', matched case-insensitively as nick equality) or a hostmask of
+    -- the form nick!user@host with '*' wildcards. The unique constraint
+    -- prevents adding the same mask twice on the same network; collation is
+    -- NOCASE so /ignore Bozo and /ignore bozo are the same entry.
+    CREATE TABLE IF NOT EXISTS ignored_masks (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      network_id INTEGER NOT NULL,
+      mask TEXT NOT NULL COLLATE NOCASE,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE (user_id, network_id, mask),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (network_id) REFERENCES networks(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_ignored_masks_user_net
+      ON ignored_masks(user_id, network_id);
   `);
 }
 
@@ -387,6 +405,10 @@ if (columnExists('peer_presence_state', 'offline_datetime')) {
 ensureColumn('peer_presence_state', 'away_message', 'TEXT');
 
 ensureColumn('messages', 'extra', 'TEXT');
+// nick!user@host of the sender, captured at ingest so client-side hostmask
+// ignore filters can match incoming and persisted messages. NULL for system
+// events that have no sender and for rows that pre-date this column.
+ensureColumn('messages', 'userhost', 'TEXT');
 ensureColumn('networks', 'sasl_account', 'TEXT');
 ensureColumn('networks', 'sasl_password', 'TEXT');
 ensureColumn('users', 'password_hash', 'TEXT');

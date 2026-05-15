@@ -88,6 +88,7 @@ import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { useNetworksStore } from '../stores/networks.js';
 import { useBuffersStore } from '../stores/buffers.js';
 import { useSettingsStore } from '../stores/settings.js';
+import { useIgnoresStore } from '../stores/ignores.js';
 import { socketSend } from '../composables/useSocket.js';
 import { useNickColors } from '../composables/useNickColors.js';
 import {
@@ -109,6 +110,7 @@ const props = defineProps({
 const networks = useNetworksStore();
 const buffers = useBuffersStore();
 const settings = useSettingsStore();
+const ignores = useIgnoresStore();
 const nicks = useNickColors();
 
 const actionItalic = computed(() => !!settings.effective('look.action.italic'));
@@ -238,10 +240,22 @@ const renderRows = computed(() => {
   };
 
 
+  const networkId = buf?.networkId;
+
   for (let i = 0; i < list.length; i++) {
     const m = list[i];
     const key = m.id ?? `live:${i}`;
     let hidden = false;
+
+    // Render-time ignore filter. Self-authored events are never hidden (the
+    // user always sees their own activity), and the matcher is fed both the
+    // bare nick and the full nick!user@host so hostmask entries can fire.
+    // Removing a mask re-runs this computed and previously-hidden rows
+    // reappear without a backlog reload.
+    if (!m.self && m.nick && networkId
+        && ignores.isIgnored(networkId, m.nick, m.userhost)) {
+      continue;
+    }
 
     if (filterOn && m.nick && !m.self) {
       const filterable =
@@ -531,10 +545,19 @@ watch(
     // Live append (new message arrived) — including the case where the
     // buffer was at its cap and the oldest row was evicted. When the user is
     // pinned, scroll along; otherwise track the unread-below count so the
-    // status bar can surface "[N new ↓]".
+    // status bar can surface "[N new ↓]". Skip the bump entirely when the
+    // newly-arrived tail is from an ignored sender; the user wouldn't see
+    // it scrolling into view anyway, and "1 new ↓" pointing at nothing is
+    // confusing.
     if (appended) {
       if (stickToBottom.value) scrollToBottom();
-      else bumpNewBelow();
+      else {
+        const tail = messages.value[messages.value.length - 1];
+        const nid = buffer.value?.networkId;
+        const tailIgnored = tail && !tail.self && tail.nick && nid
+          && ignores.isIgnored(nid, tail.nick, tail.userhost);
+        if (!tailIgnored) bumpNewBelow();
+      }
     }
     ensureViewportFilled();
   },

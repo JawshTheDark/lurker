@@ -14,6 +14,7 @@ import { useSearchStore } from '../stores/search.js';
 import { usePinsStore } from '../stores/pins.js';
 import { useNicklistCollapseStore } from '../stores/nicklistCollapse.js';
 import { useChannelNotifyStore } from '../stores/channelNotify.js';
+import { useIgnoresStore } from '../stores/ignores.js';
 import { notifyForEvent } from './useHighlightNotifier.js';
 
 let socket = null;
@@ -183,10 +184,12 @@ function applySnapshot(snapshot) {
   const pins = usePinsStore();
   const nicklistCollapse = useNicklistCollapseStore();
   const channelNotify = useChannelNotifyStore();
+  const ignores = useIgnoresStore();
   networks.applySnapshot(snapshot);
   pins.applySnapshot(snapshot);
   nicklistCollapse.applySnapshot(snapshot);
   channelNotify.applySnapshot(snapshot);
+  ignores.applySnapshot(snapshot);
   for (const net of snapshot) {
     for (const ch of net.channels) {
       // Snapshot members are already { nick, modes } objects from the server.
@@ -324,6 +327,11 @@ function handleMessage(raw) {
   if (payload.kind === 'channel-notify-changed') {
     const channelNotify = useChannelNotifyStore();
     channelNotify.applyChange(payload.networkId, payload.target, !!payload.notifyAlways);
+    return;
+  }
+  if (payload.kind === 'ignore-list-updated') {
+    const ignores = useIgnoresStore();
+    ignores.applyUpdate(payload.networkId, payload.masks || []);
     return;
   }
   if (payload.kind === 'buffer-reopened') {

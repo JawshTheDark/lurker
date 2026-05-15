@@ -9,6 +9,7 @@ import { getUserAwayState, writeAwayMarker, writeBackMarker } from '../db/userAw
 import { listPinnedForUser } from '../db/pinnedBuffers.js';
 import { listCollapsedForUser } from '../db/nicklistCollapsed.js';
 import { listChannelNotifyForUser } from '../db/channelNotify.js';
+import { addMask as addIgnoreRow, removeMask as removeIgnoreRow, listMasks as listIgnoreRows, listAllForUser as listAllIgnoreRows } from '../db/ignoredMasks.js';
 import { splitSay, splitAction } from './messageSplit.js';
 import db from '../db/index.js';
 
@@ -294,14 +295,41 @@ class IrcManager extends EventEmitter {
     const pinsByNetwork = listPinnedForUser(userId);
     const collapsedByNetwork = listCollapsedForUser(userId);
     const notifyByNetwork = listChannelNotifyForUser(userId);
+    const ignoresByNetwork = ignoresGrouped(userId);
     return this.listConnections(userId).map((conn) => {
       const snap = conn.snapshot();
       const pinned = pinsByNetwork.get(snap.networkId) || [];
       const collapsedNicklists = collapsedByNetwork.get(snap.networkId) || {};
       const channelNotify = notifyByNetwork.get(snap.networkId) || {};
-      return { ...snap, pinned, collapsedNicklists, channelNotify };
+      const ignoredMasks = ignoresByNetwork.get(snap.networkId) || [];
+      return { ...snap, pinned, collapsedNicklists, channelNotify, ignoredMasks };
     });
   }
+
+  addIgnore(userId, networkId, mask) {
+    return addIgnoreRow({ userId, networkId, mask });
+  }
+
+  removeIgnore(userId, networkId, mask) {
+    return removeIgnoreRow({ userId, networkId, mask });
+  }
+
+  listIgnoredFor(userId, networkId) {
+    return listIgnoreRows({ userId, networkId });
+  }
+}
+
+// Group every ignore row for a user by network so snapshotForUser can attach
+// them to the matching per-network blob in one pass (mirrors the listPinned /
+// listCollapsed shape).
+function ignoresGrouped(userId) {
+  const out = new Map();
+  for (const row of listAllIgnoreRows(userId)) {
+    const list = out.get(row.networkId);
+    const entry = { mask: row.mask, createdAt: row.createdAt };
+    if (list) list.push(entry); else out.set(row.networkId, [entry]);
+  }
+  return out;
 }
 
 const ircManager = new IrcManager();

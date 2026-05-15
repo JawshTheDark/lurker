@@ -21,13 +21,13 @@
       </header>
       <p v-if="store.error" class="error inline">{{ store.error }}</p>
       <ul
-        v-if="store.results.length"
+        v-if="visibleResults.length"
         ref="listEl"
         class="match-list"
         @scroll="onScroll"
       >
         <li
-          v-for="(m, i) in store.results"
+          v-for="(m, i) in visibleResults"
           :key="`${m.networkId}::${m.target}::${m.id}`"
           :class="{ match: true, active: i === selected }"
           @click="onJump(m)"
@@ -44,6 +44,7 @@
         <li v-if="store.loading" class="more">Loading…</li>
       </ul>
       <p v-else-if="store.loading" class="empty">Searching…</p>
+      <p v-else-if="store.results.length" class="empty">All matches are from ignored users.</p>
       <p v-else-if="store.searched" class="empty">No matches.</p>
       <p v-else class="empty">Type to search your message history.</p>
     </div>
@@ -55,6 +56,7 @@ import { computed, onMounted, onBeforeUnmount, ref, watch, nextTick } from 'vue'
 import { useNetworksStore } from '../stores/networks.js';
 import { useSettingsStore } from '../stores/settings.js';
 import { useSearchStore } from '../stores/search.js';
+import { useIgnoresStore } from '../stores/ignores.js';
 import { useNickColors } from '../composables/useNickColors.js';
 import { formatTimestamp } from '../utils/timestamp.js';
 
@@ -63,7 +65,15 @@ const emit = defineEmits(['close', 'jump']);
 const networks = useNetworksStore();
 const settings = useSettingsStore();
 const store = useSearchStore();
+const ignores = useIgnoresStore();
 const nicks = useNickColors();
+
+// Search runs against the full message history; ignored senders are
+// filtered after results arrive so /unignore restores the rows without
+// re-issuing the query.
+const visibleResults = computed(() =>
+  store.results.filter((m) => !ignores.isIgnored(m.networkId, m.nick, m.userhost))
+);
 
 const tsFormat = computed(() => settings.effective('look.buffer.time_format'));
 
@@ -81,9 +91,9 @@ watch(queryInput, (val) => {
   debounceTimer = setTimeout(() => { store.runSearch(); }, 200);
 });
 
-// Reset the keyboard cursor whenever the result set is replaced (a fresh
-// search), but leave it alone on pagination appends.
-watch(() => store.results.length, (len, prev) => {
+// Reset the keyboard cursor whenever the visible result set is replaced
+// (a fresh search), but leave it alone on pagination appends.
+watch(() => visibleResults.value.length, (len, prev) => {
   if (len < prev || prev === 0) selected.value = 0;
 });
 
@@ -119,7 +129,7 @@ function scrollSelectedIntoView() {
 }
 
 function onKeydown(e) {
-  const rows = store.results;
+  const rows = visibleResults.value;
   if (e.key === 'ArrowDown') {
     e.preventDefault();
     if (!rows.length) return;

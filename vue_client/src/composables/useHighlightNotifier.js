@@ -11,6 +11,7 @@
 import { useToastsStore } from '../stores/toasts.js';
 import { useSettingsStore } from '../stores/settings.js';
 import { useNetworksStore } from '../stores/networks.js';
+import { useIgnoresStore } from '../stores/ignores.js';
 
 // Cached templates, one per sound choice. Used purely to preload the file
 // once per choice; we never play the template itself. Each actual play
@@ -42,6 +43,15 @@ export function notifyForEvent(event) {
   if (!event || event.self) return;
   const kindKey = pickKindKey(event);
   if (!kindKey) return;
+
+  // Ignored sender → no toast, no sound. Push is gated server-side in
+  // wsHub.maybePush since push fires while no client is open and a
+  // client-side filter can't intercept it.
+  const ignores = useIgnoresStore();
+  if (event.nick && event.networkId
+      && ignores.isIgnored(event.networkId, event.nick, event.userhost)) {
+    return;
+  }
 
   const settings = useSettingsStore();
   if (!settings.effective(`notifications.${kindKey}.enabled`)) return;

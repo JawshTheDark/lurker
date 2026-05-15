@@ -27,6 +27,7 @@
 <script setup>
 import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue';
 import { buildNickCandidates } from '../utils/nickCompletion.js';
+import { useIgnoresStore } from '../stores/ignores.js';
 
 const props = defineProps({
   open: { type: Boolean, default: false },
@@ -38,14 +39,19 @@ const props = defineProps({
 
 const emit = defineEmits(['select', 'close']);
 
+const ignores = useIgnoresStore();
 const panelEl = ref(null);
 const panelBottom = ref(8);
 
-const rows = computed(() =>
-  buildNickCandidates(props.buffer, props.selfNick, props.query)
+const rows = computed(() => {
+  const networkId = props.buffer?.networkId;
+  const isIgnored = networkId
+    ? (nick, userhost) => ignores.isIgnored(networkId, nick, userhost)
+    : null;
+  return buildNickCandidates(props.buffer, props.selfNick, props.query, isIgnored)
     .slice(0, 50)
-    .map((c) => ({ nick: c.nick, lc: c.nick.toLowerCase(), recent: c.recent }))
-);
+    .map((c) => ({ nick: c.nick, lc: c.nick.toLowerCase(), recent: c.recent }));
+});
 
 function pick(nick) {
   emit('select', nick);

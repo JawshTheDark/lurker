@@ -9,9 +9,9 @@ import db from './index.js';
 // Non-striped types pass through with alt=0; the value is meaningless for them
 // and the client never reads it.
 const insertStmt = db.prepare(`
-  INSERT INTO messages (network_id, target, time, type, nick, text, kind, self, extra, matched_rule_id, alt)
+  INSERT INTO messages (network_id, target, time, type, nick, text, kind, self, extra, matched_rule_id, userhost, alt)
   VALUES (
-    @networkId, @target, @time, @type, @nick, @text, @kind, @self, @extra, @matchedRuleId,
+    @networkId, @target, @time, @type, @nick, @text, @kind, @self, @extra, @matchedRuleId, @userhost,
     CASE WHEN @type IN ('message', 'action', 'notice')
          THEN 1 - COALESCE(
            (SELECT alt FROM messages
@@ -38,6 +38,7 @@ export function insertMessage(row) {
     self: row.self ? 1 : 0,
     extra: row.extra ? JSON.stringify(row.extra) : null,
     matchedRuleId: row.matchedRuleId ?? null,
+    userhost: row.userhost ?? null,
   });
   const id = result.lastInsertRowid;
   const altRow = altByIdStmt.get(id);
@@ -55,6 +56,7 @@ function rowToEvent(row) {
     text: row.text,
     kind: row.kind,
     self: !!row.self,
+    userhost: row.userhost ?? null,
     alt: row.alt === 1,
     matched: row.matched_rule_id != null,
     matchedRuleId: row.matched_rule_id,

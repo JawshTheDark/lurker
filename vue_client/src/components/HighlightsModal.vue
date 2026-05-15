@@ -18,9 +18,9 @@
         <button class="link" @click="$emit('close')" title="close"><i class="fa-solid fa-xmark"></i></button>
       </header>
       <p v-if="store.error" class="error inline">{{ store.error }}</p>
-      <ul v-if="store.items.length" class="match-list">
+      <ul v-if="visibleItems.length" class="match-list">
         <li
-          v-for="m in store.items"
+          v-for="m in visibleItems"
           :key="`${m.networkId}::${m.target}::${m.id}`"
           class="match"
           @click="onJump(m)"
@@ -35,6 +35,7 @@
         </li>
       </ul>
       <p v-else-if="store.loading" class="empty">Loading…</p>
+      <p v-else-if="store.items.length" class="empty">All highlights are from ignored users.</p>
       <p v-else class="empty">No highlights yet.</p>
       <footer v-if="store.hasMore || store.loading" class="foot">
         <button
@@ -52,6 +53,7 @@ import { computed, onMounted } from 'vue';
 import { useNetworksStore } from '../stores/networks.js';
 import { useSettingsStore } from '../stores/settings.js';
 import { useHighlightsStore } from '../stores/highlights.js';
+import { useIgnoresStore } from '../stores/ignores.js';
 import { useNickColors } from '../composables/useNickColors.js';
 import { formatTimestamp } from '../utils/timestamp.js';
 
@@ -60,7 +62,12 @@ const emit = defineEmits(['close', 'jump']);
 const networks = useNetworksStore();
 const settings = useSettingsStore();
 const store = useHighlightsStore();
+const ignores = useIgnoresStore();
 const nicks = useNickColors();
+
+const visibleItems = computed(() =>
+  store.items.filter((m) => !ignores.isIgnored(m.networkId, m.nick, m.userhost))
+);
 
 const tsFormat = computed(() => settings.effective('look.buffer.time_format'));
 const soundEnabled = computed(() => !!settings.effective('notifications.highlight.sound.enabled'));

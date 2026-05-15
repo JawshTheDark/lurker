@@ -43,6 +43,28 @@ function extractExtras(event) {
   }
 }
 
+// Canonical nick!ident@hostname string used for client-side hostmask ignore
+// matching. Missing parts are left empty rather than starred — the client's
+// glob matcher handles either form, and storing the literal observed value
+// keeps the data honest. Returns null when there's no nick (server events).
+function buildUserhost(event) {
+  if (!event || !event.nick) return null;
+  const ident = event.ident || '';
+  const host = event.hostname || '';
+  if (!ident && !host) return null;
+  return `${event.nick}!${ident}@${host}`;
+}
+
+function memberSnapshot(m) {
+  return {
+    nick: m.nick,
+    modes: m.modes,
+    away: !!m.away,
+    user: m.user || null,
+    host: m.host || null,
+  };
+}
+
 export class IrcConnection {
   constructor({ network, onEvent }) {
     this.network = network;
@@ -151,6 +173,7 @@ export class IrcConnection {
         self: event.self,
         extra: extractExtras(event),
         matchedRuleId,
+        userhost: event.userhost ?? null,
       });
       enriched.id = id;
       enriched.alt = alt;
@@ -518,6 +541,7 @@ export class IrcConnection {
         text: event.message,
         kind: event.type,
         self: false,
+        userhost: buildUserhost(event),
       });
       // An incoming PRIVMSG (not NOTICE) is the moment this nick becomes a
       // tracked DM peer — add them via trackDmPeer so MONITOR + fires too.
@@ -532,8 +556,19 @@ export class IrcConnection {
 
     c.on('join', (event) => {
       const ch = this.upsertChannel(event.channel);
-      ch.members.set(event.nick.toLowerCase(), { nick: event.nick, modes: [], away: false });
-      this.publish({ type: 'join', target: event.channel, nick: event.nick });
+      ch.members.set(event.nick.toLowerCase(), {
+        nick: event.nick,
+        modes: [],
+        away: false,
+        user: event.ident || null,
+        host: event.hostname || null,
+      });
+      this.publish({
+        type: 'join',
+        target: event.channel,
+        nick: event.nick,
+        userhost: buildUserhost(event),
+      });
       if (event.nick !== c.user.nick) {
         // JOIN means they're online. If they were marked away and JOIN fires,
         // the away marker stays — markPeerEvent is idempotent against the
@@ -553,7 +588,13 @@ export class IrcConnection {
     c.on('part', (event) => {
       const ch = this.channels.get(event.channel.toLowerCase());
       if (ch) ch.members.delete(event.nick.toLowerCase());
-      this.publish({ type: 'part', target: event.channel, nick: event.nick, text: event.message });
+      this.publish({
+        type: 'part',
+        target: event.channel,
+        nick: event.nick,
+        text: event.message,
+        userhost: buildUserhost(event),
+      });
       if (event.nick === c.user.nick) {
         this.channels.delete(event.channel.toLowerCase());
         this.publish({ type: 'channel-parted', target: event.channel });
@@ -569,6 +610,7 @@ export class IrcConnection {
         nick: event.nick,
         kicked: event.kicked,
         text: event.message,
+        userhost: buildUserhost(event),
       });
       // Mirror the self-PART path when we ourselves are the one kicked, so
       // the buffer dims in the sidebar instead of staying styled as joined.
@@ -582,9 +624,16 @@ export class IrcConnection {
 
     c.on('quit', (event) => {
       const lower = event.nick.toLowerCase();
+      const userhost = buildUserhost(event);
       for (const ch of this.channels.values()) {
         if (ch.members.delete(lower)) {
-          this.publish({ type: 'quit', target: ch.name, nick: event.nick, text: event.message });
+          this.publish({
+            type: 'quit',
+            target: ch.name,
+            nick: event.nick,
+            text: event.message,
+            userhost,
+          });
         }
       }
       // QUIT means they've left the network entirely, not just a channel —
@@ -627,12 +676,25 @@ export class IrcConnection {
           this.pendingRegainSetup = false;
         }
       }
+      const userhost = buildUserhost(event);
       for (const ch of this.channels.values()) {
         const member = ch.members.get(oldLower);
         if (member) {
           ch.members.delete(oldLower);
-          ch.members.set(newLower, { nick: event.new_nick, modes: member.modes, away: !!member.away });
-          this.publish({ type: 'nick', target: ch.name, nick: event.nick, newNick: event.new_nick });
+          ch.members.set(newLower, {
+            nick: event.new_nick,
+            modes: member.modes,
+            away: !!member.away,
+            user: event.ident || member.user || null,
+            host: event.hostname || member.host || null,
+          });
+          this.publish({
+            type: 'nick',
+            target: ch.name,
+            nick: event.nick,
+            newNick: event.new_nick,
+            userhost,
+          });
         }
       }
       // From a DM-buffer perspective: the old name is no longer reachable
@@ -721,7 +783,7 @@ export class IrcConnection {
         this.publish({
           type: 'names',
           target: ch.name,
-          members: Array.from(ch.members.values()).map((m) => ({ nick: m.nick, modes: m.modes, away: !!m.away })),
+          members: Array.from(ch.members.values()).map(memberSnapshot),
         });
       }
       if (chanModesChanged && ch) this.publishChannelModes(ch);
@@ -751,19 +813,28 @@ export class IrcConnection {
 
     c.on('userlist', (event) => {
       const ch = this.upsertChannel(event.channel);
-      // Preserve known away flags across re-issued NAMES (e.g. on /NAMES or
-      // a fresh join). away-notify keeps it live; WHO refreshes it below.
+      // Preserve known away flags AND user/host across re-issued NAMES
+      // (e.g. on /NAMES or a fresh join). NAMES doesn't carry ident/host on
+      // most ircds — the JOIN event and WHO reply do — so we hold onto
+      // whatever we already learned.
       const prev = new Map();
-      for (const [k, v] of ch.members) prev.set(k, !!v.away);
+      for (const [k, v] of ch.members) prev.set(k, { away: !!v.away, user: v.user || null, host: v.host || null });
       ch.members.clear();
       for (const u of event.users) {
         const lc = u.nick.toLowerCase();
-        ch.members.set(lc, { nick: u.nick, modes: u.modes || [], away: prev.get(lc) || false });
+        const carry = prev.get(lc) || {};
+        ch.members.set(lc, {
+          nick: u.nick,
+          modes: u.modes || [],
+          away: carry.away || false,
+          user: u.ident || carry.user || null,
+          host: u.hostname || carry.host || null,
+        });
       }
       this.publish({
         type: 'names',
         target: event.channel,
-        members: Array.from(ch.members.values()).map((m) => ({ nick: m.nick, modes: m.modes, away: !!m.away })),
+        members: Array.from(ch.members.values()).map(memberSnapshot),
       });
       // Issue a WHO so we learn the current away state for everyone in the
       // channel. away-notify keeps it live after this initial sync.
@@ -783,12 +854,18 @@ export class IrcConnection {
           m.away = next;
           changed = true;
         }
+        // WHO carries ident/host (RPL_WHOREPLY 352) — backfill so the
+        // nicklist's right-click "Ignore…" modal has a hostmask to suggest
+        // even for members whose join we never observed (e.g. they were
+        // already in the channel when we joined).
+        if (u.ident && m.user !== u.ident) { m.user = u.ident; changed = true; }
+        if (u.hostname && m.host !== u.hostname) { m.host = u.hostname; changed = true; }
       }
       if (!changed) return;
       this.publish({
         type: 'names',
         target: ch.name,
-        members: Array.from(ch.members.values()).map((m) => ({ nick: m.nick, modes: m.modes, away: !!m.away })),
+        members: Array.from(ch.members.values()).map(memberSnapshot),
       });
     });
 
@@ -1120,7 +1197,7 @@ export class IrcConnection {
       this.publish({
         type: 'names',
         target: ch.name,
-        members: Array.from(ch.members.values()).map((mm) => ({ nick: mm.nick, modes: mm.modes, away: !!mm.away })),
+        members: Array.from(ch.members.values()).map(memberSnapshot),
       });
     }
   }
@@ -1288,7 +1365,7 @@ export class IrcConnection {
         name: ch.name,
         topic: ch.topic,
         modes: [...(ch.modes || [])].join(''),
-        members: Array.from(ch.members.values()).map((m) => ({ nick: m.nick, modes: m.modes, away: !!m.away })),
+        members: Array.from(ch.members.values()).map(memberSnapshot),
       })),
       // Object keyed by lowercase nick → { nick, state, stateAt }. Lands
       // directly on states[networkId].peerPresence on snapshot apply, same

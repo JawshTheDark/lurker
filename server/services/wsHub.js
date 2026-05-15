@@ -9,6 +9,8 @@ import settingsService from './settingsService.js';
 import highlightRulesService from './highlightRulesService.js';
 import draftsService from './draftsService.js';
 import * as pushService from './pushService.js';
+import { matchesAny as matchesIgnoreMask } from './maskMatch.js';
+import { listMasks as listIgnoredMasks } from '../db/ignoredMasks.js';
 import { findSession } from '../db/sessions.js';
 import { findUserById, touchUserLastSeen } from '../db/users.js';
 import { listMessages, listBufferTargets, listSpeakers, countNewer, countHighlightsNewer, maxIdByBuffer, searchMessages, COUNTABLE_TYPES } from '../db/messages.js';
@@ -287,6 +289,17 @@ export function attachWsHub(httpServer, sessionSecret) {
     if (!decorated || !decorated.notify) return;
     if (decorated.self) return;
     if (userHasVisibleClient(userId)) return;
+    // Suppress push for senders the user has ignored. This is the one piece
+    // of the ignore feature that has to live server-side: push fires while
+    // no client is open, so a client-side filter can't possibly intercept.
+    // The unread badge and the render filter remain reactive client-side,
+    // so /unignore still reveals; only push delivery is frozen here.
+    if (decorated.nick) {
+      const masks = listIgnoredMasks({ userId, networkId: decorated.networkId });
+      if (masks.length && matchesIgnoreMask(masks, decorated.nick, decorated.userhost)) {
+        return;
+      }
+    }
     // Signal kind in priority order: DM beats matched beats always_notify.
     // The `kind` doubles as the settings-key namespace, so picking a single
     // priority winner here means a DM that also matched a rule still
@@ -339,7 +352,21 @@ export function attachWsHub(httpServer, sessionSecret) {
       // events (typing, away markers fanned to this target, names) shouldn't
       // resurrect a closed buffer, so we drop them on the floor.
       const reopens = decorated.id != null && DM_ELIGIBLE_TYPES.has(decorated.type);
-      if (!reopens) return;
+      // Ignored senders cannot resurrect a closed DM either. Otherwise an
+      // ignored user can force the buffer back into the sidebar simply by
+      // sending — a soft harassment vector the client-side render filter
+      // doesn't close, since the reopen happens server-side.
+      let senderIgnored = false;
+      if (reopens && decorated.nick) {
+        const masks = listIgnoredMasks({
+          userId: decorated.userId,
+          networkId: decorated.networkId,
+        });
+        if (masks.length && matchesIgnoreMask(masks, decorated.nick, decorated.userhost)) {
+          senderIgnored = true;
+        }
+      }
+      if (!reopens || senderIgnored) return;
       reopenBuffer(decorated.userId, decorated.networkId, target);
       fanOut(decorated.userId, {
         kind: 'buffer-reopened',
@@ -843,6 +870,30 @@ export function attachWsHub(httpServer, sessionSecret) {
           networkId,
           target,
           notifyAlways,
+        });
+        break;
+      }
+      case 'add-ignore': {
+        const networkId = Number(msg.networkId);
+        const mask = typeof msg.mask === 'string' ? msg.mask.trim() : '';
+        if (!networkId || !mask) break;
+        ircManager.addIgnore(userId, networkId, mask);
+        fanOut(userId, {
+          kind: 'ignore-list-updated',
+          networkId,
+          masks: ircManager.listIgnoredFor(userId, networkId),
+        });
+        break;
+      }
+      case 'remove-ignore': {
+        const networkId = Number(msg.networkId);
+        const mask = typeof msg.mask === 'string' ? msg.mask.trim() : '';
+        if (!networkId || !mask) break;
+        ircManager.removeIgnore(userId, networkId, mask);
+        fanOut(userId, {
+          kind: 'ignore-list-updated',
+          networkId,
+          masks: ircManager.listIgnoredFor(userId, networkId),
         });
         break;
       }

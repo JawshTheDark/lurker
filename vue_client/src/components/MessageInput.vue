@@ -61,6 +61,7 @@ import { useDraftStore } from '../stores/drafts.js';
 import { useSettingsStore } from '../stores/settings.js';
 import { useUploadsStore, onInsertUrl } from '../stores/uploads.js';
 import { useToastsStore } from '../stores/toasts.js';
+import { useIgnoresStore } from '../stores/ignores.js';
 import { socketSend, socketSendWithAck } from '../composables/useSocket.js';
 import { requestScrollToBottom } from '../composables/useScrollState.js';
 import { setComposingState } from '../composables/useComposing.js';
@@ -75,6 +76,7 @@ const drafts = useDraftStore();
 const settings = useSettingsStore();
 const uploads = useUploadsStore();
 const toasts = useToastsStore();
+const ignores = useIgnoresStore();
 const inputEl = ref(null);
 const formEl = ref(null);
 const fileInputEl = ref(null);
@@ -310,7 +312,8 @@ function tokenAtCursor(value, cursor) {
 
 function buildNickMatches(buf, networkId, prefix) {
   const own = networks.states[networkId]?.nick || '';
-  return buildNickCandidates(buf, own, prefix).map((c) => c.nick);
+  const isIgnored = (nick, userhost) => ignores.isIgnored(networkId, nick, userhost);
+  return buildNickCandidates(buf, own, prefix, isIgnored).map((c) => c.nick);
 }
 
 function buildChannelMatches(networkId, prefix) {
@@ -759,6 +762,8 @@ const HELP_LINES = [
   '  /quit [reason]         — disconnect from current network',
   '  /list                  — list channels on current network',
   '  /jitsi                 — start a video call (alias: /talk)',
+  '  /ignore [mask]         — list current ignores, or add (nick or nick!user@host)',
+  '  /unignore <mask>       — remove an ignore entry',
   '  /raw <line>            — send a raw IRC line (alias: /quote)',
   '  /help                  — this list',
 ];
@@ -901,6 +906,31 @@ function handleCommand(line, networkId, target) {
     }
     case 'list':
       return sendOrToast({ type: 'raw', networkId, line: argLine ? `LIST ${argLine}` : 'LIST' }, line);
+    case 'ignore': {
+      // No-arg form: dump the current network's ignore list into the active
+      // buffer as system messages. The store already has the list (seeded
+      // from the snapshot, kept fresh by ignore-list-updated), so this is a
+      // purely client-side read — no server roundtrip.
+      const mask = argLine.trim();
+      if (!mask) {
+        const list = ignores.masksFor(networkId);
+        if (!list.length) {
+          localInfo(networkId, target, 'ignore list is empty on this network.');
+        } else {
+          localInfo(networkId, target, `ignore list (${list.length}):`);
+          for (const entry of list) localInfo(networkId, target, `  ${entry.mask}`);
+        }
+        return true;
+      }
+      ignores.addMask(networkId, mask);
+      return true;
+    }
+    case 'unignore': {
+      const mask = argLine.trim();
+      if (!mask) { localInfo(networkId, target, 'usage: /unignore <mask>'); return true; }
+      ignores.removeMask(networkId, mask);
+      return true;
+    }
     case 'jitsi':
     case 'talk': {
       if (isServer.value) { localInfo(networkId, target, 'usage: /jitsi — run inside a channel or DM'); return true; }

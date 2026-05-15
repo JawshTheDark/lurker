@@ -11,7 +11,12 @@
 // longer in the channel (parted/quit) are dropped, so completion only surfaces
 // people who can still see the message. DM buffers don't carry a members list,
 // so the filter is skipped there and the peer remains completable.
-export function buildNickCandidates(buf, selfNick, prefix) {
+// Optional `isIgnored` predicate (passed `(nick, userhost)`) lets callers
+// strip ignored nicks from completion without this util reaching into Pinia
+// directly. Member userhost is computed from the member object when
+// available; speakers only carry a nick so userhost is null for them
+// (hostmask-only entries can't suppress speaker candidates).
+export function buildNickCandidates(buf, selfNick, prefix, isIgnored) {
   if (!buf) return [];
   const lower = (prefix || '').toLowerCase();
   const seen = new Set();
@@ -22,6 +27,17 @@ export function buildNickCandidates(buf, selfNick, prefix) {
     .filter(Boolean);
   const memberLcSet = new Set(memberNames.map((n) => n.toLowerCase()));
   const filterSpeakersByMembership = memberLcSet.size > 0;
+  const memberByLc = new Map();
+  for (const m of (buf.members || [])) {
+    const nick = typeof m === 'string' ? m : m?.nick;
+    if (nick) memberByLc.set(nick.toLowerCase(), m);
+  }
+
+  function memberUserhost(nick) {
+    const m = memberByLc.get(nick.toLowerCase());
+    if (!m || typeof m !== 'object' || !m.user || !m.host) return null;
+    return `${nick}!${m.user}@${m.host}`;
+  }
 
   const out = [];
 
@@ -32,6 +48,7 @@ export function buildNickCandidates(buf, selfNick, prefix) {
     if (seen.has(lc)) continue;
     if (!lc.startsWith(lower)) continue;
     if (filterSpeakersByMembership && !memberLcSet.has(lc)) continue;
+    if (isIgnored && isIgnored(s.nick, memberUserhost(s.nick))) continue;
     seen.add(lc);
     out.push({ nick: s.nick, recent: true });
   }
@@ -41,6 +58,7 @@ export function buildNickCandidates(buf, selfNick, prefix) {
     const lc = n.toLowerCase();
     if (seen.has(lc)) continue;
     if (!lc.startsWith(lower)) continue;
+    if (isIgnored && isIgnored(n, memberUserhost(n))) continue;
     seen.add(lc);
     out.push({ nick: n, recent: false });
   }

@@ -6,23 +6,42 @@
 <template>
   <div class="members">
     <ul>
-      <li v-for="m in sorted" :key="nickOf(m)" :class="liClass(m)">
+      <li
+        v-for="m in sorted"
+        :key="nickOf(m)"
+        :class="liClass(m)"
+        @contextmenu.prevent="onMemberContextMenu($event, m)"
+      >
         <span class="prefix">{{ prefixOf(m) }}</span>
         <span class="nick" :style="nickStyle(m)">{{ nickOf(m) }}</span>
       </li>
     </ul>
+    <IgnoreModal
+      v-if="modalMember"
+      :nick="nickOf(modalMember)"
+      :user="userOf(modalMember)"
+      :host="hostOf(modalMember)"
+      :network-id="buffer?.networkId"
+      @close="modalMember = null"
+    />
   </div>
 </template>
 
 <script setup>
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import { useNetworksStore } from '../stores/networks.js';
 import { useBuffersStore } from '../stores/buffers.js';
 import { useNickColors } from '../composables/useNickColors.js';
+import { useContextMenu } from '../composables/useContextMenu.js';
+import { useIgnoresStore } from '../stores/ignores.js';
+import IgnoreModal from './IgnoreModal.vue';
 
 const networks = useNetworksStore();
 const buffers = useBuffersStore();
 const nicks = useNickColors();
+const menu = useContextMenu();
+const ignores = useIgnoresStore();
+const modalMember = ref(null);
 
 const buffer = computed(() => (networks.activeKey ? buffers.byKey(networks.activeKey) : null));
 const members = computed(() => buffer.value?.members || []);
@@ -49,7 +68,21 @@ function nickStyle(m) {
 const PREFIX_ORDER = ['~', '&', '@', '%', '+', ''];
 
 function nickOf(m) { return typeof m === 'string' ? m : m.nick; }
+function userOf(m) { return typeof m === 'object' && m?.user ? m.user : null; }
+function hostOf(m) { return typeof m === 'object' && m?.host ? m.host : null; }
 function modesOf(m) { return Array.isArray(m?.modes) ? m.modes : []; }
+
+function onMemberContextMenu(e, m) {
+  if (!buffer.value || isSelf(m)) return;
+  const items = [
+    {
+      label: 'Ignore…',
+      icon: 'fa-solid fa-ban',
+      onClick: () => { modalMember.value = m; },
+    },
+  ];
+  menu.open(items, e.clientX, e.clientY);
+}
 function prefixOf(m) {
   const modes = modesOf(m);
   if (modes.includes('q')) return '~';
@@ -72,12 +105,30 @@ function liClass(m) {
   return classes;
 }
 
-const sorted = computed(() => [...members.value].sort((a, b) => {
-  const pa = PREFIX_ORDER.indexOf(prefixOf(a));
-  const pb = PREFIX_ORDER.indexOf(prefixOf(b));
-  if (pa !== pb) return pa - pb;
-  return nickOf(a).localeCompare(nickOf(b), undefined, { sensitivity: 'base' });
-}));
+const sorted = computed(() => {
+  const networkId = buffer.value?.networkId;
+  const list = members.value;
+  // Self is always visible — guards against the corner case of a mask
+  // matching the user's own nick (or a hostmask the server-side nick
+  // happens to fall into) which would otherwise vanish them from their
+  // own nicklist.
+  const filtered = networkId
+    ? list.filter((m) => {
+        if (isSelf(m)) return true;
+        const nick = nickOf(m);
+        const userhost = m && typeof m === 'object' && m.user && m.host
+          ? `${nick}!${m.user}@${m.host}`
+          : null;
+        return !ignores.isIgnored(networkId, nick, userhost);
+      })
+    : list;
+  return [...filtered].sort((a, b) => {
+    const pa = PREFIX_ORDER.indexOf(prefixOf(a));
+    const pb = PREFIX_ORDER.indexOf(prefixOf(b));
+    if (pa !== pb) return pa - pb;
+    return nickOf(a).localeCompare(nickOf(b), undefined, { sensitivity: 'base' });
+  });
+});
 </script>
 
 <style scoped>
