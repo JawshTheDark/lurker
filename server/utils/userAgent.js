@@ -15,7 +15,7 @@ import { dirname, join } from 'path';
 const here = dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(readFileSync(join(here, '..', '..', 'package.json'), 'utf8'));
 
-const DEFAULT_CONTACT = 'https://github.com/amiantos/caint';
+const DEFAULT_CONTACT = 'https://github.com/amiantos/lurker';
 const contact = (process.env.USER_AGENT_CONTACT || DEFAULT_CONTACT).trim();
 
 export const APP_NAME = 'Lurker';

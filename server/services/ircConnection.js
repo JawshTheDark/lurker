@@ -14,7 +14,15 @@ import {
 } from '../db/peerPresence.js';
 import highlightRulesService from './highlightRulesService.js';
 import { matchEvent } from './highlightEngine.js';
-import { IRC_VERSION } from '../utils/userAgent.js';
+import { IRC_VERSION, APP_VERSION } from '../utils/userAgent.js';
+
+// Shown to peers as the QUIT reason on a clean disconnect. Most IRC clients
+// surface this in JOIN/PART messages, so it doubles as a Lurker
+// announcement — gives operators a quick read on what client + version is
+// being used. Per-disconnect overrides (network removal, no-nick failure,
+// etc.) pass their own reason and bypass this default.
+const DEFAULT_QUIT_MESSAGE =
+  `Lurker ${APP_VERSION} (the truth is out there) https://github.com/amiantos/lurker`;
 
 const NON_PERSISTED_TYPES = new Set([
   'state', 'names', 'channel-joined', 'channel-parted', 'typing', 'away-state',
@@ -1255,7 +1263,7 @@ export class IrcConnection {
     this.publishAwayState();
   }
 
-  disconnect(reason = 'lurker shutting down') {
+  disconnect(reason = DEFAULT_QUIT_MESSAGE) {
     this.client.quit(reason);
   }
 
