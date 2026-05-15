@@ -264,6 +264,23 @@ class IrcManager extends EventEmitter {
     return n;
   }
 
+  // Tear down all IRC connections for a user and drop their byUser entry.
+  // Called *before* a user-row delete so the in-memory IrcConnections stop
+  // firing publish() / insertMessage() for now-deleted network_ids — without
+  // this, an incoming PRIVMSG between the delete and the next reconnect
+  // crashes the process on a FOREIGN KEY violation against networks(id).
+  // Emits 'user-disposed' so other subsystems (wsHub) can clean up too.
+  disposeUser(userId, reason = 'user deleted') {
+    const userMap = this.byUser.get(userId);
+    if (userMap) {
+      for (const conn of userMap.values()) {
+        try { conn.dispose(reason); } catch (_) { /* ignore */ }
+      }
+      this.byUser.delete(userId);
+    }
+    this.emit('user-disposed', { userId });
+  }
+
   shutdown() {
     for (const userMap of this.byUser.values()) {
       for (const conn of userMap.values()) {

@@ -402,6 +402,21 @@ export function attachWsHub(httpServer, sessionSecret) {
     fanOut(userId, { kind: 'highlight-rules-changed' });
   });
 
+  // When a user is deleted, their WS connections are still authenticated
+  // against a session that just got cascade-deleted. Stale handlers would
+  // write to per-user tables (buffer_reads, user_settings, …) that no
+  // longer have a parent row, hitting FK violations. Close the sockets
+  // here so any in-flight message handlers stop firing.
+  ircManager.on('user-disposed', ({ userId }) => {
+    const set = socketsByUser.get(userId);
+    if (!set) return;
+    for (const ws of [...set]) {
+      try { ws.close(1000, 'user removed'); } catch (_) { /* ignore */ }
+    }
+    socketsByUser.delete(userId);
+    clearAutoAwayTimer(userId);
+  });
+
   function parseSinceParam(rawUrl) {
     try {
       const url = new URL(rawUrl, 'http://localhost');
