@@ -124,6 +124,11 @@
       @close="showSearch = false"
       @jump="onJumpToMessage"
     />
+    <NickNoteModal
+      v-if="nickNotes.editor.open"
+      :nick="nickNotes.editor.nick"
+      :network-id="nickNotes.editor.networkId"
+    />
   </div>
 </template>
 
@@ -146,12 +151,15 @@ import TopicModal from '../components/TopicModal.vue';
 import ChannelListModal from '../components/ChannelListModal.vue';
 import RecentUploadsModal from '../components/RecentUploadsModal.vue';
 import SearchModal from '../components/SearchModal.vue';
+import NickNoteModal from '../components/NickNoteModal.vue';
+import { useNickNotesStore } from '../stores/nickNotes.js';
 import { useJumpToMessage } from '../composables/useJumpToMessage.js';
 
 const buffers = useBuffersStore();
 const { connected } = useSocket();
 const { active, activeKey, activeBuf, isChannel, isServerBuffer, bufferLabel, topic } = useActiveBuffer();
 const bufferActions = useBufferActions();
+const nickNotes = useNickNotesStore();
 
 // Pin --viewport-h to the visualViewport height so the shell stays glued to
 // the visible region when the iOS soft keyboard pushes content up.

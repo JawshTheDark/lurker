@@ -357,6 +357,24 @@ function migrate() {
     );
     CREATE INDEX IF NOT EXISTS idx_ignored_masks_user_net
       ON ignored_masks(user_id, network_id);
+
+    -- Per-(user, network, nick) free-form notes about a contact — "lives in
+    -- Berlin", spouse's name, whatever the operator wants to remember about
+    -- the person behind a nick. nick collates NOCASE so case-flips don't
+    -- fragment; same nick on different networks gets its own row because
+    -- the people may not be the same.
+    CREATE TABLE IF NOT EXISTS user_nick_notes (
+      user_id INTEGER NOT NULL,
+      network_id INTEGER NOT NULL,
+      nick TEXT NOT NULL COLLATE NOCASE,
+      note TEXT NOT NULL,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (user_id, network_id, nick),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (network_id) REFERENCES networks(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_user_nick_notes_user_net
+      ON user_nick_notes(user_id, network_id);
   `);
 }
 

@@ -15,6 +15,7 @@ import { usePinsStore } from '../stores/pins.js';
 import { useNicklistCollapseStore } from '../stores/nicklistCollapse.js';
 import { useChannelNotifyStore } from '../stores/channelNotify.js';
 import { useIgnoresStore } from '../stores/ignores.js';
+import { useNickNotesStore } from '../stores/nickNotes.js';
 import { notifyForEvent } from './useHighlightNotifier.js';
 
 let socket = null;
@@ -188,11 +189,13 @@ function applySnapshot(snapshot) {
   const nicklistCollapse = useNicklistCollapseStore();
   const channelNotify = useChannelNotifyStore();
   const ignores = useIgnoresStore();
+  const nickNotes = useNickNotesStore();
   networks.applySnapshot(snapshot);
   pins.applySnapshot(snapshot);
   nicklistCollapse.applySnapshot(snapshot);
   channelNotify.applySnapshot(snapshot);
   ignores.applySnapshot(snapshot);
+  nickNotes.applySnapshot(snapshot);
   for (const net of snapshot) {
     for (const ch of net.channels) {
       // Snapshot members are already { nick, modes } objects from the server.
@@ -353,6 +356,11 @@ function handleMessage(raw) {
   if (payload.kind === 'ignore-list-updated') {
     const ignores = useIgnoresStore();
     ignores.applyUpdate(payload.networkId, payload.masks || []);
+    return;
+  }
+  if (payload.kind === 'nick-note-updated') {
+    const nickNotes = useNickNotesStore();
+    nickNotes.applyUpdate(payload.networkId, payload.nick, payload.note || '', payload.updatedAt);
     return;
   }
   if (payload.kind === 'buffer-reopened') {

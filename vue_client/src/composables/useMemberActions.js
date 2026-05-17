@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 
 import { useBuffersStore } from '../stores/buffers.js';
+import { useNickNotesStore } from '../stores/nickNotes.js';
 import { useContextMenu } from './useContextMenu.js';
 
 // Shared menu items for a member of a channel. Exposed as a composable so
@@ -14,6 +15,7 @@ import { useContextMenu } from './useContextMenu.js';
 //   { networkId, isSelf(member), onIgnore(member) }
 export function useMemberActions() {
   const buffers = useBuffersStore();
+  const nickNotes = useNickNotesStore();
   const menu = useContextMenu();
 
   function nickOf(m) { return typeof m === 'string' ? m : m.nick; }
@@ -21,11 +23,17 @@ export function useMemberActions() {
   function buildItems(member, ctx) {
     if (!member || !ctx || ctx.isSelf(member)) return [];
     const nick = nickOf(member);
+    const hasNote = nickNotes.hasNote(ctx.networkId, nick);
     const items = [
       {
         label: 'Send DM',
         icon: 'fa-solid fa-envelope',
         onClick: () => buffers.activate(ctx.networkId, nick),
+      },
+      {
+        label: hasNote ? 'Edit note…' : 'Add note…',
+        icon: 'fa-solid fa-note-sticky',
+        onClick: () => nickNotes.openEditor(ctx.networkId, nick),
       },
       {
         label: 'Ignore…',

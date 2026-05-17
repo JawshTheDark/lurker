@@ -3,6 +3,7 @@
 
 import { usePinsStore } from '../stores/pins.js';
 import { useChannelNotifyStore } from '../stores/channelNotify.js';
+import { useNickNotesStore } from '../stores/nickNotes.js';
 import { useContextMenu } from './useContextMenu.js';
 
 // Shared menu items for a buffer (channel/DM). Exposed as a composable so the
@@ -12,6 +13,7 @@ import { useContextMenu } from './useContextMenu.js';
 export function useBufferActions() {
   const pins = usePinsStore();
   const channelNotify = useChannelNotifyStore();
+  const nickNotes = useNickNotesStore();
   const menu = useContextMenu();
 
   function buildItems(buf) {
@@ -39,6 +41,16 @@ export function useBufferActions() {
               onClick: () => channelNotify.setNotifyAlways(buf.networkId, buf.target, true),
             },
       );
+    } else {
+      // DM target is the peer's nick — open the note editor directly. Channels
+      // can't carry a per-nick note from this menu (which nick?), so the entry
+      // is DM-only; in-channel nick notes flow through the member list menu.
+      const hasNote = nickNotes.hasNote(buf.networkId, buf.target);
+      items.push({
+        label: hasNote ? 'Edit note…' : 'Add note…',
+        icon: 'fa-solid fa-note-sticky',
+        onClick: () => nickNotes.openEditor(buf.networkId, buf.target),
+      });
     }
     return items;
   }

@@ -884,6 +884,24 @@ export function attachWsHub(httpServer, sessionSecret) {
         });
         break;
       }
+      case 'set-nick-note': {
+        const networkId = Number(msg.networkId);
+        const nick = typeof msg.nick === 'string' ? msg.nick.trim() : '';
+        // Notes are operator scratch space — cap at 4 KB so a misclick can't
+        // wedge unbounded payloads through the WS. Empty body deletes the row.
+        const rawNote = typeof msg.note === 'string' ? msg.note : '';
+        const note = rawNote.length > 4096 ? rawNote.slice(0, 4096) : rawNote;
+        if (!networkId || !nick) break;
+        const saved = ircManager.setNickNote(userId, networkId, nick, note);
+        fanOut(userId, {
+          kind: 'nick-note-updated',
+          networkId,
+          nick,
+          note: saved ? saved.note : '',
+          updatedAt: saved ? saved.updatedAt : null,
+        });
+        break;
+      }
       case 'add-ignore': {
         const networkId = Number(msg.networkId);
         const mask = typeof msg.mask === 'string' ? msg.mask.trim() : '';

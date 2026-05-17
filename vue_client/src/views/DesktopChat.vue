@@ -121,6 +121,11 @@
       v-if="showKbdHelp"
       @close="showKbdHelp = false"
     />
+    <NickNoteModal
+      v-if="nickNotes.editor.open"
+      :nick="nickNotes.editor.nick"
+      :network-id="nickNotes.editor.networkId"
+    />
   </div>
 </template>
 
@@ -145,8 +150,10 @@ import RecentUploadsModal from '../components/RecentUploadsModal.vue';
 import QuickSwitcher from '../components/QuickSwitcher.vue';
 import SearchModal from '../components/SearchModal.vue';
 import KeyboardHelpModal from '../components/KeyboardHelpModal.vue';
+import NickNoteModal from '../components/NickNoteModal.vue';
 import { useKeyboardShortcuts } from '../composables/useKeyboardShortcuts.js';
 import { useNicklistCollapseStore } from '../stores/nicklistCollapse.js';
+import { useNickNotesStore } from '../stores/nickNotes.js';
 import { useBufferActions } from '../composables/useBufferActions.js';
 import { useJumpToMessage } from '../composables/useJumpToMessage.js';
 
@@ -155,6 +162,7 @@ const { connected } = useSocket();
 const { active, activeBuf, topic, isServerBuffer, isChannel, bufferLabel } = useActiveBuffer();
 const settings = useSettingsStore();
 const nicklistCollapse = useNicklistCollapseStore();
+const nickNotes = useNickNotesStore();
 const bufferActions = useBufferActions();
 
 const showNetworkForm = ref(false);

@@ -10,6 +10,7 @@ import { listPinnedForUser } from '../db/pinnedBuffers.js';
 import { listCollapsedForUser } from '../db/nicklistCollapsed.js';
 import { listChannelNotifyForUser } from '../db/channelNotify.js';
 import { addMask as addIgnoreRow, removeMask as removeIgnoreRow, listMasks as listIgnoreRows, listAllForUser as listAllIgnoreRows } from '../db/ignoredMasks.js';
+import { listForUserGrouped as listNickNotesGrouped, setNote as setNickNoteRow, getNote as getNickNoteRow } from '../db/nickNotes.js';
 import { splitSay, splitAction } from './messageSplit.js';
 import db from '../db/index.js';
 
@@ -296,13 +297,15 @@ class IrcManager extends EventEmitter {
     const collapsedByNetwork = listCollapsedForUser(userId);
     const notifyByNetwork = listChannelNotifyForUser(userId);
     const ignoresByNetwork = ignoresGrouped(userId);
+    const notesByNetwork = listNickNotesGrouped(userId);
     return this.listConnections(userId).map((conn) => {
       const snap = conn.snapshot();
       const pinned = pinsByNetwork.get(snap.networkId) || [];
       const collapsedNicklists = collapsedByNetwork.get(snap.networkId) || {};
       const channelNotify = notifyByNetwork.get(snap.networkId) || {};
       const ignoredMasks = ignoresByNetwork.get(snap.networkId) || [];
-      return { ...snap, pinned, collapsedNicklists, channelNotify, ignoredMasks };
+      const nickNotes = notesByNetwork.get(snap.networkId) || [];
+      return { ...snap, pinned, collapsedNicklists, channelNotify, ignoredMasks, nickNotes };
     });
   }
 
@@ -316,6 +319,14 @@ class IrcManager extends EventEmitter {
 
   listIgnoredFor(userId, networkId) {
     return listIgnoreRows({ userId, networkId });
+  }
+
+  setNickNote(userId, networkId, nick, note) {
+    return setNickNoteRow({ userId, networkId, nick, note });
+  }
+
+  getNickNote(userId, networkId, nick) {
+    return getNickNoteRow({ userId, networkId, nick });
   }
 }
 
