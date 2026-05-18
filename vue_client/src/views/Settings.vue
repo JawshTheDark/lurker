@@ -52,6 +52,7 @@ import NotificationsPane from '../components/settings-panes/NotificationsPane.vu
 import HighlightsPane from '../components/settings-panes/HighlightsPane.vue';
 import IgnoresPane from '../components/settings-panes/IgnoresPane.vue';
 import UsersPane from '../components/settings-panes/UsersPane.vue';
+import NetworksPane from '../components/settings-panes/NetworksPane.vue';
 import AccountPane from '../components/settings-panes/AccountPane.vue';
 import AboutPane from '../components/settings-panes/AboutPane.vue';
 
@@ -72,6 +73,7 @@ const BESPOKE_PANES = {
   highlights: HighlightsPane,
   ignores: IgnoresPane,
   users: UsersPane,
+  networks: NetworksPane,
   account: AccountPane,
   about: AboutPane,
 };

@@ -9,6 +9,7 @@ import {
   createNetwork,
   updateNetwork,
   deleteNetwork,
+  reorderNetworks,
   listChannels,
   upsertChannel,
 } from '../db/networks.js';
@@ -50,6 +51,21 @@ router.post('/', (req, res) => {
   if (channel) upsertChannel(network.id, channel, true);
   if (network.autoconnect) ircManager.startNetwork(req.user.id, network.id);
   res.status(201).json({ network: networkPayload(network) });
+});
+
+// Rewrite sidebar order for the caller. Body: { ids: [n1, n2, ...] } in the
+// new order. Must match the user's current set exactly — partial reorders
+// rejected with 409 so the caller refetches and tries again.
+router.post('/reorder', (req, res) => {
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids : null;
+  if (!ids) return res.status(400).json({ error: 'ids array required' });
+  const next = reorderNetworks(req.user.id, ids);
+  if (next === null) {
+    const networks = listNetworksForUser(req.user.id).map(networkPayload);
+    return res.status(409).json({ error: 'network set mismatch', networks });
+  }
+  const networks = listNetworksForUser(req.user.id).map(networkPayload);
+  res.json({ networks });
 });
 
 router.patch('/:id', (req, res) => {

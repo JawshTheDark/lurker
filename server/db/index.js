@@ -449,6 +449,10 @@ ensureColumn('networks', 'sasl_password', 'TEXT');
 // Newline-delimited raw IRC commands fired after RPL_WELCOME, IRCCloud-style.
 // Supports `WAIT <seconds>` lines that pause before the next command.
 ensureColumn('networks', 'connect_commands', 'TEXT');
+// Per-user sidebar order. Dense integers (0..n-1) maintained on every
+// create/reorder; ties fall back to id ASC so freshly migrated rows stay in
+// their original creation order. See schemaVersion < 6 backfill below.
+ensureColumn('networks', 'position', 'INTEGER NOT NULL DEFAULT 0');
 ensureColumn('users', 'password_hash', 'TEXT');
 ensureColumn('users', 'last_seen_at', 'TEXT');
 
@@ -481,7 +485,7 @@ ensureColumn('messages', 'alt', 'INTEGER NOT NULL DEFAULT 0');
 // Schema versioning lets us retire one-shot recovery blocks once every
 // production DB has run through them. Bump SCHEMA_VERSION when adding a new
 // recovery block, and delete blocks for versions far enough in the past.
-const SCHEMA_VERSION = 5;
+const SCHEMA_VERSION = 6;
 const schemaVersionRow = db
   .prepare(`SELECT value FROM app_meta WHERE key = 'schema_version'`)
   .get();
@@ -708,6 +712,28 @@ if (schemaVersion < 5) {
       db.pragma(`foreign_keys = ${prevFk ? 'ON' : 'OFF'}`);
     }
   }
+}
+
+if (schemaVersion < 6) {
+  // Seed networks.position so existing rows keep their original (id-asc) order
+  // in the sidebar after the column lands. Per-user numbering: each user's
+  // networks renumber 0..n-1 independently so reorders never collide across
+  // accounts. Fresh installs see no rows here.
+  const users = db.prepare(`SELECT DISTINCT user_id AS userId FROM networks`).all();
+  const listForUser = db.prepare(
+    `SELECT id FROM networks WHERE user_id = ? ORDER BY id ASC`,
+  );
+  const setPos = db.prepare(`UPDATE networks SET position = ? WHERE id = ?`);
+  const seed = db.transaction(() => {
+    for (const { userId } of users) {
+      let i = 0;
+      for (const row of listForUser.all(userId)) {
+        setPos.run(i, row.id);
+        i += 1;
+      }
+    }
+  });
+  seed();
 }
 
 if (schemaVersion < SCHEMA_VERSION) {

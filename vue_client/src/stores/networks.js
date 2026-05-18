@@ -35,6 +35,23 @@ export const useNetworksStore = defineStore('networks', {
       if (idx >= 0) this.networks[idx] = network;
       return network;
     },
+    // Rewrite sidebar order. Server validates the id set; on 409 it echoes the
+    // authoritative list, which we apply so the UI snaps back to truth instead
+    // of staying out of sync after a concurrent add/delete from another tab.
+    async reorder(ids) {
+      try {
+        const { networks } = await api('/api/networks/reorder', {
+          method: 'POST',
+          body: { ids },
+        });
+        this.networks = networks;
+      } catch (err) {
+        if (err?.status === 409 && Array.isArray(err.data?.networks)) {
+          this.networks = err.data.networks;
+        }
+        throw err;
+      }
+    },
     async remove(id) {
       await api(`/api/networks/${id}`, { method: 'DELETE' });
       this.networks = this.networks.filter((n) => n.id !== id);
