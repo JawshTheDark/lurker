@@ -108,6 +108,20 @@ malformed envelope, unknown method, missing tool name.
 
 ## Examples
 
+### Claude Code
+
+Claude Code's MCP client speaks streamable HTTP natively, so the setup is a
+single command — no stdio bridge needed:
+
+```sh
+claude mcp add --transport http lurker https://<your-lurker>/mcp \
+  --header "Authorization: Bearer <your-token>"
+```
+
+`claude mcp list` confirms the entry. MCP servers load at session start, so
+restart Claude Code (start a new session) before the eight Lurker tools
+appear in tool calls. To remove it later, `claude mcp remove lurker`.
+
 ### Claude Desktop
 
 Add an entry under `mcpServers` in your Claude Desktop config (the exact
