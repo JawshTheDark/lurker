@@ -26,12 +26,7 @@
   >
     <WordBackdrop :word="backdropWord" />
 
-    <div
-      class="card"
-      :class="[`size-${size}`]"
-      tabindex="-1"
-      ref="cardEl"
-    >
+    <div class="card" :class="[`size-${size}`]" tabindex="-1" ref="cardEl">
       <slot name="head">
         <header v-if="title || $slots.title || $slots.subtitle || $slots.actions" class="head">
           <div class="title-wrap">
@@ -42,7 +37,12 @@
           </div>
           <div class="head-actions">
             <slot name="actions" />
-            <button class="link close-btn" type="button" :title="closeTitle" @click="$emit('close')">
+            <button
+              class="link close-btn"
+              type="button"
+              :title="closeTitle"
+              @click="$emit('close')"
+            >
               <i class="fa-solid fa-xmark"></i>
             </button>
           </div>
@@ -53,31 +53,33 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import WordBackdrop from './WordBackdrop.vue';
 
-const props = defineProps({
-  word: { type: String, default: '' },
-  title: { type: String, default: '' },
-  size: {
-    type: String,
-    default: 'lg',
-    validator: (v) => ['sm', 'md', 'lg', 'xl'].includes(v),
+const props = withDefaults(
+  defineProps<{
+    word?: string;
+    title?: string;
+    size?: string;
+    align?: string;
+    closeOnBackdrop?: boolean;
+    closeTitle?: string;
+  }>(),
+  {
+    word: '',
+    title: '',
+    size: 'lg',
+    align: 'center',
+    closeOnBackdrop: true,
+    closeTitle: 'close',
   },
-  align: {
-    type: String,
-    default: 'center',
-    validator: (v) => ['center', 'top'].includes(v),
-  },
-  closeOnBackdrop: { type: Boolean, default: true },
-  closeTitle: { type: String, default: 'close' },
-});
+);
 
-const emit = defineEmits(['close']);
+const emit = defineEmits<{ close: [] }>();
 
-const modalEl = ref(null);
-const cardEl = ref(null);
+const modalEl = ref<HTMLElement | null>(null);
+const cardEl = ref<HTMLElement | null>(null);
 
 // Fall back to the title when the caller didn't supply an explicit word,
 // so the wallpaper always says *something* even for one-off modals.
@@ -106,7 +108,9 @@ onMounted(() => {
   overflow: hidden;
   outline: none;
 }
-.modal.align-center { align-items: center; }
+.modal.align-center {
+  align-items: center;
+}
 .modal.align-top {
   align-items: flex-start;
   padding-top: 2vh;
@@ -114,7 +118,9 @@ onMounted(() => {
 /* Match the 2vh top so a fully-tall card has equal breathing room
    above and below. Default .card max-height: 85vh would otherwise
    leave a ~13vh gap at the bottom. */
-.modal.align-top .card { max-height: 96vh; }
+.modal.align-top .card {
+  max-height: 96vh;
+}
 
 /* On mobile every modal becomes a full-screen sheet — the card fills the
    viewport so the title is glued to the top and the body extends to the
@@ -152,10 +158,18 @@ onMounted(() => {
   padding: 24px var(--card-pad-x);
   outline: none;
 }
-.card.size-sm { width: min(520px, 92vw); }
-.card.size-md { width: min(640px, 92vw); }
-.card.size-lg { width: min(720px, 92vw); }
-.card.size-xl { width: min(900px, 92vw); }
+.card.size-sm {
+  width: min(520px, 92vw);
+}
+.card.size-md {
+  width: min(640px, 92vw);
+}
+.card.size-lg {
+  width: min(720px, 92vw);
+}
+.card.size-xl {
+  width: min(900px, 92vw);
+}
 
 .head {
   display: flex;
@@ -205,5 +219,7 @@ onMounted(() => {
   font-size: 1.2em;
   padding: 4px 8px;
 }
-.close-btn:hover { color: var(--accent); }
+.close-btn:hover {
+  color: var(--accent);
+}
 </style>

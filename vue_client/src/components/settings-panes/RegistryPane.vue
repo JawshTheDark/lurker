@@ -32,15 +32,14 @@
   </section>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, computed } from 'vue';
 import { useSettingsStore } from '../../stores/settings.js';
 import { CATEGORIES, GROUPS } from '../../utils/settingsRegistry.js';
+import type { SettingOption, SettingValue } from '../../../../shared/settingsRegistry.js';
 import SettingsRow from '../SettingsRow.vue';
 
-const props = defineProps({
-  categoryId: { type: String, required: true },
-});
+const props = defineProps<{ categoryId: string }>();
 
 const settings = useSettingsStore();
 const error = ref('');
@@ -53,11 +52,11 @@ const categoryLabel = computed(() => {
 const groups = computed(() => {
   const items = settings.registry.filter((opt) => opt.category === props.categoryId);
   if (!items.length) return [];
-  const groupsMap = new Map();
+  const groupsMap = new Map<string, SettingOption[]>();
   for (const opt of items) {
     const gid = opt.group || '_';
     if (!groupsMap.has(gid)) groupsMap.set(gid, []);
-    groupsMap.get(gid).push(opt);
+    groupsMap.get(gid)!.push(opt);
   }
   return Array.from(groupsMap, ([gid, gItems]) => ({
     id: gid,
@@ -66,20 +65,20 @@ const groups = computed(() => {
   }));
 });
 
-async function onCommit(key, value) {
+async function onCommit(key: string, value: SettingValue) {
   error.value = '';
   try {
     await settings.setValue(key, value);
-  } catch (e) {
+  } catch (e: any) {
     error.value = e.message || 'failed to save';
   }
 }
 
-async function onReset(key) {
+async function onReset(key: string) {
   error.value = '';
   try {
     await settings.reset(key);
-  } catch (e) {
+  } catch (e: any) {
     error.value = e.message || 'failed to reset';
   }
 }

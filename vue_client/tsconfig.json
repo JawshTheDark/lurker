@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  // Vue client. Vite transpiles for dev/build; `vue-tsc` is the type-check
+  // gate and understands `.vue` single-file components.
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    // `bundler` resolution lets relative imports omit extensions, the way
+    // Vite resolves them. Imports from ../shared resolve to .ts sources.
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "target": "es2023",
+    "lib": ["es2023", "dom", "dom.iterable"],
+    "types": ["node"]
+  },
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.vue",
+    "src/vite-env.d.ts",
+    "vite.config.ts",
+    "../shared/**/*.ts"
+  ],
+  "exclude": ["node_modules", "dist"]
+}

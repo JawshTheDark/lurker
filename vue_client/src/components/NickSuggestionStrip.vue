@@ -29,23 +29,35 @@
       :style="row.color ? { color: row.color } : null"
       @mousedown.prevent
       @click="emit('select', row.nick)"
-    >{{ row.nick }}</div>
+    >
+      {{ row.nick }}
+    </div>
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { computed } from 'vue';
 import { buildNickCandidates } from '../utils/nickCompletion.js';
 import { useIgnoresStore } from '../stores/ignores.js';
 import { useNickColors } from '../composables/useNickColors.js';
+import type { Buffer } from '../stores/buffers.js';
 
-const props = defineProps({
-  query: { type: String, default: '' },
-  buffer: { type: Object, default: null },
-  selfNick: { type: String, default: '' },
-});
+const props = withDefaults(
+  defineProps<{
+    query?: string;
+    buffer?: Buffer | null;
+    selfNick?: string;
+  }>(),
+  {
+    query: '',
+    buffer: null,
+    selfNick: '',
+  },
+);
 
-const emit = defineEmits(['select']);
+const emit = defineEmits<{
+  select: [nick: string];
+}>();
 
 const ignores = useIgnoresStore();
 const nickColors = useNickColors();
@@ -54,7 +66,7 @@ const rows = computed(() => {
   if (!props.query) return [];
   const networkId = props.buffer?.networkId;
   const isIgnored = networkId
-    ? (nick, userhost) => ignores.isIgnored(networkId, nick, userhost)
+    ? (nick: string, userhost: string | null) => ignores.isIgnored(networkId, nick, userhost ?? '')
     : null;
   return buildNickCandidates(props.buffer, props.selfNick, props.query, isIgnored)
     .slice(0, 30)
@@ -91,7 +103,9 @@ const rows = computed(() => {
   pointer-events: none;
   transition: opacity 80ms linear;
 }
-.nick-suggestion-strip::-webkit-scrollbar { display: none; }
+.nick-suggestion-strip::-webkit-scrollbar {
+  display: none;
+}
 .nick-suggestion-strip.visible {
   opacity: 1;
   pointer-events: auto;

@@ -12,15 +12,21 @@
   </AppModal>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import AppModal from './AppModal.vue';
 import LinkedText from './LinkedText.vue';
 
-defineProps({
-  topic: { type: String, default: '' },
-  label: { type: String, default: '' },
-});
-defineEmits(['close']);
+withDefaults(
+  defineProps<{
+    topic?: string;
+    label?: string;
+  }>(),
+  { topic: '', label: '' },
+);
+
+defineEmits<{
+  close: [];
+}>();
 
 // The label is the channel name and includes characters like '#' that
 // don't tile as nicely as a plain word, so just say "topic" on the wall.

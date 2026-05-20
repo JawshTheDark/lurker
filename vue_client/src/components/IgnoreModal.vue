@@ -18,9 +18,9 @@
         />
       </label>
       <p class="hint">
-        Plain nick (e.g. <code>{{ nick }}</code>) or <code>nick!user@host</code>
-        with <code>*</code> wildcards. The default targets this user's
-        identity (<code>user@host</code>) so it survives nick changes.
+        Plain nick (e.g. <code>{{ nick }}</code
+        >) or <code>nick!user@host</code> with <code>*</code> wildcards. The default targets this
+        user's identity (<code>user@host</code>) so it survives nick changes.
       </p>
       <p class="preview">
         Messages matching <code>{{ mask || '∅' }}</code> will be hidden on this network.
@@ -33,30 +33,33 @@
   </AppModal>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { onMounted, ref } from 'vue';
 import AppModal from './AppModal.vue';
 import { useIgnoresStore } from '../stores/ignores.js';
 
-const props = defineProps({
-  nick: { type: String, required: true },
-  user: { type: String, default: null },
-  host: { type: String, default: null },
-  networkId: { type: Number, default: null },
-});
-const emit = defineEmits(['close']);
+const props = withDefaults(
+  defineProps<{
+    nick: string;
+    user?: string | null;
+    host?: string | null;
+    networkId?: number | null;
+  }>(),
+  {
+    user: null,
+    host: null,
+    networkId: null,
+  },
+);
+const emit = defineEmits<{ close: [] }>();
 
 const ignores = useIgnoresStore();
-const inputEl = ref(null);
+const inputEl = ref<HTMLInputElement | null>(null);
 
 // Default to a hostmask that hides the nick segment — IRCCloud convention.
 // If we don't have an observed user@host yet (member entered before WHO
 // completed and we never saw a join), fall back to nick!*@*.
-const mask = ref(
-  props.user && props.host
-    ? `*!${props.user}@${props.host}`
-    : `${props.nick}!*@*`,
-);
+const mask = ref(props.user && props.host ? `*!${props.user}@${props.host}` : `${props.nick}!*@*`);
 
 function confirm() {
   const trimmed = mask.value.trim();
@@ -95,14 +98,19 @@ input {
   padding: 6px 8px;
   font: inherit;
 }
-input:focus { outline: 1px solid var(--accent); }
-.hint, .preview {
+input:focus {
+  outline: 1px solid var(--accent);
+}
+.hint,
+.preview {
   margin: 0;
   color: var(--fg-muted);
   font-size: 0.9em;
   line-height: 1.45;
 }
-.preview { color: var(--fg); }
+.preview {
+  color: var(--fg);
+}
 code {
   background: var(--bg-soft);
   padding: 0 4px;
@@ -134,5 +142,7 @@ code {
 .btn-primary:hover:not(:disabled) {
   background: color-mix(in srgb, var(--accent) 15%, transparent);
 }
-.btn-secondary:hover { background: var(--bg-soft); }
+.btn-secondary:hover {
+  background: var(--bg-soft);
+}
 </style>

@@ -10,7 +10,9 @@
 .settings-pane {
   padding: 16px;
 }
-.settings-pane > * { max-width: 70ch; }
+.settings-pane > * {
+  max-width: 70ch;
+}
 .settings-pane h2 {
   margin: 0 0 6px;
   color: var(--accent);
@@ -31,7 +33,9 @@
   font-size: 0.9em;
   font-weight: 600;
 }
-.settings-pane > .subhead:first-of-type { margin-top: 4px; }
+.settings-pane > .subhead:first-of-type {
+  margin-top: 4px;
+}
 
 .settings-pane .link {
   background: none;
@@ -41,9 +45,16 @@
   cursor: pointer;
   font: inherit;
 }
-.settings-pane .link:hover:not(:disabled) { color: var(--fg); }
-.settings-pane .link:disabled { opacity: 0.4; cursor: not-allowed; }
-.settings-pane .link.danger { color: var(--bad); }
+.settings-pane .link:hover:not(:disabled) {
+  color: var(--fg);
+}
+.settings-pane .link:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.settings-pane .link.danger {
+  color: var(--bad);
+}
 
 .settings-pane .error.inline {
   color: var(--bad);
@@ -62,7 +73,11 @@
 }
 
 /* Compact single-line row used by device lists, passkeys, users, invites. */
-.settings-pane .device-list { list-style: none; margin: 0; padding: 0; }
+.settings-pane .device-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
 .settings-pane .device {
   display: grid;
   grid-template-columns: 1fr max-content max-content;
@@ -71,9 +86,15 @@
   padding: 6px 0;
   border-top: 1px solid var(--border);
 }
-.settings-pane .device:first-child { border-top: none; }
-.settings-pane .device:hover { background: var(--bg-soft); }
-.settings-pane .device .ua { color: var(--fg); }
+.settings-pane .device:first-child {
+  border-top: none;
+}
+.settings-pane .device:hover {
+  background: var(--bg-soft);
+}
+.settings-pane .device .ua {
+  color: var(--fg);
+}
 .settings-pane .device .last-seen {
   color: var(--fg-muted);
   font-size: 0.95em;
@@ -99,9 +120,15 @@
   align-items: center;
   gap: 10px;
 }
-.settings-pane .hl-row select { min-width: 160px; }
-.settings-pane .hl-row input[type="range"] { width: 220px; }
-.settings-pane .hl-row--dim { color: var(--fg-muted); }
+.settings-pane .hl-row select {
+  min-width: 160px;
+}
+.settings-pane .hl-row input[type='range'] {
+  width: 220px;
+}
+.settings-pane .hl-row--dim {
+  color: var(--fg-muted);
+}
 .settings-pane .hl-label {
   color: var(--fg-muted);
   min-width: 7em;

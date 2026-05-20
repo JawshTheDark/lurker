@@ -7,15 +7,15 @@
   <span class="nick-ref" :style="style">{{ nick }}</span>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { computed } from 'vue';
 import { useNetworksStore } from '../stores/networks.js';
 import { useBuffersStore } from '../stores/buffers.js';
 import { useNickColors } from '../composables/useNickColors.js';
 
-const props = defineProps({
-  nick: { type: String, required: true },
-});
+const props = defineProps<{
+  nick: string;
+}>();
 
 const networks = useNetworksStore();
 const buffers = useBuffersStore();
@@ -42,5 +42,7 @@ const style = computed(() => {
 </script>
 
 <style scoped>
-.nick-ref { color: inherit; }
+.nick-ref {
+  color: inherit;
+}
 </style>

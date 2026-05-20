@@ -8,7 +8,9 @@
     <!-- Screen: channel list -->
     <section v-if="screen === 'list'" class="screen list">
       <header class="bar">
-        <button type="button" class="logo" title="Open system console" @click="openSystemConsole">lurker</button>
+        <button type="button" class="logo" title="Open system console" @click="openSystemConsole">
+          lurker
+        </button>
         <span v-if="!connected" class="status off" title="Disconnected">●</span>
         <span class="spacer"></span>
         <button class="icon" title="Search messages" @click="showSearch = true">
@@ -43,24 +45,20 @@
         </button>
         <span class="title">{{ isSystemConsole ? 'System console' : bufferLabel }}</span>
         <span class="spacer"></span>
-        <button
-          v-if="topic"
-          class="icon"
-          title="View topic"
-          @click="showTopic = true"
-        ><i class="fa-solid fa-circle-info"></i></button>
+        <button v-if="topic" class="icon" title="View topic" @click="showTopic = true">
+          <i class="fa-solid fa-circle-info"></i>
+        </button>
         <button
           v-if="isServerBuffer"
           class="icon"
           title="Browse channels"
           @click="showChannelList = true"
-        ><i class="fa-solid fa-list"></i></button>
-        <button
-          v-if="isServerBuffer"
-          class="icon"
-          title="Edit network"
-          @click="editActiveNetwork"
-        ><i class="fa-solid fa-gear"></i></button>
+        >
+          <i class="fa-solid fa-list"></i>
+        </button>
+        <button v-if="isServerBuffer" class="icon" title="Edit network" @click="editActiveNetwork">
+          <i class="fa-solid fa-gear"></i>
+        </button>
         <button class="icon" title="Search messages" @click="showSearch = true">
           <i class="fa-solid fa-magnifying-glass"></i>
         </button>
@@ -76,13 +74,12 @@
           class="icon"
           title="Buffer actions"
           @click="openBufferActions"
-        ><i class="fa-solid fa-gear"></i></button>
-        <button
-          v-if="isChannel"
-          class="icon"
-          title="Members"
-          @click="screen = 'members'"
-        ><i class="fa-solid fa-users"></i></button>
+        >
+          <i class="fa-solid fa-gear"></i>
+        </button>
+        <button v-if="isChannel" class="icon" title="Members" @click="screen = 'members'">
+          <i class="fa-solid fa-users"></i>
+        </button>
       </header>
       <SystemConsole v-if="isSystemConsole" />
       <MessageList v-else :pending-scroll-id="pendingScrollId" />
@@ -103,7 +100,7 @@
 
     <NetworkForm
       v-if="showNetworkForm"
-      :network="editingNetwork"
+      :network="editingNetwork ?? undefined"
       @close="closeNetworkForm"
     />
     <HighlightsModal
@@ -111,11 +108,7 @@
       @close="showHighlights = false"
       @jump="onJumpToMessage"
     />
-    <BookmarksModal
-      v-if="showBookmarks"
-      @close="showBookmarks = false"
-      @jump="onJumpToMessage"
-    />
+    <BookmarksModal v-if="showBookmarks" @close="showBookmarks = false" @jump="onJumpToMessage" />
     <TopicModal
       v-if="showTopic && activeKey"
       :topic="topic"
@@ -127,26 +120,20 @@
       :network-id="active.networkId"
       @close="showChannelList = false"
     />
-    <RecentUploadsModal
-      v-if="showUploads"
-      @close="showUploads = false"
-    />
-    <SearchModal
-      v-if="showSearch"
-      @close="showSearch = false"
-      @jump="onJumpToMessage"
-    />
+    <RecentUploadsModal v-if="showUploads" @close="showUploads = false" />
+    <SearchModal v-if="showSearch" @close="showSearch = false" @jump="onJumpToMessage" />
     <NickNoteModal
-      v-if="nickNotes.editor.open"
+      v-if="nickNotes.editor.open && nickNotes.editor.networkId != null"
       :nick="nickNotes.editor.nick"
       :network-id="nickNotes.editor.networkId"
     />
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { computed, ref, watch } from 'vue';
-import { useBuffersStore } from '../stores/buffers.js';
+import type { Network } from '../stores/networks.js';
+import type { BufferLike } from '../composables/useBufferActions.js';
 import { useNetworksStore } from '../stores/networks.js';
 import { useSocket } from '../composables/useSocket.js';
 import { useVisualViewportHeight } from '../composables/useViewport.js';
@@ -170,10 +157,18 @@ import NickNoteModal from '../components/NickNoteModal.vue';
 import { useNickNotesStore } from '../stores/nickNotes.js';
 import { useJumpToMessage } from '../composables/useJumpToMessage.js';
 
-const buffers = useBuffersStore();
 const networks = useNetworksStore();
 const { connected } = useSocket();
-const { active, activeKey, activeBuf, isChannel, isServerBuffer, bufferLabel, topic, isSystemConsole } = useActiveBuffer();
+const {
+  active,
+  activeKey,
+  activeBuf,
+  isChannel,
+  isServerBuffer,
+  bufferLabel,
+  topic,
+  isSystemConsole,
+} = useActiveBuffer();
 const bufferActions = useBufferActions();
 const nickNotes = useNickNotesStore();
 
@@ -202,10 +197,10 @@ const showChannelList = ref(false);
 const showUploads = ref(false);
 const showSearch = ref(false);
 const showNetworkForm = ref(false);
-const editingNetwork = ref(null);
-const pendingScrollId = ref(null);
-const messageInputRef = ref(null);
-const bufferCogBtn = ref(null);
+const editingNetwork = ref<Network | null>(null);
+const pendingScrollId = ref<number | null>(null);
+const messageInputRef = ref<{ focus: () => void } | null>(null);
+const bufferCogBtn = ref<HTMLElement | null>(null);
 
 // Server buffers already have a dedicated browse-channels action in the bar;
 // the cog is for channel/DM buffer-level actions (pin, always-notify).
@@ -213,7 +208,7 @@ const showBufferCog = computed(() => !!active.value && !isServerBuffer.value);
 
 function openBufferActions() {
   if (!activeBuf.value) return;
-  bufferActions.openMenuFromButton(activeBuf.value, bufferCogBtn.value);
+  bufferActions.openMenuFromButton(activeBuf.value as BufferLike, bufferCogBtn.value);
 }
 
 function openAddNetwork() {
@@ -222,7 +217,7 @@ function openAddNetwork() {
 }
 
 function editActiveNetwork() {
-  const net = active.value?.network;
+  const net = active.value?.network as Network | undefined;
   if (!net) return;
   editingNetwork.value = net;
   showNetworkForm.value = true;
@@ -253,8 +248,8 @@ watch(activeKey, (next) => {
 // belt-and-suspenders advance: if a row was hit and a buffer is active, go
 // to the buffer screen. Vue event bubbling runs BufferList's @click first,
 // so by the time we read activeKey it's already up to date.
-function onBufferListClick(e) {
-  const hit = e.target.closest('.channels li, .net-head');
+function onBufferListClick(e: MouseEvent) {
+  const hit = (e.target as Element).closest('.channels li, .net-head');
   if (!hit) return;
   if (activeKey.value) screen.value = 'buffer';
 }
@@ -268,7 +263,9 @@ const onJumpToMessage = useJumpToMessage({
   // Mobile shell stacks list → buffer → members. Tapping a search result or
   // notification needs to forward us onto the buffer screen so the message
   // we just jumped to is actually visible.
-  afterActivate: () => { screen.value = 'buffer'; },
+  afterActivate: () => {
+    screen.value = 'buffer';
+  },
 });
 
 useChatBootstrap({ onJump: onJumpToMessage });
@@ -325,7 +322,9 @@ useChatBootstrap({ onJump: onJumpToMessage });
   font: inherit;
   cursor: pointer;
 }
-.status.off { color: var(--bad); }
+.status.off {
+  color: var(--bad);
+}
 .title {
   color: var(--accent);
   white-space: nowrap;
@@ -333,7 +332,9 @@ useChatBootstrap({ onJump: onJumpToMessage });
   text-overflow: ellipsis;
   min-width: 0;
 }
-.spacer { flex: 1; }
+.spacer {
+  flex: 1;
+}
 .icon {
   background: none;
   border: none;
@@ -349,19 +350,33 @@ useChatBootstrap({ onJump: onJumpToMessage });
   align-items: center;
   justify-content: center;
 }
-.icon:hover { color: var(--fg); }
-.icon.back { margin-left: -4px; }
+.icon:hover {
+  color: var(--fg);
+}
+.icon.back {
+  margin-left: -4px;
+}
 
 /* The buffer screen's MessageList + StatusBar + MessageInput chain mirrors
    the desktop rows but in a vertical flex. min-height: 0 on the screen +
    flex: 1 on MessageList is what lets it scroll without pushing the input
    off the visible viewport. */
-.buffer :deep(.message-list) { flex: 1; min-height: 0; }
-.buffer :deep(.status-bar) { flex: 0 0 auto; }
-.buffer :deep(.input) { flex: 0 0 auto; }
+.buffer :deep(.message-list) {
+  flex: 1;
+  min-height: 0;
+}
+.buffer :deep(.status-bar) {
+  flex: 0 0 auto;
+}
+.buffer :deep(.input) {
+  flex: 0 0 auto;
+}
 
 /* Member list takes the rest of the height on its own screen. */
-.members-screen :deep(.members) { flex: 1; min-height: 0; }
+.members-screen :deep(.members) {
+  flex: 1;
+  min-height: 0;
+}
 
 /* The wrap is the flex child that takes the rest of the list screen; the
    inner BufferList's own `flex: 1; overflow: auto` handles its scroll. */
@@ -371,5 +386,8 @@ useChatBootstrap({ onJump: onJumpToMessage });
   display: flex;
   flex-direction: column;
 }
-.bufferlist-wrap :deep(.buffer-list) { flex: 1; min-height: 0; }
+.bufferlist-wrap :deep(.buffer-list) {
+  flex: 1;
+  min-height: 0;
+}
 </style>

@@ -26,10 +26,10 @@ MCP-aware client at your Lurker, and what tools are available.
 
 ## Scopes
 
-| scope | what it grants |
-|---|---|
-| `read` | All read verbs. The token can list networks, browse buffers, fetch backlog, search history, and read your nick notes. |
-| `read-write` | Everything `read` does, plus sending messages, sending CTCP actions, and writing nick notes. |
+| scope        | what it grants                                                                                                        |
+| ------------ | --------------------------------------------------------------------------------------------------------------------- |
+| `read`       | All read verbs. The token can list networks, browse buffers, fetch backlog, search history, and read your nick notes. |
+| `read-write` | Everything `read` does, plus sending messages, sending CTCP actions, and writing nick notes.                          |
 
 Scopes are coarse on purpose. Per-verb scopes are not implemented because
 the threat model assumes the operator is the only person holding tokens for
@@ -48,42 +48,50 @@ deliberately out of scope.
 All eight tools come back through `tools/list` with full JSON Schemas for
 their inputs. A read-only token only sees the five read tools.
 
-### `list_networks`  *(read)*
+### `list_networks` _(read)_
+
 Networks configured for your account, with live connection state and the
 current nick.
 
-### `list_buffers`  *(read)*
+### `list_buffers` _(read)_
+
 Channels and DMs you have history for, with the most recent message
 timestamp. Optionally filter by `networkId`. Server pseudo-buffers
 (`:server:*`) are deliberately excluded — they're a UI plumbing concept,
 not data agents should reason about.
 
-### `recent_messages`  *(read)*
+### `recent_messages` _(read)_
+
 Window of recent messages for one buffer, oldest-first. Paginate backwards
 by passing the lowest id from a previous result as `before`. Limit defaults
 to 100, capped at 500.
 
-### `search_messages`  *(read)*
+### `search_messages` _(read)_
+
 Full-text search across your message history. Free-text `query` runs through
 SQLite FTS5 (multiple terms are ANDed). Optional structured filters:
 `networkId`, `target`, `nick`. Limit defaults to 50, capped at 100.
 
-### `get_nick_note`  *(read)*
+### `get_nick_note` _(read)_
+
 Read your free-form note about a nick on a network. Empty string when no
 note exists.
 
-### `set_nick_note`  *(read-write)*
+### `set_nick_note` _(read-write)_
+
 Write a free-form note. Pass an empty string to delete. Notes are capped at
 4096 chars. Writes fan out to any open browser tabs so the UI reflects the
 change immediately.
 
-### `send_message`  *(read-write)*
+### `send_message` _(read-write)_
+
 Send a PRIVMSG to a channel or peer. Returns
 `{ ok: false, error: "not-connected" }` when the network is offline; this
 comes back as a normal tool result (not a JSON-RPC error) so agents can
 branch on the value instead of catching.
 
-### `send_action`  *(read-write)*
+### `send_action` _(read-write)_
+
 Send a CTCP ACTION (`/me ...`). Same shape and error semantics as
 `send_message`.
 

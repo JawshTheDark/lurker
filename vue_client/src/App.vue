@@ -9,7 +9,7 @@
   <ContextMenu />
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { onMounted } from 'vue';
 import { useAuthStore } from './stores/auth.js';
 import { useSettingsStore } from './stores/settings.js';

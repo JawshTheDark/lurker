@@ -19,9 +19,9 @@
       <section id="view-config" class="view" hidden>
         <h2>Connection</h2>
         <p class="hint">
-          Point this app at your Lurker instance's MCP endpoint (the URL must
-          end in <code>/mcp</code>). Mint a read-write API token in Lurker →
-          Settings → API tokens; paste it here.
+          Point this app at your Lurker instance's MCP endpoint (the URL must end in
+          <code>/mcp</code>). Mint a read-write API token in Lurker → Settings → API tokens; paste
+          it here.
         </p>
         <form id="config-form">
           <label>
@@ -35,19 +35,14 @@
           </label>
           <label>
             API token
-            <input
-              type="password"
-              name="lurkerToken"
-              required
-              autocomplete="off"
-            />
+            <input type="password" name="lurkerToken" required autocomplete="off" />
           </label>
           <button type="submit">Test &amp; save</button>
         </form>
         <div id="config-status" class="status"></div>
         <p id="env-warning" class="warning" hidden>
-          ⚠ <code>ANTHROPIC_API_KEY</code> is not set in this integration's
-          environment. Scans will fail until you set it in <code>.env</code>
+          ⚠ <code>ANTHROPIC_API_KEY</code> is not set in this integration's environment. Scans will
+          fail until you set it in <code>.env</code>
           and restart the server.
         </p>
       </section>
@@ -65,14 +60,7 @@
           </label>
           <label>
             Backlog depth
-            <input
-              type="number"
-              name="depth"
-              min="10"
-              max="500"
-              value="200"
-              required
-            />
+            <input type="number" name="depth" min="10" max="500" value="200" required />
           </label>
           <button type="submit" id="scan-submit">Scan</button>
         </form>

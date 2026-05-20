@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  // Compiler options shared by the server (tsconfig.json) and the Vue client
+  // (vue_client/tsconfig.json). Module/target/lib settings differ per package
+  // and are set in those files; everything here is environment-agnostic.
+  "compilerOptions": {
+    // `strict` turns on the full strict family (noImplicitAny, strictNullChecks,
+    // etc.) — the whole point of the migration.
+    "strict": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitOverride": true,
+    "esModuleInterop": true,
+    // The codebase has no .d.ts authored by us beyond a couple of ambient
+    // shims; skipping lib checks keeps third-party type noise out of our gate.
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    // Require `import type` for type-only imports so transpilers (tsx, esbuild,
+    // Vite) never have to guess what to elide.
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "resolveJsonModule": true,
+    // Nothing is compiled by tsc: tsx runs the server, Vite builds the client.
+    // tsc / vue-tsc are type-checkers only.
+    "noEmit": true
+  }
+}

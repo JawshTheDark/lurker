@@ -12,7 +12,12 @@
     @dragleave.prevent="onDragLeave"
     @drop.prevent="onDrop"
   >
-    <span class="prompt"><template v-if="!isMobile">{{ promptLabel }}<span v-if="awayLabel" class="away">&nbsp;{{ awayLabel }}</span>&nbsp;</template>&gt;</span>
+    <span class="prompt"
+      ><template v-if="!isMobile"
+        >{{ promptLabel }}<span v-if="awayLabel" class="away">&nbsp;{{ awayLabel }}</span
+        >&nbsp;</template
+      >&gt;</span
+    >
     <textarea
       ref="inputEl"
       v-model="text"
@@ -39,7 +44,9 @@
       :disabled="!sendable"
       title="upload image"
       @click="onPickFile"
-    ><i class="fa-solid fa-paperclip"></i></button>
+    >
+      <i class="fa-solid fa-paperclip"></i>
+    </button>
     <!-- mIRC color picker trigger. Opt-in via `input.show_format_button`
          (off by default) — the Cmd/Ctrl+B/I/U shortcuts remain active either
          way, so hiding the icon only removes the mouse-driven path.
@@ -54,7 +61,9 @@
       title="mIRC formatting (Cmd/Ctrl+B/I/U for bold/italic/underline)"
       @mousedown.prevent
       @click="onToggleColorPicker"
-    ><i class="fa-solid fa-palette"></i></div>
+    >
+      <i class="fa-solid fa-palette"></i>
+    </div>
     <MircColorPicker
       v-if="showFormatButton"
       :open="colorPickerOpen"
@@ -91,7 +100,7 @@
   </form>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, computed, watch, onBeforeUnmount, onMounted } from 'vue';
 import { useNetworksStore } from '../stores/networks.js';
 import { useBuffersStore } from '../stores/buffers.js';
@@ -112,6 +121,7 @@ import LongMessageUploadModal from './LongMessageUploadModal.vue';
 import MircColorPicker from './MircColorPicker.vue';
 import { useSelfLabel } from '../composables/useSelfLabel.js';
 import { useViewport } from '../composables/useViewport.js';
+import type { Buffer } from '../stores/buffers.js';
 
 const networks = useNetworksStore();
 const buffers = useBuffersStore();
@@ -121,9 +131,9 @@ const settings = useSettingsStore();
 const uploads = useUploadsStore();
 const toasts = useToastsStore();
 const ignores = useIgnoresStore();
-const inputEl = ref(null);
-const formEl = ref(null);
-const fileInputEl = ref(null);
+const inputEl = ref<HTMLTextAreaElement | null>(null);
+const formEl = ref<HTMLElement | null>(null);
+const fileInputEl = ref<HTMLInputElement | null>(null);
 const dragOver = ref(false);
 const pickerOpen = ref(false);
 const pickerQuery = ref('');
@@ -155,9 +165,9 @@ const text = computed({
     onInput();
   },
 });
-const buffer = computed(() => (active.value
-  ? buffers.byKey(`${active.value.networkId}::${active.value.target}`)
-  : null));
+const buffer = computed(() =>
+  active.value ? buffers.byKey(`${active.value.networkId}::${active.value.target}`) : null,
+);
 const ownNick = computed(() => {
   const a = active.value;
   if (!a) return '';
@@ -184,8 +194,8 @@ const showFormatButton = computed(() => settings.effective('input.show_format_bu
 // keyboard can still get phone-typing assistance back.
 const systemFeatures = computed(() => {
   const baseAutocorrect = settings.effective('input.autocorrect') !== false;
-  const forceMobile = isMobile.value
-    && settings.effective('input.autocorrect_force_mobile') === true;
+  const forceMobile =
+    isMobile.value && settings.effective('input.autocorrect_force_mobile') === true;
   const autocorrectOn = baseAutocorrect || forceMobile;
   return {
     spellcheck: settings.effective('input.spellcheck') !== false,
@@ -201,10 +211,10 @@ const systemFeatures = computed(() => {
 const { promptLabel, awayLabel } = useSelfLabel();
 const { isMobile } = useViewport();
 
-let typingState = null;
+let typingState: string | null = null;
 let lastActiveSentAt = 0;
-let inactivityTimer = null;
-let typingTarget = null;
+let inactivityTimer: ReturnType<typeof setTimeout> | null = null;
+let typingTarget: { networkId: number; target: string } | null = null;
 
 // Outgoing-split awareness. We estimate how many IRC lines the current input
 // would split into and push that to the shared composing state so StatusBar
@@ -229,7 +239,7 @@ const longMessageUploading = ref(false);
 // some other target, but the wire chunks are the same. Other slash commands
 // (/raw, /join, etc.) don't pass through the splitter — return null to
 // signal "no split risk".
-function bodyForSplit(text) {
+function bodyForSplit(text: string): { body: string; isAction: boolean } {
   if (!text) return { body: '', isAction: false };
   // // escape: `//foo` is a literal `/foo` message, not a command, so it does
   // pass through PRIVMSG and is subject to the splitter.
@@ -248,26 +258,31 @@ function bodyForSplit(text) {
   return { body: '', isAction: false };
 }
 
-function computeChunks(text) {
+function computeChunks(text: string): { chunks: number; isAction: boolean } {
   const { body, isAction } = bodyForSplit(text);
   const chunks = isAction ? chunkCountForAction(body) : chunkCountForSay(body);
   return { chunks, isAction };
 }
 
-function sendTyping(networkId, target, state) {
+function sendTyping(networkId: number, target: string, state: string): void {
   socketSend({ type: 'typing', networkId, target, state });
 }
 
-function clearInactivityTimer() {
+function clearInactivityTimer(): void {
   if (inactivityTimer) {
     clearTimeout(inactivityTimer);
     inactivityTimer = null;
   }
 }
 
-function endTypingTo(target) {
+function endTypingTo(target: { networkId: number; target: string } | null | undefined): void {
   if (!target) return;
-  if (typingState && typingTarget && typingTarget.target === target.target && typingTarget.networkId === target.networkId) {
+  if (
+    typingState &&
+    typingTarget &&
+    typingTarget.target === target.target &&
+    typingTarget.networkId === target.networkId
+  ) {
     sendTyping(target.networkId, target.target, 'done');
   }
   typingState = null;
@@ -277,14 +292,24 @@ function endTypingTo(target) {
 
 // Tab completion session — null when no Tab cycle is active. Reset on any
 // non-Tab keydown, blur, submit, or buffer change.
-let completion = null;
-let cycling = false;  // true while we're programmatically rewriting `text`
+interface CompletionState {
+  prefix: string;
+  tail: string;
+  token: string;
+  isChannel: boolean;
+  atLineStart: boolean;
+  matches: string[];
+  index: number;
+  caret: number;
+}
+let completion: CompletionState | null = null;
+let cycling = false; // true while we're programmatically rewriting `text`
 
 // Input history walking state. `historyIndex` is null when we're not in a
 // recall walk; otherwise it points into the per-buffer history slice.
 // `historyDraft` preserves whatever the user had typed before they hit Up,
 // so Down past the newest restores the in-progress draft.
-let historyIndex = null;
+let historyIndex: number | null = null;
 let historyDraft = '';
 
 function resetHistoryNav() {
@@ -292,7 +317,7 @@ function resetHistoryNav() {
   historyDraft = '';
 }
 
-function setInputAndCaretEnd(value) {
+function setInputAndCaretEnd(value: string): void {
   cycling = true;
   text.value = value;
   // Hold `cycling` across the watcher microtask so `onInput` sees it set and
@@ -313,7 +338,7 @@ function setInputAndCaretEnd(value) {
 // draft. "Logical line" = explicit \n in the text; visual wrapping is not
 // counted (a single long wrapped line still triggers history, which matches
 // IRCCloud's behavior).
-function atHistoryEdge(key) {
+function atHistoryEdge(key: string): boolean {
   const el = inputEl.value;
   if (!el) return true;
   const value = text.value;
@@ -324,7 +349,7 @@ function atHistoryEdge(key) {
   return !value.slice(caret).includes('\n');
 }
 
-function handleHistoryNav(e) {
+function handleHistoryNav(e: KeyboardEvent): void {
   if (!active.value) return;
   const { networkId, target } = active.value;
   const list = inputHistory.forBuffer(networkId, target);
@@ -359,7 +384,10 @@ function handleHistoryNav(e) {
   }
 }
 
-function tokenAtCursor(value, cursor) {
+function tokenAtCursor(
+  value: string,
+  cursor: number,
+): { token: string; start: number; end: number } {
   let start = cursor;
   while (start > 0 && !/\s/.test(value[start - 1])) start--;
   let end = cursor;
@@ -367,15 +395,17 @@ function tokenAtCursor(value, cursor) {
   return { token: value.slice(start, end), start, end };
 }
 
-function buildNickMatches(buf, networkId, prefix) {
+function buildNickMatches(buf: Buffer, networkId: number, prefix: string): string[] {
   const own = networks.states[networkId]?.nick || '';
-  const isIgnored = (nick, userhost) => ignores.isIgnored(networkId, nick, userhost);
+  const isIgnored = (nick: string, userhost: string | null) =>
+    ignores.isIgnored(networkId, nick, userhost ?? '');
   return buildNickCandidates(buf, own, prefix, isIgnored).map((c) => c.nick);
 }
 
-function buildChannelMatches(networkId, prefix) {
+function buildChannelMatches(networkId: number, prefix: string): string[] {
   const lower = prefix.toLowerCase();
-  return buffers.forNetwork(networkId)
+  return buffers
+    .forNetwork(networkId)
     .map((b) => b.target)
     .filter((t) => t.startsWith('#') && t.toLowerCase().startsWith(lower))
     .sort((a, b) => a.localeCompare(b));
@@ -384,7 +414,7 @@ function buildChannelMatches(networkId, prefix) {
 function applyCompletion() {
   if (!completion || !completion.matches.length) return;
   const pick = completion.matches[completion.index];
-  const suffix = (completion.atLineStart && !completion.isChannel) ? ': ' : '';
+  const suffix = completion.atLineStart && !completion.isChannel ? ': ' : '';
   // Tab-completion owns the input now; any open @-picker or mobile suggestion
   // strip would be stale (cycling suppresses onInput → refreshPicker doesn't
   // fire, so they wouldn't close on their own).
@@ -400,7 +430,7 @@ function applyCompletion() {
     const el = inputEl.value;
     if (!el) return;
     el.setSelectionRange(caret, caret);
-    completion.caret = caret;
+    if (completion) completion.caret = caret;
   });
 }
 
@@ -422,18 +452,18 @@ function onBlur() {
 // for local echo). The chunk-count gate in messageSplit.js counts bytes via
 // TextEncoder, so each control char correctly contributes one byte to the
 // SPLIT/FLOOD estimate.
-const FMT_BOLD = "\x02";
-const FMT_ITALIC = "\x1D";
-const FMT_UNDERLINE = "\x1F";
-const FMT_COLOR = "\x03";
-const FMT_RESET = "\x0F";
+const FMT_BOLD = '\x02';
+const FMT_ITALIC = '\x1D';
+const FMT_UNDERLINE = '\x1F';
+const FMT_COLOR = '\x03';
+const FMT_RESET = '\x0F';
 
 // Wrap the current selection with `opening`…`closing`, or insert `opening`
 // alone at the caret if nothing is selected (mIRC-style: a bare toggle code
 // flips state for whatever follows). Routes the new value through the same
 // cycling guard that nick completion uses so onInput doesn't reset history
 // nav or fire a typing notification mid-write.
-function wrapOrInsertFormatting(opening, closing) {
+function wrapOrInsertFormatting(opening: string, closing: string): void {
   const el = inputEl.value;
   if (!el) return;
   const value = text.value;
@@ -471,7 +501,7 @@ function closeColorPicker() {
   colorPickerOpen.value = false;
 }
 
-function onPickColor(code) {
+function onPickColor(code: string): void {
   // `code` is a 2-digit string ("00".."15"). A bare \x03 with no digits would
   // close any open colour run, but for a deliberate pick we always emit
   // digits so the colour actually takes effect.
@@ -487,7 +517,7 @@ function onPickReset() {
   closeColorPicker();
 }
 
-function onKeydown(e) {
+function onKeydown(e: KeyboardEvent): void {
   // Formatting shortcuts (Cmd/Ctrl + B/I/U). preventDefault stops the browser
   // from owning Cmd+B for "bookmarks bar"; stopPropagation keeps the global
   // shortcut handler in useKeyboardShortcuts.js from seeing keys that map to
@@ -557,7 +587,7 @@ function onKeydown(e) {
   if (!token) return;
 
   const buf = buffer.value;
-  if (!buf) return;
+  if (!buf || !active.value) return;
   const networkId = active.value.networkId;
 
   const isChannel = token.startsWith('#');
@@ -591,18 +621,25 @@ function closeStrip() {
 
 function refreshPicker() {
   const el = inputEl.value;
-  if (!el) { closePicker(); closeStrip(); return; }
+  if (!el) {
+    closePicker();
+    closeStrip();
+    return;
+  }
   const value = text.value;
   const cursor = el.selectionStart ?? value.length;
   const { token, start, end } = tokenAtCursor(value, cursor);
 
   // Slash commands never trigger nick completion in either UI.
-  if (token.startsWith('/')) { closePicker(); closeStrip(); return; }
+  if (token.startsWith('/')) {
+    closePicker();
+    closeStrip();
+    return;
+  }
 
   // Desktop users can opt into the mobile-style strip via this setting;
   // mobile always uses the strip regardless.
-  const useStrip = isMobile.value
-    || !!settings.effective('input.suggestion_strip_on_desktop');
+  const useStrip = isMobile.value || !!settings.effective('input.suggestion_strip_on_desktop');
 
   if (useStrip) {
     // Strip replaces the @-popup with an always-on suggestion row.
@@ -631,9 +668,12 @@ function refreshPicker() {
   pickerTokenEnd = end;
 }
 
-function onPickerSelect(nick) {
+function onPickerSelect(nick: string): void {
   const value = text.value;
-  if (pickerTokenStart < 0) { closePicker(); return; }
+  if (pickerTokenStart < 0) {
+    closePicker();
+    return;
+  }
   const before = value.slice(0, pickerTokenStart);
   const after = value.slice(pickerTokenEnd);
   cycling = true;
@@ -649,9 +689,12 @@ function onPickerSelect(nick) {
   });
 }
 
-function onStripSelect(nick) {
+function onStripSelect(nick: string): void {
   const value = text.value;
-  if (stripTokenStart < 0) { closeStrip(); return; }
+  if (stripTokenStart < 0) {
+    closeStrip();
+    return;
+  }
   const before = value.slice(0, stripTokenStart);
   const after = value.slice(stripTokenEnd);
   // Match Tab-completion's suffix rule (applyCompletion above): a nick at the
@@ -687,7 +730,7 @@ function onInput() {
   // commands (computeChunks handles both — most return 0 chunks).
   const { chunks, isAction } = computeChunks(text.value);
   setComposingState({ chunks, isAction });
-  if (!sendable.value) return;
+  if (!sendable.value || !active.value) return;
   if (completion) resetCompletion();
   refreshPicker();
   const { networkId, target } = active.value;
@@ -737,7 +780,12 @@ watch(active, (newActive, oldActive) => {
   // server's row reflects the latest body before the next tab sees us
   // switching away. flushBuffer is a no-op if nothing is pending.
   if (oldActive) drafts.flushBuffer(oldActive.networkId, oldActive.target);
-  if (oldActive && (!newActive || oldActive.target !== newActive.target || oldActive.networkId !== newActive.networkId)) {
+  if (
+    oldActive &&
+    (!newActive ||
+      oldActive.target !== newActive.target ||
+      oldActive.networkId !== newActive.networkId)
+  ) {
     endTypingTo(oldActive);
   }
   // Re-evaluate the outgoing-split estimate for the new buffer's draft. The
@@ -761,11 +809,14 @@ function onPagehide() {
 
 onBeforeUnmount(() => {
   if (active.value) endTypingTo(active.value);
-  if (unsubInsert) { unsubInsert(); unsubInsert = null; }
+  if (unsubInsert) {
+    unsubInsert();
+    unsubInsert = null;
+  }
   if (typeof window !== 'undefined') window.removeEventListener('pagehide', onPagehide);
 });
 
-function insertUrlAtCaret(url) {
+function insertUrlAtCaret(url: string): void {
   const el = inputEl.value;
   const current = text.value;
   if (!el) {
@@ -791,19 +842,19 @@ function insertUrlAtCaret(url) {
   });
 }
 
-let unsubInsert = null;
+let unsubInsert: (() => boolean) | null = null;
 onMounted(() => {
   unsubInsert = onInsertUrl(insertUrlAtCaret);
   if (typeof window !== 'undefined') window.addEventListener('pagehide', onPagehide);
 });
 
-function blobFromClipboardItem(item) {
+function blobFromClipboardItem(item: DataTransferItem): File | null {
   if (!item || !item.type || !item.type.startsWith('image/')) return null;
   const file = item.getAsFile();
   return file || null;
 }
 
-function onPaste(e) {
+function onPaste(e: ClipboardEvent): void {
   if (!sendable.value) return;
   if (settings.effective('uploads.paste.enabled') === false) return;
   const items = e.clipboardData?.items;
@@ -812,7 +863,9 @@ function onPaste(e) {
     const file = blobFromClipboardItem(item);
     if (file) {
       e.preventDefault();
-      uploads.upload(file).catch(() => { /* failure visible via status bar */ });
+      uploads.upload(file).catch(() => {
+        /* failure visible via status bar */
+      });
       return;
     }
   }
@@ -822,14 +875,15 @@ function onPickFile() {
   fileInputEl.value?.click();
 }
 
-function onFileSelected(e) {
-  const file = e.target.files?.[0];
-  e.target.value = '';
+function onFileSelected(e: Event): void {
+  const input = e.target as HTMLInputElement;
+  const file = input.files?.[0];
+  input.value = '';
   if (!file || !sendable.value) return;
   uploads.upload(file, file.name).catch(() => {});
 }
 
-function onDragOver(e) {
+function onDragOver(e: DragEvent): void {
   if (!sendable.value) return;
   if (!Array.from(e.dataTransfer?.types || []).includes('Files')) return;
   dragOver.value = true;
@@ -837,7 +891,7 @@ function onDragOver(e) {
 function onDragLeave() {
   dragOver.value = false;
 }
-function onDrop(e) {
+function onDrop(e: DragEvent): void {
   dragOver.value = false;
   if (!sendable.value) return;
   const file = e.dataTransfer?.files?.[0];
@@ -849,26 +903,27 @@ defineExpose({
   focus: () => inputEl.value?.focus(),
 });
 
-function toastSendFailure(error, body) {
+function toastSendFailure(error: string, body: string): void {
   // Translate the small set of ack/error strings into something a person can
   // act on. We keep the failed text in the toast body so the user can copy
   // it; up-arrow also recalls it from local input history.
-  const title = error === 'disconnected'
-    ? 'Disconnected — message not sent'
-    : error === 'timeout'
-      ? 'Send timed out — message may not have been delivered'
-      : error === 'not-connected'
-        ? 'Network offline — message not sent'
-        : error === 'unknown-network'
-          ? 'Network not available — message not sent'
-          : 'Message not sent';
+  const title =
+    error === 'disconnected'
+      ? 'Disconnected — message not sent'
+      : error === 'timeout'
+        ? 'Send timed out — message may not have been delivered'
+        : error === 'not-connected'
+          ? 'Network offline — message not sent'
+          : error === 'unknown-network'
+            ? 'Network not available — message not sent'
+            : 'Message not sent';
   toasts.push({ title, body, kind: 'error', ttlMs: 8000 });
 }
 
 // Optimistically clear, but only AFTER we've confirmed the send actually
 // hit the wire. Anything we'd otherwise have lost (the typed text, the
 // history slot) is still recoverable via up-arrow if delivery later fails.
-function commitInput(raw, networkId, target) {
+function commitInput(raw: string, networkId: number, target: string): void {
   inputHistory.add(networkId, target, raw);
   socketSend({ type: 'input-history-add', networkId, target, text: raw });
   text.value = '';
@@ -972,7 +1027,7 @@ async function submit() {
   clearInactivityTimer();
   commitInput(raw, networkId, target);
   const result = await pending;
-  if (!result.ok) toastSendFailure(result.error, raw);
+  if (!result.ok) toastSendFailure(result.error ?? 'unknown', raw);
 }
 
 async function onLongMessageConfirm() {
@@ -1009,7 +1064,7 @@ function onLongMessageCancel() {
 // Drop a synthetic, non-persisted info line into the current buffer so the
 // user sees the output of client-resolved commands like /help or argument
 // validation errors. id-less so pushMessage's replay guard doesn't trip.
-function localInfo(networkId, target, text) {
+function localInfo(networkId: number, target: string, text: string): void {
   buffers.pushMessage({
     networkId,
     target,
@@ -1044,11 +1099,11 @@ const HELP_LINES = [
   '  //text                 — send literal "/text" as a message (escape)',
 ];
 
-function isChannelTarget(t) {
+function isChannelTarget(t: string): boolean {
   return typeof t === 'string' && t.startsWith('#');
 }
 
-function randomRoomId() {
+function randomRoomId(): string {
   const buf = new Uint8Array(6);
   crypto.getRandomValues(buf);
   return Array.from(buf, (b) => b.toString(16).padStart(2, '0')).join('');
@@ -1057,7 +1112,7 @@ function randomRoomId() {
 // Best-effort send for control commands (/join, /raw, /away, ...). Returns
 // false if the socket isn't open — so the caller can keep the typed text in
 // the input rather than silently swallowing it.
-function sendOrToast(payload, body) {
+function sendOrToast(payload: Record<string, unknown>, body: string): boolean {
   const ok = socketSend(payload);
   if (!ok) toastSendFailure('disconnected', body);
   return ok;
@@ -1067,14 +1122,19 @@ function sendOrToast(payload, body) {
 // channel/DM (/me, /msg <body>, /jitsi). Same shape as the main submit path:
 // returns false synchronously if the socket is closed; otherwise kicks off
 // the await and toasts asynchronously on a non-ok ACK.
-function ackedSend(payload, body) {
+function ackedSend(payload: Record<string, unknown>, body: string): boolean {
   const pending = socketSendWithAck(payload);
-  if (!pending) { toastSendFailure('disconnected', body); return false; }
-  pending.then((result) => { if (!result.ok) toastSendFailure(result.error, body); });
+  if (!pending) {
+    toastSendFailure('disconnected', body);
+    return false;
+  }
+  pending.then((result) => {
+    if (!result.ok) toastSendFailure(result.error ?? 'unknown', body);
+  });
   return true;
 }
 
-function handleCommand(line, networkId, target) {
+function handleCommand(line: string, networkId: number, target: string): boolean {
   const [cmd, ...rest] = line.slice(1).split(/\s+/);
   const argLine = line.slice(1 + cmd.length).trim();
   switch (cmd.toLowerCase()) {
@@ -1120,52 +1180,86 @@ function handleCommand(line, networkId, target) {
       return sendOrToast({ type: 'back' }, line);
     case 'whois': {
       const who = rest[0];
-      if (!who) { localInfo(networkId, target, 'usage: /whois <nick>'); return true; }
+      if (!who) {
+        localInfo(networkId, target, 'usage: /whois <nick>');
+        return true;
+      }
       return sendOrToast({ type: 'raw', networkId, line: `WHOIS ${who}` }, line);
     }
     case 'kick': {
       // /kick <nick> [reason]            (in a channel buffer)
       // /kick <#chan> <nick> [reason]    (anywhere)
-      let channel; let nick; let reason;
+      let channel;
+      let nick;
+      let reason;
       if (rest[0] && rest[0].startsWith('#')) {
-        channel = rest[0]; nick = rest[1]; reason = rest.slice(2).join(' ');
+        channel = rest[0];
+        nick = rest[1];
+        reason = rest.slice(2).join(' ');
       } else {
         channel = isChannelTarget(target) ? target : null;
-        nick = rest[0]; reason = rest.slice(1).join(' ');
+        nick = rest[0];
+        reason = rest.slice(1).join(' ');
       }
-      if (!channel) { localInfo(networkId, target, 'usage: /kick [#chan] <nick> [reason] — no channel context'); return true; }
-      if (!nick) { localInfo(networkId, target, 'usage: /kick [#chan] <nick> [reason]'); return true; }
+      if (!channel) {
+        localInfo(networkId, target, 'usage: /kick [#chan] <nick> [reason] — no channel context');
+        return true;
+      }
+      if (!nick) {
+        localInfo(networkId, target, 'usage: /kick [#chan] <nick> [reason]');
+        return true;
+      }
       const trailer = reason ? ` :${reason}` : '';
-      return sendOrToast({ type: 'raw', networkId, line: `KICK ${channel} ${nick}${trailer}` }, line);
+      return sendOrToast(
+        { type: 'raw', networkId, line: `KICK ${channel} ${nick}${trailer}` },
+        line,
+      );
     }
     case 'topic': {
       // /topic                        — request current topic (server buffer)
       // /topic <text>                 — set on current channel
       // /topic <#chan> [text]         — set/get on another channel
-      let channel; let body;
+      let channel;
+      let body;
       if (rest[0] && rest[0].startsWith('#')) {
         channel = rest[0];
-        body = line.slice(1 + cmd.length).trim().slice(channel.length).trim();
+        body = line
+          .slice(1 + cmd.length)
+          .trim()
+          .slice(channel.length)
+          .trim();
       } else {
         channel = isChannelTarget(target) ? target : null;
         body = argLine;
       }
-      if (!channel) { localInfo(networkId, target, 'usage: /topic [#chan] [text] — no channel context'); return true; }
+      if (!channel) {
+        localInfo(networkId, target, 'usage: /topic [#chan] [text] — no channel context');
+        return true;
+      }
       const trailer = body ? ` :${body}` : '';
       return sendOrToast({ type: 'raw', networkId, line: `TOPIC ${channel}${trailer}` }, line);
     }
     case 'nick': {
       const newNick = rest[0];
-      if (!newNick) { localInfo(networkId, target, 'usage: /nick <newnick>'); return true; }
+      if (!newNick) {
+        localInfo(networkId, target, 'usage: /nick <newnick>');
+        return true;
+      }
       return sendOrToast({ type: 'raw', networkId, line: `NICK ${newNick}` }, line);
     }
     case 'mode': {
       // /mode <flags>                  — apply to current channel
       // /mode <target> <flags...>      — apply to target (channel or self)
-      if (!rest.length) { localInfo(networkId, target, 'usage: /mode [target] <flags> [args]'); return true; }
+      if (!rest.length) {
+        localInfo(networkId, target, 'usage: /mode [target] <flags> [args]');
+        return true;
+      }
       const looksLikeFlagsOnly = /^[+-]/.test(rest[0]);
       if (looksLikeFlagsOnly && isChannelTarget(target)) {
-        return sendOrToast({ type: 'raw', networkId, line: `MODE ${target} ${rest.join(' ')}` }, line);
+        return sendOrToast(
+          { type: 'raw', networkId, line: `MODE ${target} ${rest.join(' ')}` },
+          line,
+        );
       }
       return sendOrToast({ type: 'raw', networkId, line: `MODE ${argLine}` }, line);
     }
@@ -1188,7 +1282,10 @@ function handleCommand(line, networkId, target) {
       });
       return true;
     case 'list':
-      return sendOrToast({ type: 'raw', networkId, line: argLine ? `LIST ${argLine}` : 'LIST' }, line);
+      return sendOrToast(
+        { type: 'raw', networkId, line: argLine ? `LIST ${argLine}` : 'LIST' },
+        line,
+      );
     case 'ignore': {
       // No-arg form: dump the current network's ignore list into the active
       // buffer as system messages. The store already has the list (seeded
@@ -1210,13 +1307,19 @@ function handleCommand(line, networkId, target) {
     }
     case 'unignore': {
       const mask = argLine.trim();
-      if (!mask) { localInfo(networkId, target, 'usage: /unignore <mask>'); return true; }
+      if (!mask) {
+        localInfo(networkId, target, 'usage: /unignore <mask>');
+        return true;
+      }
       ignores.removeMask(networkId, mask);
       return true;
     }
     case 'jitsi':
     case 'talk': {
-      if (isServer.value) { localInfo(networkId, target, 'usage: /jitsi — run inside a channel or DM'); return true; }
+      if (isServer.value) {
+        localInfo(networkId, target, 'usage: /jitsi — run inside a channel or DM');
+        return true;
+      }
       const url = `https://meet.jit.si/lurker-${randomRoomId()}`;
       return ackedSend({ type: 'send', networkId, target, text: url }, url);
     }
@@ -1253,7 +1356,9 @@ function handleCommand(line, networkId, target) {
      the first text line baseline-align before any growth. */
   line-height: 1.4;
 }
-.prompt .away { color: var(--warn); }
+.prompt .away {
+  color: var(--warn);
+}
 .upload-btn {
   background: none;
   border: none;
@@ -1263,8 +1368,13 @@ function handleCommand(line, networkId, target) {
   font-size: inherit;
   line-height: 1.4;
 }
-.upload-btn:hover:not(:disabled) { color: var(--accent); }
-.upload-btn:disabled { opacity: 0.4; cursor: default; }
+.upload-btn:hover:not(:disabled) {
+  color: var(--accent);
+}
+.upload-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
 .format-btn {
   color: var(--fg-muted);
   cursor: pointer;
@@ -1274,9 +1384,16 @@ function handleCommand(line, networkId, target) {
   /* Avoids iOS double-tap-zoom delay so the picker opens promptly on touch. */
   touch-action: manipulation;
 }
-.format-btn:hover:not(.disabled) { color: var(--accent); }
-.format-btn.disabled { opacity: 0.4; cursor: default; }
-.file-hidden { display: none; }
+.format-btn:hover:not(.disabled) {
+  color: var(--accent);
+}
+.format-btn.disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.file-hidden {
+  display: none;
+}
 textarea {
   flex: 1;
   min-width: 0;
@@ -1295,6 +1412,11 @@ textarea {
   field-sizing: content;
   max-height: calc(1.4em * 16);
 }
-textarea:focus { outline: none; }
-textarea::placeholder { color: var(--fg-muted); font-style: italic; }
+textarea:focus {
+  outline: none;
+}
+textarea::placeholder {
+  color: var(--fg-muted);
+  font-style: italic;
+}
 </style>

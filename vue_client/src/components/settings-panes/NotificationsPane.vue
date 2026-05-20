@@ -7,55 +7,51 @@
   <section id="notifications" class="settings-pane">
     <h2>notifications</h2>
     <p class="section-desc">
-      Each browser/device subscribes independently. Enable here to receive system
-      notifications on this device when a highlight or DM arrives and no other
-      client of yours is currently visible.
+      Each browser/device subscribes independently. Enable here to receive system notifications on
+      this device when a highlight or DM arrives and no other client of yours is currently visible.
     </p>
     <p v-if="pushError" class="error inline">{{ pushError }}</p>
 
     <div class="this-client">
       <span class="this-label">this client</span>
-      <button
-        v-if="!pushSupported"
-        class="link"
-        disabled
-      >push not supported in this browser</button>
+      <button v-if="!pushSupported" class="link" disabled>
+        push not supported in this browser
+      </button>
       <button
         v-else-if="thisClientEnabled"
         class="link danger"
         :disabled="pushBusy"
         @click="onDisableThisClient"
-      >disable for this client</button>
-      <button
-        v-else
-        class="link"
-        :disabled="pushBusy"
-        @click="onEnableThisClient"
-      >enable for this client</button>
+      >
+        disable for this client
+      </button>
+      <button v-else class="link" :disabled="pushBusy" @click="onEnableThisClient">
+        enable for this client
+      </button>
     </div>
 
     <ul v-if="otherSubscriptions.length" class="device-list">
       <li v-for="sub in otherSubscriptions" :key="sub.id" class="device">
         <span class="ua">{{ formatUA(sub.user_agent) }}</span>
-        <span class="last-seen" :title="sub.last_seen_at">last seen {{ formatRelative(sub.last_seen_at) }}</span>
+        <span class="last-seen" :title="sub.last_seen_at"
+          >last seen {{ formatRelative(sub.last_seen_at) }}</span
+        >
         <button class="link danger" @click="onRemoveOther(sub)" :disabled="pushBusy">remove</button>
       </li>
     </ul>
-    <p v-else-if="pushSubsStore.loaded && thisClientEnabled" class="muted small">No other devices registered.</p>
+    <p v-else-if="pushSubsStore.loaded && thisClientEnabled" class="muted small">
+      No other devices registered.
+    </p>
 
     <hr class="hl-sep" />
     <h3 class="subhead">alerts</h3>
     <p class="section-desc">
-      One master toggle per signal type. Toast appears in-client when a
-      tab is visible; push fires when no tab is visible — the right one is
-      picked automatically, so a single switch covers both.
+      One master toggle per signal type. Toast appears in-client when a tab is visible; push fires
+      when no tab is visible — the right one is picked automatically, so a single switch covers
+      both.
     </p>
 
-    <div
-      v-for="signal in notificationSignals"
-      :key="signal.key"
-      class="hl-notif notif-signal"
-    >
+    <div v-for="signal in notificationSignals" :key="signal.key" class="hl-notif notif-signal">
       <h4 class="notif-signal-title">{{ signal.title }}</h4>
       <p class="section-desc small">{{ signal.help }}</p>
 
@@ -63,7 +59,12 @@
         <input
           type="checkbox"
           :checked="signal.enabled"
-          @change="onCommit(`notifications.${signal.key}.enabled`, $event.target.checked)"
+          @change="
+            onCommit(
+              `notifications.${signal.key}.enabled`,
+              ($event.target as HTMLInputElement).checked,
+            )
+          "
         />
         <span>notify me</span>
       </label>
@@ -76,8 +77,13 @@
         <input
           type="checkbox"
           :disabled="!signal.enabled"
-          :checked="settings.effective(`notifications.${signal.key}.sound.enabled`)"
-          @change="onCommit(`notifications.${signal.key}.sound.enabled`, $event.target.checked)"
+          :checked="!!settings.effective(`notifications.${signal.key}.sound.enabled`)"
+          @change="
+            onCommit(
+              `notifications.${signal.key}.sound.enabled`,
+              ($event.target as HTMLInputElement).checked,
+            )
+          "
         />
         <span>play a sound</span>
       </label>
@@ -91,15 +97,18 @@
         <select
           :value="settings.effective(`notifications.${signal.key}.sound.choice`)"
           :disabled="!signal.soundEnabled"
-          @change="onCommit(`notifications.${signal.key}.sound.choice`, $event.target.value)"
+          @change="
+            onCommit(
+              `notifications.${signal.key}.sound.choice`,
+              ($event.target as HTMLSelectElement).value,
+            )
+          "
         >
           <option v-for="c in soundChoices" :key="c" :value="c">{{ c }}</option>
         </select>
-        <button
-          class="link"
-          :disabled="!signal.soundEnabled"
-          @click="onPreviewSound(signal.key)"
-        >preview</button>
+        <button class="link" :disabled="!signal.soundEnabled" @click="onPreviewSound(signal.key)">
+          preview
+        </button>
       </div>
 
       <div
@@ -115,49 +124,55 @@
           step="1"
           :value="settings.effective(`notifications.${signal.key}.sound.volume`)"
           :disabled="!signal.soundEnabled"
-          @input="onVolumeInput(signal.key, $event.target.value)"
-          @change="onCommit(`notifications.${signal.key}.sound.volume`, Number($event.target.value))"
+          @input="onVolumeInput(signal.key, ($event.target as HTMLInputElement).value)"
+          @change="
+            onCommit(
+              `notifications.${signal.key}.sound.volume`,
+              Number(($event.target as HTMLInputElement).value),
+            )
+          "
         />
-        <span class="hl-vol-num">{{ settings.effective(`notifications.${signal.key}.sound.volume`) }}</span>
+        <span class="hl-vol-num">{{
+          settings.effective(`notifications.${signal.key}.sound.volume`)
+        }}</span>
       </div>
     </div>
 
     <hr class="hl-sep" />
     <h3 class="subhead">always-notify channels</h3>
     <p class="section-desc">
-      Channels flagged "always notify" via the channel context menu fire
-      notifications for every message. This is the one place to see and
-      remove the set.
+      Channels flagged "always notify" via the channel context menu fire notifications for every
+      message. This is the one place to see and remove the set.
     </p>
     <p v-if="!alwaysNotifyChannelList.length" class="muted small">
       None yet. Right-click a channel in the buffer list to enable.
     </p>
     <ul v-else class="device-list">
-      <li
-        v-for="entry in alwaysNotifyChannelList"
-        :key="entry.key"
-        class="device"
-      >
+      <li v-for="entry in alwaysNotifyChannelList" :key="entry.key" class="device">
         <span class="ua">{{ entry.networkName }} · {{ entry.target }}</span>
-        <button
-          class="link danger"
-          @click="removeAlwaysNotify(entry.networkId, entry.target)"
-        >stop</button>
+        <button class="link danger" @click="removeAlwaysNotify(entry.networkId, entry.target)">
+          stop
+        </button>
       </li>
     </ul>
 
     <hr class="hl-sep" />
     <h3 class="subhead">push filters</h3>
     <p class="section-desc">
-      Conditions that suppress push notifications globally. Toasts are
-      unaffected — they only fire when you're at the desk anyway.
+      Conditions that suppress push notifications globally. Toasts are unaffected — they only fire
+      when you're at the desk anyway.
     </p>
     <div class="hl-notif">
       <label class="hl-row" data-setting-key="notifications.push.mute_when_away">
         <input
           type="checkbox"
-          :checked="settings.effective('notifications.push.mute_when_away')"
-          @change="onCommit('notifications.push.mute_when_away', $event.target.checked)"
+          :checked="!!settings.effective('notifications.push.mute_when_away')"
+          @change="
+            onCommit(
+              'notifications.push.mute_when_away',
+              ($event.target as HTMLInputElement).checked,
+            )
+          "
         />
         <span>mute push notifications when manually away</span>
       </label>
@@ -165,8 +180,13 @@
       <label class="hl-row" data-setting-key="notifications.push.quiet_hours.enabled">
         <input
           type="checkbox"
-          :checked="settings.effective('notifications.push.quiet_hours.enabled')"
-          @change="onCommit('notifications.push.quiet_hours.enabled', $event.target.checked)"
+          :checked="!!settings.effective('notifications.push.quiet_hours.enabled')"
+          @change="
+            onCommit(
+              'notifications.push.quiet_hours.enabled',
+              ($event.target as HTMLInputElement).checked,
+            )
+          "
         />
         <span>quiet hours</span>
       </label>
@@ -178,7 +198,12 @@
           data-setting-key="notifications.push.quiet_hours.start"
           :value="settings.effective('notifications.push.quiet_hours.start')"
           :disabled="!quietHoursEnabled"
-          @change="onCommit('notifications.push.quiet_hours.start', $event.target.value)"
+          @change="
+            onCommit(
+              'notifications.push.quiet_hours.start',
+              ($event.target as HTMLInputElement).value,
+            )
+          "
         />
         <span class="hl-label">to</span>
         <input
@@ -186,22 +211,29 @@
           data-setting-key="notifications.push.quiet_hours.end"
           :value="settings.effective('notifications.push.quiet_hours.end')"
           :disabled="!quietHoursEnabled"
-          @change="onCommit('notifications.push.quiet_hours.end', $event.target.value)"
+          @change="
+            onCommit(
+              'notifications.push.quiet_hours.end',
+              ($event.target as HTMLInputElement).value,
+            )
+          "
         />
       </div>
     </div>
   </section>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
 import { useSettingsStore } from '../../stores/settings.js';
 import { usePushSubscriptionsStore } from '../../stores/pushSubscriptions.js';
+import type { PushSubscription } from '../../stores/pushSubscriptions.js';
 import { useChannelNotifyStore } from '../../stores/channelNotify.js';
 import { useNetworksStore } from '../../stores/networks.js';
 import { formatRelative } from '../../utils/timestamp.js';
 import { getOption } from '../../utils/settingsRegistry.js';
 import { playSound } from '../../composables/useHighlightNotifier.js';
+import type { SettingValue, EnumOption } from '../../../../shared/settingsRegistry.js';
 import {
   isSupported as isPushSupported,
   registerSW,
@@ -209,6 +241,15 @@ import {
   disable as disablePush,
   getCurrentEndpoint,
 } from '../../composables/usePush.js';
+
+// The push subscriptions store's PushSubscription covers the core fields; the
+// server also returns `id`, `user_agent`, and `last_seen_at`. Extend here so
+// the template can display them without colliding with the browser API type.
+interface StoredPushSub extends PushSubscription {
+  id: string;
+  user_agent: string | null;
+  last_seen_at: string;
+}
 
 const settings = useSettingsStore();
 const pushSubsStore = usePushSubscriptionsStore();
@@ -218,20 +259,27 @@ const networksStore = useNetworksStore();
 const pushSupported = isPushSupported();
 const pushError = ref('');
 const pushBusy = ref(false);
-const currentEndpoint = ref(null);
+const currentEndpoint = ref<string | null>(null);
 
 const thisClientEnabled = computed(() => {
   if (!currentEndpoint.value) return false;
   return pushSubsStore.subscriptions.some((s) => s.endpoint === currentEndpoint.value);
 });
 const otherSubscriptions = computed(() =>
-  pushSubsStore.subscriptions.filter((s) => s.endpoint !== currentEndpoint.value)
+  (pushSubsStore.subscriptions as StoredPushSub[]).filter(
+    (s) => s.endpoint !== currentEndpoint.value,
+  ),
 );
-const quietHoursEnabled = computed(() => !!settings.effective('notifications.push.quiet_hours.enabled'));
+const quietHoursEnabled = computed(
+  () => !!settings.effective('notifications.push.quiet_hours.enabled'),
+);
 
 // Sound choice list is the same enum across all signal types — read off any
 // one of the keys (they share a `choices` array in the registry).
-const soundChoices = computed(() => getOption('notifications.highlight.sound.choice')?.choices || []);
+const soundChoices = computed(
+  () =>
+    (getOption('notifications.highlight.sound.choice') as EnumOption | undefined)?.choices || [],
+);
 
 const NOTIFICATION_SIGNALS = [
   {
@@ -251,11 +299,13 @@ const NOTIFICATION_SIGNALS = [
   },
 ];
 
-const notificationSignals = computed(() => NOTIFICATION_SIGNALS.map((s) => {
-  const enabled = !!settings.effective(`notifications.${s.key}.enabled`);
-  const soundEnabled = enabled && !!settings.effective(`notifications.${s.key}.sound.enabled`);
-  return { ...s, enabled, soundEnabled };
-}));
+const notificationSignals = computed(() =>
+  NOTIFICATION_SIGNALS.map((s) => {
+    const enabled = !!settings.effective(`notifications.${s.key}.enabled`);
+    const soundEnabled = enabled && !!settings.effective(`notifications.${s.key}.sound.enabled`);
+    return { ...s, enabled, soundEnabled };
+  }),
+);
 
 const alwaysNotifyChannelList = computed(() => {
   return channelNotify.alwaysNotifyChannels
@@ -264,55 +314,56 @@ const alwaysNotifyChannelList = computed(() => {
       key: `${entry.networkId}::${entry.target}`,
       networkName: networksStore.networkById(entry.networkId)?.name || `net:${entry.networkId}`,
     }))
-    .sort((a, b) =>
-      a.networkName.localeCompare(b.networkName)
-      || a.target.localeCompare(b.target),
-    );
+    .sort((a, b) => a.networkName.localeCompare(b.networkName) || a.target.localeCompare(b.target));
 });
 
 async function refreshPushState() {
   if (!pushSupported) return;
   try {
     currentEndpoint.value = await getCurrentEndpoint();
-  } catch { currentEndpoint.value = null; }
+  } catch {
+    currentEndpoint.value = null;
+  }
   try {
     await pushSubsStore.fetchAll();
-  } catch (e) {
+  } catch (e: any) {
     pushError.value = e.message || 'failed to load devices';
   }
 }
 
 onMounted(() => {
   if (pushSupported) {
-    registerSW().catch(() => { /* best-effort */ });
+    registerSW().catch(() => {
+      /* best-effort */
+    });
     refreshPushState();
   }
 });
 
-async function onCommit(key, value) {
+async function onCommit(key: string, value: SettingValue) {
   try {
     await settings.setValue(key, value);
-  } catch (e) {
+  } catch (e: any) {
     pushError.value = e.message || 'failed to save';
   }
 }
 
-function onPreviewSound(kindKey) {
+function onPreviewSound(kindKey: string) {
   const choice = settings.effective(`notifications.${kindKey}.sound.choice`) || 'ping';
   const volume = settings.effective(`notifications.${kindKey}.sound.volume`);
-  playSound(choice, volume);
+  playSound(choice as string, volume as number);
 }
 
 // Live-update volume on drag without spamming the server: the range input's
 // `input` event tweaks the local optimistic value, and `change` commits.
-function onVolumeInput(kindKey, raw) {
+function onVolumeInput(kindKey: string, raw: string) {
   const n = Number(raw);
   if (Number.isFinite(n)) {
     settings.values = { ...settings.values, [`notifications.${kindKey}.sound.volume`]: n };
   }
 }
 
-function removeAlwaysNotify(networkId, target) {
+function removeAlwaysNotify(networkId: number, target: string) {
   channelNotify.setNotifyAlways(networkId, target, false);
 }
 
@@ -322,7 +373,7 @@ async function onEnableThisClient() {
   try {
     await enablePush();
     await refreshPushState();
-  } catch (e) {
+  } catch (e: any) {
     pushError.value = e.message || 'failed to enable';
   } finally {
     pushBusy.value = false;
@@ -335,26 +386,26 @@ async function onDisableThisClient() {
   try {
     await disablePush();
     await refreshPushState();
-  } catch (e) {
+  } catch (e: any) {
     pushError.value = e.message || 'failed to disable';
   } finally {
     pushBusy.value = false;
   }
 }
 
-async function onRemoveOther(sub) {
+async function onRemoveOther(sub: StoredPushSub) {
   pushError.value = '';
   pushBusy.value = true;
   try {
     await pushSubsStore.removeByEndpoint(sub.endpoint);
-  } catch (e) {
+  } catch (e: any) {
     pushError.value = e.message || 'failed to remove';
   } finally {
     pushBusy.value = false;
   }
 }
 
-function formatUA(ua) {
+function formatUA(ua: string | null | undefined): string {
   if (!ua) return 'unknown device';
   // Cheap parser: extract a recognizable browser + OS pair from a UA string.
   let browser = 'browser';

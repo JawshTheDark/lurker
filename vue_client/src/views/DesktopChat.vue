@@ -6,7 +6,11 @@
 <template>
   <div
     class="chat"
-    :class="{ 'sidebar-collapsed': !showChannels, 'members-collapsed': !showMembers, 'system-active': isSystemConsole }"
+    :class="{
+      'sidebar-collapsed': !showChannels,
+      'members-collapsed': !showMembers,
+      'system-active': isSystemConsole,
+    }"
     @click="onChatClick"
   >
     <aside class="sidebar" :class="{ collapsed: !showChannels }">
@@ -18,7 +22,9 @@
             :class="{ active: isSystemConsole }"
             title="Open system console"
             @click="openSystemConsole"
-          >lurker</button>
+          >
+            lurker
+          </button>
           <span v-if="!connected" class="status off" title="Disconnected">●</span>
           <span class="head-spacer"></span>
         </template>
@@ -32,12 +38,24 @@
       </div>
       <BufferList v-if="showChannels" />
       <div class="sidebar-foot">
-        <RouterLink class="link" to="/settings" title="Settings"><i class="fa-solid fa-gear"></i></RouterLink>
-        <button class="link" @click="showSearch = true" title="Search messages"><i class="fa-solid fa-magnifying-glass"></i></button>
-        <button class="link" @click="showHighlights = true" title="Highlights"><i class="fa-regular fa-bell"></i></button>
-        <button class="link" @click="showBookmarks = true" title="Saved messages"><i class="fa-regular fa-bookmark"></i></button>
-        <button class="link" @click="showUploads = true" title="Recent uploads"><i class="fa-solid fa-paperclip"></i></button>
-        <button class="link" @click="openAddNetwork" title="Add network"><i class="fa-solid fa-plus"></i></button>
+        <RouterLink class="link" to="/settings" title="Settings"
+          ><i class="fa-solid fa-gear"></i
+        ></RouterLink>
+        <button class="link" @click="showSearch = true" title="Search messages">
+          <i class="fa-solid fa-magnifying-glass"></i>
+        </button>
+        <button class="link" @click="showHighlights = true" title="Highlights">
+          <i class="fa-regular fa-bell"></i>
+        </button>
+        <button class="link" @click="showBookmarks = true" title="Saved messages">
+          <i class="fa-regular fa-bookmark"></i>
+        </button>
+        <button class="link" @click="showUploads = true" title="Recent uploads">
+          <i class="fa-solid fa-paperclip"></i>
+        </button>
+        <button class="link" @click="openAddNetwork" title="Add network">
+          <i class="fa-solid fa-plus"></i>
+        </button>
       </div>
     </aside>
 
@@ -46,26 +64,22 @@
     </header>
     <header v-else-if="active" class="topic">
       <span class="buffer">{{ bufferLabel }}</span>
-      <button
-        v-if="isServerBuffer"
-        class="link"
-        title="Edit network"
-        @click="editActiveNetwork"
-      ><i class="fa-solid fa-gear"></i></button>
+      <button v-if="isServerBuffer" class="link" title="Edit network" @click="editActiveNetwork">
+        <i class="fa-solid fa-gear"></i>
+      </button>
       <button
         v-if="isServerBuffer"
         class="link"
         title="Browse channels"
         @click="showChannelList = true"
-      ><i class="fa-solid fa-list"></i></button>
+      >
+        <i class="fa-solid fa-list"></i>
+      </button>
       <template v-if="topic">
         <span class="sep">│</span>
-        <button
-          type="button"
-          class="topic-text"
-          title="View full topic"
-          @click="showTopic = true"
-        ><LinkedText :text="topic" /></button>
+        <button type="button" class="topic-text" title="View full topic" @click="showTopic = true">
+          <LinkedText :text="topic" />
+        </button>
       </template>
       <button
         v-if="showBufferCog"
@@ -73,18 +87,23 @@
         class="link buffer-cog"
         title="Buffer actions"
         @click="openBufferActions"
-      ><i class="fa-solid fa-gear"></i></button>
+      >
+        <i class="fa-solid fa-gear"></i>
+      </button>
       <button
         v-if="isChannel"
         class="link members-toggle"
         :title="showMembers ? 'Hide members' : 'Show members'"
         @click="toggleMembers"
-      ><i class="fa-solid fa-users"></i></button>
+      >
+        <i class="fa-solid fa-users"></i>
+      </button>
       <span
         v-if="isChannel && memberCount != null"
         class="member-count"
         :title="`${memberCount} ${memberCount === 1 ? 'user' : 'users'} in channel`"
-      >{{ memberCount }}</span>
+        >{{ memberCount }}</span
+      >
     </header>
     <div v-if="active || isSystemConsole" class="topic-divider"></div>
 
@@ -96,7 +115,7 @@
 
     <NetworkForm
       v-if="showNetworkForm"
-      :network="editingNetwork"
+      :network="editingNetwork ?? undefined"
       @close="closeNetworkForm"
     />
     <HighlightsModal
@@ -104,11 +123,7 @@
       @close="showHighlights = false"
       @jump="onJumpToMessage"
     />
-    <BookmarksModal
-      v-if="showBookmarks"
-      @close="showBookmarks = false"
-      @jump="onJumpToMessage"
-    />
+    <BookmarksModal v-if="showBookmarks" @close="showBookmarks = false" @jump="onJumpToMessage" />
     <TopicModal
       v-if="showTopic && active"
       :topic="topic"
@@ -120,34 +135,23 @@
       :network-id="active.networkId"
       @close="showChannelList = false"
     />
-    <RecentUploadsModal
-      v-if="showUploads"
-      @close="showUploads = false"
-    />
-    <QuickSwitcher
-      v-if="showSwitcher"
-      @close="showSwitcher = false"
-    />
-    <SearchModal
-      v-if="showSearch"
-      @close="showSearch = false"
-      @jump="onJumpToMessage"
-    />
-    <KeyboardHelpModal
-      v-if="showKbdHelp"
-      @close="showKbdHelp = false"
-    />
+    <RecentUploadsModal v-if="showUploads" @close="showUploads = false" />
+    <QuickSwitcher v-if="showSwitcher" @close="showSwitcher = false" />
+    <SearchModal v-if="showSearch" @close="showSearch = false" @jump="onJumpToMessage" />
+    <KeyboardHelpModal v-if="showKbdHelp" @close="showKbdHelp = false" />
     <NickNoteModal
-      v-if="nickNotes.editor.open"
+      v-if="nickNotes.editor.open && nickNotes.editor.networkId != null"
       :nick="nickNotes.editor.nick"
       :network-id="nickNotes.editor.networkId"
     />
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { computed, ref } from 'vue';
-import { useBuffersStore } from '../stores/buffers.js';
+import type { Network } from '../stores/networks.js';
+import type { BufferLike } from '../composables/useBufferActions.js';
+import type { Buffer } from '../stores/buffers.js';
 import { useNetworksStore } from '../stores/networks.js';
 import { useSocket } from '../composables/useSocket.js';
 import { useChatBootstrap } from '../composables/useChatBootstrap.js';
@@ -176,10 +180,10 @@ import { useNickNotesStore } from '../stores/nickNotes.js';
 import { useBufferActions } from '../composables/useBufferActions.js';
 import { useJumpToMessage } from '../composables/useJumpToMessage.js';
 
-const buffers = useBuffersStore();
 const networks = useNetworksStore();
 const { connected } = useSocket();
-const { active, activeBuf, topic, isServerBuffer, isChannel, bufferLabel, isSystemConsole } = useActiveBuffer();
+const { active, activeBuf, topic, isServerBuffer, isChannel, bufferLabel, isSystemConsole } =
+  useActiveBuffer();
 
 function openSystemConsole() {
   networks.activateSystem();
@@ -190,7 +194,7 @@ const nickNotes = useNickNotesStore();
 const bufferActions = useBufferActions();
 
 const showNetworkForm = ref(false);
-const editingNetwork = ref(null);
+const editingNetwork = ref<Network | null>(null);
 const showHighlights = ref(false);
 const showBookmarks = ref(false);
 const showTopic = ref(false);
@@ -199,10 +203,10 @@ const showUploads = ref(false);
 const showSwitcher = ref(false);
 const showSearch = ref(false);
 const showKbdHelp = ref(false);
-const pendingScrollId = ref(null);
-const messageInputRef = ref(null);
-const messageListRef = ref(null);
-const bufferCogBtn = ref(null);
+const pendingScrollId = ref<number | null>(null);
+const messageInputRef = ref<{ focus: () => void } | null>(null);
+const messageListRef = ref<{ scrollByPage: (dir: number) => void } | null>(null);
+const bufferCogBtn = ref<HTMLElement | null>(null);
 
 // The cog opens the same menu as right-clicking the sidebar row — exposed
 // here so the actions are reachable for the currently-open buffer without a
@@ -213,20 +217,33 @@ const showBufferCog = computed(() => !!active.value && !isServerBuffer.value);
 
 function openBufferActions() {
   if (!activeBuf.value) return;
-  bufferActions.openMenuFromButton(activeBuf.value, bufferCogBtn.value);
+  bufferActions.openMenuFromButton(activeBuf.value as BufferLike, bufferCogBtn.value);
 }
 
 // Any modal open? Type-ahead must not steal focus from a modal's own fields.
-const anyModalOpen = computed(() =>
-  showNetworkForm.value || showHighlights.value || showBookmarks.value || showTopic.value ||
-  showChannelList.value || showUploads.value || showSwitcher.value ||
-  showSearch.value || showKbdHelp.value
+const anyModalOpen = computed(
+  () =>
+    showNetworkForm.value ||
+    showHighlights.value ||
+    showBookmarks.value ||
+    showTopic.value ||
+    showChannelList.value ||
+    showUploads.value ||
+    showSwitcher.value ||
+    showSearch.value ||
+    showKbdHelp.value,
 );
 
 useKeyboardShortcuts({
-  onOpenSwitcher: () => { showSwitcher.value = true; },
-  onOpenHelp: () => { showKbdHelp.value = true; },
-  onOpenSearch: () => { showSearch.value = true; },
+  onOpenSwitcher: () => {
+    showSwitcher.value = true;
+  },
+  onOpenHelp: () => {
+    showKbdHelp.value = true;
+  },
+  onOpenSearch: () => {
+    showSearch.value = true;
+  },
   onTypeAhead: () => {
     if (anyModalOpen.value || !active.value) return;
     messageInputRef.value?.focus();
@@ -244,7 +261,7 @@ const showChannels = computed(() => settings.effective('look.layout.show_channel
 // property of the channel, so the channel header is the natural home.
 const memberCount = computed(() => {
   if (!isChannel.value) return null;
-  return activeBuf.value?.members?.length ?? null;
+  return (activeBuf.value as Buffer | null)?.members?.length ?? null;
 });
 
 // Per-channel nicklist visibility. A channel the user has explicitly toggled
@@ -266,7 +283,7 @@ function toggleMembers() {
   if (!isChannel.value || !active.value) return;
   const { networkId, target } = active.value;
   // Pass the current visibility through as the new collapsed flag — it flips.
-  nicklistCollapse.setCollapsed(networkId, target, showMembers.value);
+  nicklistCollapse.setCollapsed(networkId, target, !!showMembers.value);
 }
 
 // Forward stray clicks anywhere in the chat frame (topic bar, message list,
@@ -274,8 +291,13 @@ function toggleMembers() {
 // excludes anything genuinely interactive — buttons, links, form controls,
 // and modal contents — and we bail if the user is in the middle of selecting
 // text so we don't kill their selection.
-function onChatClick(e) {
-  if (e.target.closest('button, a, input, textarea, select, label, .modal, [contenteditable=true]')) return;
+function onChatClick(e: MouseEvent) {
+  if (
+    (e.target as Element).closest(
+      'button, a, input, textarea, select, label, .modal, [contenteditable=true]',
+    )
+  )
+    return;
   const sel = window.getSelection();
   if (sel && sel.toString().length > 0) return;
   messageInputRef.value?.focus();
@@ -287,7 +309,7 @@ function openAddNetwork() {
   editingNetwork.value = null;
   showNetworkForm.value = true;
 }
-function openEditNetwork(net) {
+function openEditNetwork(net: Network) {
   editingNetwork.value = net;
   showNetworkForm.value = true;
 }
@@ -297,7 +319,7 @@ function closeNetworkForm() {
 }
 
 function editActiveNetwork() {
-  const net = active.value?.network;
+  const net = active.value?.network as Network | undefined;
   if (net) openEditNetwork(net);
 }
 
@@ -325,23 +347,32 @@ useChatBootstrap({ onJump: onJumpToMessage });
      and nothing can paint on top of it. */
   grid-template-rows: auto auto 1fr auto auto;
   grid-template-areas:
-    "sidebar topic    topic"
-    "sidebar divider  divider"
-    "sidebar messages members"
-    "sidebar status   status"
-    "sidebar input    input";
+    'sidebar topic    topic'
+    'sidebar divider  divider'
+    'sidebar messages members'
+    'sidebar status   status'
+    'sidebar input    input';
   height: 100vh;
   overflow: hidden;
 }
-.chat.sidebar-collapsed { --sidebar-w: 36px; }
+.chat.sidebar-collapsed {
+  --sidebar-w: 36px;
+}
 /* Members column fully collapses — no rail. The reopen toggle lives in the
    topic bar on the right, so there's nothing to leave behind. */
-.chat.members-collapsed { --members-w: 0px; }
+.chat.members-collapsed {
+  --members-w: 0px;
+}
 /* System console has no member list — collapse the rail so the log pane
    spans the full content width instead of leaving an empty column. */
-.chat.system-active { --members-w: 0px; }
+.chat.system-active {
+  --members-w: 0px;
+}
 /* min-height/min-width 0 lets flex/scrolling children stay inside their row. */
-.chat > * { min-width: 0; min-height: 0; }
+.chat > * {
+  min-width: 0;
+  min-height: 0;
+}
 
 .sidebar {
   grid-area: sidebar;
@@ -356,7 +387,9 @@ useChatBootstrap({ onJump: onJumpToMessage });
   align-items: center;
   gap: 8px;
 }
-.head-spacer { flex: 1; }
+.head-spacer {
+  flex: 1;
+}
 .logo {
   color: var(--accent);
   font-weight: bold;
@@ -366,9 +399,15 @@ useChatBootstrap({ onJump: onJumpToMessage });
   font: inherit;
   cursor: pointer;
 }
-.logo:hover { text-decoration: underline; }
-.logo.active { text-decoration: underline; }
-.status.off { color: var(--bad); }
+.logo:hover {
+  text-decoration: underline;
+}
+.logo.active {
+  text-decoration: underline;
+}
+.status.off {
+  color: var(--bad);
+}
 /* Pin the cog (settings) flush-left and the plus (add network) flush-right;
    the middle icons distribute evenly between them. Flex with space-between
    scales to any number of middle icons without re-tuning the column count.
@@ -407,9 +446,15 @@ useChatBootstrap({ onJump: onJumpToMessage });
   font: inherit;
   text-decoration: none;
 }
-.link:hover { color: var(--fg); }
-.link.toggle { color: var(--fg-muted); }
-.link.toggle:hover { color: var(--fg); }
+.link:hover {
+  color: var(--fg);
+}
+.link.toggle {
+  color: var(--fg-muted);
+}
+.link.toggle:hover {
+  color: var(--fg);
+}
 
 .topic {
   grid-area: topic;
@@ -425,8 +470,12 @@ useChatBootstrap({ onJump: onJumpToMessage });
   background: var(--border);
   height: 1px;
 }
-.topic .buffer { color: var(--accent); }
-.topic .sep    { color: var(--border); }
+.topic .buffer {
+  color: var(--accent);
+}
+.topic .sep {
+  color: var(--border);
+}
 .topic .topic-text {
   color: var(--fg-muted);
   text-overflow: ellipsis;
@@ -441,17 +490,31 @@ useChatBootstrap({ onJump: onJumpToMessage });
   white-space: nowrap;
   min-width: 0;
 }
-.topic .topic-text:hover { color: var(--fg); }
-.topic .topic-text:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
+.topic .topic-text:hover {
+  color: var(--fg);
+}
+.topic .topic-text:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
 
 /* These selectors target the root elements of the imported components.
    Vue 3 scoped CSS attaches the parent's data-v attribute to a child
    component's root element, so .message-list / .members / .input here
    match the rendered roots of MessageList / MemberList / MessageInput. */
-.message-list { grid-area: messages; }
-.members      { grid-area: members; border-left: 1px solid var(--border); }
-.status-bar   { grid-area: status; }
-.input        { grid-area: input; }
+.message-list {
+  grid-area: messages;
+}
+.members {
+  grid-area: members;
+  border-left: 1px solid var(--border);
+}
+.status-bar {
+  grid-area: status;
+}
+.input {
+  grid-area: input;
+}
 
 /* Pin the right-side cluster (cog / members toggle / count) to the far
    right of the topic bar regardless of what's between them and the buffer
@@ -460,9 +523,18 @@ useChatBootstrap({ onJump: onJumpToMessage });
    the remaining elements follow it in DOM order. When the cog is absent
    (server buffers), members-toggle's own margin-left:auto takes over.
    Count sits to the right of the icon. */
-.topic .buffer-cog { margin-left: auto; padding-left: 8px; }
-.topic .buffer-cog + .members-toggle { margin-left: 0; padding-left: 4px; }
-.topic .members-toggle { margin-left: auto; padding-left: 8px; }
+.topic .buffer-cog {
+  margin-left: auto;
+  padding-left: 8px;
+}
+.topic .buffer-cog + .members-toggle {
+  margin-left: 0;
+  padding-left: 4px;
+}
+.topic .members-toggle {
+  margin-left: auto;
+  padding-left: 8px;
+}
 .topic .member-count {
   color: var(--fg-muted);
   font-variant-numeric: tabular-nums;

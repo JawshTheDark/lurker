@@ -21,39 +21,36 @@
       </p>
       <div class="actions">
         <button type="button" class="btn-secondary" @click="onClose">Cancel</button>
-        <button
-          v-if="hasExistingNote"
-          type="button"
-          class="btn-secondary danger"
-          @click="onDelete"
-        >Delete</button>
+        <button v-if="hasExistingNote" type="button" class="btn-secondary danger" @click="onDelete">
+          Delete
+        </button>
         <button type="submit" class="btn-primary" :disabled="!dirty">Save</button>
       </div>
     </form>
   </AppModal>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import AppModal from './AppModal.vue';
 import { useNickNotesStore } from '../stores/nickNotes.js';
 import { formatDateTime } from '../utils/timestamp.js';
 
-const props = defineProps({
-  nick: { type: String, required: true },
-  networkId: { type: Number, required: true },
-});
+const props = defineProps<{
+  nick: string;
+  networkId: number;
+}>();
 
 const MAX_LEN = 4096;
 const nickNotes = useNickNotesStore();
-const inputEl = ref(null);
+const inputEl = ref<HTMLTextAreaElement | null>(null);
 
 const entry = computed(() => nickNotes.entryFor(props.networkId, props.nick));
 const initial = computed(() => entry.value?.note || '');
 const draft = ref(initial.value);
 const dirty = computed(() => draft.value !== initial.value);
 const hasExistingNote = computed(() => !!entry.value?.note);
-const formattedUpdatedAt = computed(() => formatDateTime(entry.value?.updatedAt));
+const formattedUpdatedAt = computed(() => formatDateTime(entry.value?.updatedAt ?? ''));
 
 function confirm() {
   if (!dirty.value) return;
@@ -79,7 +76,11 @@ onMounted(() => {
     // appending, not replacing — common case for these notes is "add another
     // detail" rather than rewriting the whole thing.
     const len = el.value.length;
-    try { el.setSelectionRange(len, len); } catch (_) { /* unsupported */ }
+    try {
+      el.setSelectionRange(len, len);
+    } catch (_) {
+      /* unsupported */
+    }
   }, 0);
 });
 </script>
@@ -100,7 +101,9 @@ textarea {
   min-height: 8em;
   line-height: 1.45;
 }
-textarea:focus { outline: 1px solid var(--accent); }
+textarea:focus {
+  outline: 1px solid var(--accent);
+}
 .meta {
   margin: 0;
   color: var(--fg-muted);
@@ -132,8 +135,13 @@ textarea:focus { outline: 1px solid var(--accent); }
 .btn-primary:hover:not(:disabled) {
   background: color-mix(in srgb, var(--accent) 15%, transparent);
 }
-.btn-secondary:hover { background: var(--bg-soft); }
-.btn-secondary.danger { color: var(--bad); border-color: var(--bad); }
+.btn-secondary:hover {
+  background: var(--bg-soft);
+}
+.btn-secondary.danger {
+  color: var(--bad);
+  border-color: var(--bad);
+}
 .btn-secondary.danger:hover {
   background: color-mix(in srgb, var(--bad) 15%, transparent);
 }

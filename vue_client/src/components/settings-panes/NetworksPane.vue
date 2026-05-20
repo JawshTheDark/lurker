@@ -7,8 +7,8 @@
   <section id="networks" class="settings-pane">
     <h2>networks</h2>
     <p class="section-desc">
-      Drag to change the order networks appear in the sidebar. Adding,
-      editing, and removing networks still happens from the
+      Drag to change the order networks appear in the sidebar. Adding, editing, and removing
+      networks still happens from the
       <strong>+</strong> button at the top of the sidebar.
     </p>
 
@@ -43,10 +43,11 @@
   </section>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, watch } from 'vue';
 import draggable from 'vuedraggable';
 import { useNetworksStore } from '../../stores/networks.js';
+import type { Network } from '../../stores/networks.js';
 
 const networks = useNetworksStore();
 
@@ -54,7 +55,7 @@ const networks = useNetworksStore();
 // array so the store's `networks` stays authoritative and the drag library can
 // freely splice. We refresh the mirror from the store unless the user is mid-
 // drag — that would yank rows out from under their cursor.
-const localOrder = ref([]);
+const localOrder = ref<Network[]>([]);
 const dragging = ref(false);
 
 function syncFromStore() {
@@ -62,11 +63,7 @@ function syncFromStore() {
   localOrder.value = [...networks.networks];
 }
 
-watch(
-  () => networks.networks,
-  syncFromStore,
-  { immediate: true, deep: false },
-);
+watch(() => networks.networks, syncFromStore, { immediate: true, deep: false });
 
 const error = ref('');
 
@@ -81,7 +78,7 @@ async function onDragEnd() {
   error.value = '';
   try {
     await networks.reorder(ids);
-  } catch (err) {
+  } catch (err: any) {
     error.value = err?.message || 'failed to save order';
     syncFromStore();
   }
@@ -103,16 +100,26 @@ async function onDragEnd() {
   padding: 8px 4px;
   border-top: 1px solid var(--border);
 }
-.network:first-child { border-top: none; }
-.network:hover { background: var(--bg-soft); }
+.network:first-child {
+  border-top: none;
+}
+.network:hover {
+  background: var(--bg-soft);
+}
 .grip {
   color: var(--fg-muted);
   cursor: grab;
   padding: 0 2px;
 }
-.grip:active { cursor: grabbing; }
-.name { color: var(--fg); }
-.host { color: var(--fg-muted); }
+.grip:active {
+  cursor: grabbing;
+}
+.name {
+  color: var(--fg);
+}
+.host {
+  color: var(--fg-muted);
+}
 .drag-ghost {
   opacity: 0.4;
   background: var(--bg-soft);

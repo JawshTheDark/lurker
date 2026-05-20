@@ -28,47 +28,57 @@
     <p v-else-if="store.items.length" class="empty">All highlights are from ignored users.</p>
     <p v-else class="empty">No highlights yet.</p>
     <footer v-if="store.hasMore || store.loading" class="foot">
-      <button
-        class="link"
-        :disabled="store.loading || !store.hasMore"
-        @click="store.loadMore()"
-      >{{ store.loading ? 'Loading…' : 'Load more' }}</button>
+      <button class="link" :disabled="store.loading || !store.hasMore" @click="store.loadMore()">
+        {{ store.loading ? 'Loading…' : 'Load more' }}
+      </button>
     </footer>
   </AppModal>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { computed, onMounted } from 'vue';
 import AppModal from './AppModal.vue';
-import HistoryMessageRow from './HistoryMessageRow.vue';
+import HistoryMessageRow, { type HistoryMessage } from './HistoryMessageRow.vue';
 import { useSettingsStore } from '../stores/settings.js';
 import { useHighlightsStore } from '../stores/highlights.js';
 import { useIgnoresStore } from '../stores/ignores.js';
 
-const emit = defineEmits(['close', 'jump']);
+const emit = defineEmits<{
+  close: [];
+  jump: [payload: { networkId: number; target: string; messageId: number }];
+}>();
 
 const settings = useSettingsStore();
 const store = useHighlightsStore();
 const ignores = useIgnoresStore();
 
+// The API response includes `userhost` alongside the declared HighlightItem
+// fields. Cast the store items to HistoryMessage (open index signature) so
+// they're compatible with HistoryMessageRow's :message prop.
+type HighlightRow = HistoryMessage & { userhost?: string | null };
+
 const visibleItems = computed(() =>
-  store.items.filter((m) => !ignores.isIgnored(m.networkId, m.nick, m.userhost))
+  (store.items as HighlightRow[]).filter(
+    (m) => !ignores.isIgnored(m.networkId, m.nick, m.userhost ?? ''),
+  ),
 );
 
 const soundEnabled = computed(() => !!settings.effective('notifications.highlight.sound.enabled'));
 
-async function toggleSound() {
+async function toggleSound(): Promise<void> {
   try {
     await settings.setValue('notifications.highlight.sound.enabled', !soundEnabled.value);
-  } catch (_) { /* setting writes are best-effort from the modal */ }
+  } catch (_) {
+    /* setting writes are best-effort from the modal */
+  }
 }
 
 onMounted(() => {
   store.loadInitial();
 });
 
-function onJump(m) {
-  emit('jump', { networkId: m.networkId, target: m.target, messageId: m.id });
+function onJump(m: HistoryMessage): void {
+  emit('jump', { networkId: m.networkId, target: m.target, messageId: Number(m.id) });
   emit('close');
 }
 </script>
@@ -82,9 +92,16 @@ function onJump(m) {
   font: inherit;
   padding: 0 4px;
 }
-.link:hover { color: var(--accent); }
-.link:disabled { opacity: 0.5; cursor: default; }
-.sound-toggle { font-size: 1.1em; }
+.link:hover {
+  color: var(--accent);
+}
+.link:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.sound-toggle {
+  font-size: 1.1em;
+}
 
 .match-list {
   list-style: none;

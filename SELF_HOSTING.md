@@ -124,9 +124,9 @@ Lurker works fine with just username + password — passkeys are a quality-of-li
 
 ```yaml
 environment:
-  - WEBAUTHN_RP_ID=lurker.example.com          # hostname only, no scheme, no port
+  - WEBAUTHN_RP_ID=lurker.example.com # hostname only, no scheme, no port
   - WEBAUTHN_RP_NAME=Lurker
-  - WEBAUTHN_ORIGIN=https://lurker.example.com  # full origin, scheme + port
+  - WEBAUTHN_ORIGIN=https://lurker.example.com # full origin, scheme + port
 ```
 
 `WEBAUTHN_ORIGIN` can be comma-separated if you log in from multiple URLs (e.g. a dev hostname and your public Cloudflare URL).
@@ -157,7 +157,7 @@ If you change `VAPID_SUBJECT` later, existing subscriptions continue to work —
 Lurker's session cookies are **not** flagged `Secure` by default. This sounds wrong but is correct for the common self-hosted shapes:
 
 - LAN / Tailscale / `*.local` hostnames over plain HTTP — browsers drop Secure cookies on non-localhost HTTP origins
-- Cloudflare Tunnel, reverse proxies, etc. — the *browser* sees HTTPS, but the container sees plain HTTP from the proxy, so even with TLS in front the cookie travels cleartext over Docker's internal network (which is fine — that traffic never leaves the host)
+- Cloudflare Tunnel, reverse proxies, etc. — the _browser_ sees HTTPS, but the container sees plain HTTP from the proxy, so even with TLS in front the cookie travels cleartext over Docker's internal network (which is fine — that traffic never leaves the host)
 
 If you genuinely serve Lurker over end-to-end HTTPS (Express terminating TLS directly), set:
 
@@ -179,7 +179,7 @@ When set, the env var takes precedence and the file is ignored.
 
 ### Outbound contact info (User-Agent)
 
-When Lurker talks to external services (image hosts, link previews, etc.) and replies to CTCP VERSION on IRC, it identifies itself with a User-Agent string. Set `USER_AGENT_CONTACT` to a `mailto:` or URL so the operators of those services can reach *you* if your instance misbehaves:
+When Lurker talks to external services (image hosts, link previews, etc.) and replies to CTCP VERSION on IRC, it identifies itself with a User-Agent string. Set `USER_AGENT_CONTACT` to a `mailto:` or URL so the operators of those services can reach _you_ if your instance misbehaves:
 
 ```yaml
 environment:
@@ -212,7 +212,7 @@ Edit the `ports:` line in your `docker-compose.yml` — the first number is the 
 
 ```yaml
 ports:
-  - "9999:8015"
+  - '9999:8015'
 ```
 
 Now Lurker is reachable on `http://localhost:9999`.

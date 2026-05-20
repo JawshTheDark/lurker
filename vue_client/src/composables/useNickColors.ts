@@ -1,0 +1,36 @@
+// Copyright (c) 2026 Brad Root
+// SPDX-License-Identifier: MPL-2.0
+
+import type { ComputedRef } from 'vue';
+import { computed } from 'vue';
+import { useSettingsStore } from '../stores/settings.js';
+import { nickColor, splitTextByTokens } from '../utils/nickColor.js';
+
+export interface NickColorsAPI {
+  color(nick: string): string | null;
+  splitText(text: string, nickSet: Set<string>, selfLower: string | null): unknown[];
+  selfColor: ComputedRef<string>;
+}
+
+// Provides reactive helpers that read coloring options from the settings store.
+//   const nicks = useNickColors();
+//   nicks.color(nick)                        -> color string or null
+//   nicks.splitText(text, nickSet, selfLower) -> segments (URLs + nicks + text)
+//   nicks.selfColor.value                     -> CSS color for own nick
+export function useNickColors(): NickColorsAPI {
+  const settings = useSettingsStore();
+
+  const palette = computed(() => settings.effective('look.nick.colors') as string[]);
+  const stopChars = computed(() => settings.effective('look.nick.color_stop_chars') as string);
+  const selfColor = computed(() => settings.effective('look.nick.self_color') as string);
+
+  function color(nick: string): string | null {
+    return nickColor(nick, { palette: palette.value, stopChars: stopChars.value });
+  }
+
+  function splitText(text: string, nickSet: Set<string>, selfLower: string | null): unknown[] {
+    return splitTextByTokens(text, nickSet, selfLower, color);
+  }
+
+  return { color, splitText, selfColor };
+}

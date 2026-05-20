@@ -23,7 +23,9 @@
           aria-label="Member actions"
           @click.stop="onActionsClick($event, m)"
           @contextmenu.stop.prevent
-        ><i class="fa-solid fa-ellipsis-vertical"></i></button>
+        >
+          <i class="fa-solid fa-ellipsis-vertical"></i>
+        </button>
       </li>
     </ul>
     <IgnoreModal
@@ -31,41 +33,45 @@
       :nick="nickOf(modalMember)"
       :user="userOf(modalMember)"
       :host="hostOf(modalMember)"
-      :network-id="buffer?.networkId"
+      :network-id="buffer?.networkId ?? null"
       @close="modalMember = null"
     />
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { computed, ref } from 'vue';
 import { useNetworksStore } from '../stores/networks.js';
-import { useBuffersStore } from '../stores/buffers.js';
+import { useBuffersStore, type BufferMember } from '../stores/buffers.js';
 import { useNickColors } from '../composables/useNickColors.js';
 import { useMemberActions } from '../composables/useMemberActions.js';
 import { useIgnoresStore } from '../stores/ignores.js';
 import IgnoreModal from './IgnoreModal.vue';
+
+// BufferMember in the store omits user/host fields that the server sends.
+// Extend locally to reflect the actual wire shape.
+type Member = BufferMember & { user?: string | null; host?: string | null };
 
 const networks = useNetworksStore();
 const buffers = useBuffersStore();
 const nicks = useNickColors();
 const memberActions = useMemberActions();
 const ignores = useIgnoresStore();
-const modalMember = ref(null);
+const modalMember = ref<Member | null>(null);
 
 const buffer = computed(() => (networks.activeKey ? buffers.byKey(networks.activeKey) : null));
-const members = computed(() => buffer.value?.members || []);
+const members = computed((): Member[] => (buffer.value?.members as Member[]) || []);
 const selfNick = computed(() => {
   const b = buffer.value;
   if (!b) return null;
   return networks.states[b.networkId]?.nick || null;
 });
 
-function isSelf(m) {
+function isSelf(m: Member): boolean {
   const sn = selfNick.value;
   return !!sn && nickOf(m).toLowerCase() === sn.toLowerCase();
 }
-function nickStyle(m) {
+function nickStyle(m: Member): { color: string } | null {
   // Away members render in a flat muted color — the .away CSS rule wins
   // regardless of inline style, but skipping the inline color keeps the DOM
   // honest.
@@ -77,10 +83,18 @@ function nickStyle(m) {
 
 const PREFIX_ORDER = ['~', '&', '@', '%', '+', ''];
 
-function nickOf(m) { return typeof m === 'string' ? m : m.nick; }
-function userOf(m) { return typeof m === 'object' && m?.user ? m.user : null; }
-function hostOf(m) { return typeof m === 'object' && m?.host ? m.host : null; }
-function modesOf(m) { return Array.isArray(m?.modes) ? m.modes : []; }
+function nickOf(m: Member): string {
+  return m.nick;
+}
+function userOf(m: Member): string | null {
+  return m.user ?? null;
+}
+function hostOf(m: Member): string | null {
+  return m.host ?? null;
+}
+function modesOf(m: Member): string[] {
+  return Array.isArray(m?.modes) ? m.modes : [];
+}
 
 // Click handlers funnel through one builder so right-click, row-click
 // (mobile tap, desktop click — member rows have no other action), and the
@@ -89,24 +103,26 @@ function modesOf(m) { return Array.isArray(m?.modes) ? m.modes : []; }
 // from the affordance the user actually pointed at.
 function menuContext() {
   return {
-    networkId: buffer.value?.networkId,
+    networkId: buffer.value?.networkId ?? 0,
     isSelf,
-    onIgnore: (m) => { modalMember.value = m; },
+    onIgnore: (m: Member) => {
+      modalMember.value = m;
+    },
   };
 }
-function onRowClick(e, m) {
+function onRowClick(e: MouseEvent, m: Member): void {
   if (!buffer.value || isSelf(m)) return;
   memberActions.openMenuFor(m, menuContext(), e.clientX, e.clientY);
 }
-function onRowContextMenu(e, m) {
+function onRowContextMenu(e: MouseEvent, m: Member): void {
   if (!buffer.value || isSelf(m)) return;
   memberActions.openMenuFor(m, menuContext(), e.clientX, e.clientY);
 }
-function onActionsClick(e, m) {
+function onActionsClick(e: MouseEvent, m: Member): void {
   if (!buffer.value || isSelf(m)) return;
-  memberActions.openMenuFromButton(m, menuContext(), e.currentTarget);
+  memberActions.openMenuFromButton(m, menuContext(), e.currentTarget as Element);
 }
-function prefixOf(m) {
+function prefixOf(m: Member): string {
   const modes = modesOf(m);
   if (modes.includes('q')) return '~';
   if (modes.includes('a')) return '&';
@@ -115,13 +131,15 @@ function prefixOf(m) {
   if (modes.includes('v')) return '+';
   return '';
 }
-function prefixClass(m) {
+function prefixClass(m: Member): string {
   const p = prefixOf(m);
   return p ? `mode-${p}` : '';
 }
-function isAway(m) { return typeof m === 'object' && !!m?.away; }
-function liClass(m) {
-  const classes = [];
+function isAway(m: Member): boolean {
+  return !!m?.away;
+}
+function liClass(m: Member): string[] {
+  const classes: string[] = [];
   const p = prefixClass(m);
   if (p) classes.push(p);
   if (isAway(m)) classes.push('away');
@@ -139,10 +157,8 @@ const sorted = computed(() => {
     ? list.filter((m) => {
         if (isSelf(m)) return true;
         const nick = nickOf(m);
-        const userhost = m && typeof m === 'object' && m.user && m.host
-          ? `${nick}!${m.user}@${m.host}`
-          : null;
-        return !ignores.isIgnored(networkId, nick, userhost);
+        const userhost = m.user && m.host ? `${nick}!${m.user}@${m.host}` : null;
+        return !ignores.isIgnored(networkId, nick, userhost ?? '');
       })
     : list;
   return [...filtered].sort((a, b) => {
@@ -155,7 +171,12 @@ const sorted = computed(() => {
 </script>
 
 <style scoped>
-.members { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.members {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
 ul {
   list-style: none;
   margin: 0;
@@ -174,7 +195,9 @@ li {
   cursor: pointer;
   position: relative;
 }
-li:hover { background: var(--bg-soft); }
+li:hover {
+  background: var(--bg-soft);
+}
 
 /* Hover affordance — floats over the right edge of the row instead of taking
    a flex slot, so long nicks aren't pushed into a narrower column when the
@@ -200,17 +223,38 @@ li:hover { background: var(--bg-soft); }
   transition: opacity 80ms linear;
 }
 li:hover .row-actions,
-.row-actions:focus-visible { opacity: 1; }
-.row-actions:hover { color: var(--fg); }
-@media (max-width: 768px) {
-  .row-actions { display: none; }
+.row-actions:focus-visible {
+  opacity: 1;
 }
-.prefix { width: 10px; flex: 0 0 auto; text-align: center; color: var(--fg-muted); }
-li.mode-\~ .prefix { color: var(--member-owner); }
-li.mode-\& .prefix { color: var(--member-admin); }
-li.mode-\@ .prefix { color: var(--member-op); }
-li.mode-\% .prefix { color: var(--member-halfop); }
-li.mode-\+ .prefix { color: var(--member-voice); }
+.row-actions:hover {
+  color: var(--fg);
+}
+@media (max-width: 768px) {
+  .row-actions {
+    display: none;
+  }
+}
+.prefix {
+  width: 10px;
+  flex: 0 0 auto;
+  text-align: center;
+  color: var(--fg-muted);
+}
+li.mode-\~ .prefix {
+  color: var(--member-owner);
+}
+li.mode-\& .prefix {
+  color: var(--member-admin);
+}
+li.mode-\@ .prefix {
+  color: var(--member-op);
+}
+li.mode-\% .prefix {
+  color: var(--member-halfop);
+}
+li.mode-\+ .prefix {
+  color: var(--member-voice);
+}
 .nick {
   flex: 1 1 auto;
   min-width: 0;
@@ -223,5 +267,7 @@ li.mode-\+ .prefix { color: var(--member-voice); }
    rule overrides the inline nickStyle (which is suppressed for away anyway)
    and the prefix mode colors so the whole row reads as inert. */
 li.away .nick,
-li.away .prefix { color: var(--fg-muted) !important; }
+li.away .prefix {
+  color: var(--fg-muted) !important;
+}
 </style>

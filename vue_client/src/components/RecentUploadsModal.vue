@@ -8,10 +8,22 @@
     <p v-if="uploads.listError" class="error">{{ uploads.listError }}</p>
 
     <div ref="listEl" class="list-wrap" @scroll="onScroll">
-      <ul v-if="uploads.recent.length" class="list">
-        <li v-for="u in uploads.recent" :key="u.id" class="row">
-          <a :href="u.url" target="_blank" rel="noreferrer noopener" class="thumb-link" :title="u.url">
-            <img v-if="u.thumbnail_url" :src="u.thumbnail_url" class="thumb" alt="" loading="lazy" />
+      <ul v-if="recentRows.length" class="list">
+        <li v-for="u in recentRows" :key="u.id" class="row">
+          <a
+            :href="u.url"
+            target="_blank"
+            rel="noreferrer noopener"
+            class="thumb-link"
+            :title="u.url"
+          >
+            <img
+              v-if="u.thumbnail_url"
+              :src="u.thumbnail_url"
+              class="thumb"
+              alt=""
+              loading="lazy"
+            />
             <div v-else class="thumb thumb-placeholder">
               <i class="fa-solid fa-file-lines fa-2x"></i>
             </div>
@@ -28,31 +40,62 @@
           </div>
           <div class="row-actions">
             <button class="link" @click="onInsert(u)" title="insert URL into input">insert</button>
-            <button class="link" @click="onCopy(u)" :title="copiedId === u.id ? 'copied' : 'copy URL'">{{ copiedId === u.id ? 'copied' : 'copy' }}</button>
-            <button class="link danger" @click="onDelete(u)" title="remove from history (does not delete from host)">delete</button>
+            <button
+              class="link"
+              @click="onCopy(u)"
+              :title="copiedId === u.id ? 'copied' : 'copy URL'"
+            >
+              {{ copiedId === u.id ? 'copied' : 'copy' }}
+            </button>
+            <button
+              class="link danger"
+              @click="onDelete(u)"
+              title="remove from history (does not delete from host)"
+            >
+              delete
+            </button>
           </div>
         </li>
       </ul>
       <p v-else-if="uploads.loading && !uploads.loaded" class="empty">Loading…</p>
-      <p v-else-if="uploads.loaded" class="empty">No uploads yet. Paste, drop, or pick an image in the input.</p>
+      <p v-else-if="uploads.loaded" class="empty">
+        No uploads yet. Paste, drop, or pick an image in the input.
+      </p>
       <p v-if="uploads.loading && uploads.loaded" class="empty small">Loading more…</p>
     </div>
   </AppModal>
 </template>
 
-<script setup>
-import { onMounted, ref } from 'vue';
+<script setup lang="ts">
+import { computed, onMounted, ref } from 'vue';
 import AppModal from './AppModal.vue';
 import { useUploadsStore } from '../stores/uploads.js';
+import type { UploadItem } from '../stores/uploads.js';
 import { formatRelative } from '../utils/timestamp.js';
 
-const emit = defineEmits(['close']);
+// The server response can include extra metadata fields not tracked in the
+// store's base UploadItem shape (they come from the GET /api/uploads list).
+interface UploadRow extends UploadItem {
+  created_at?: string;
+  byte_size?: number;
+  width?: number;
+  height?: number;
+}
+
+const emit = defineEmits<{
+  close: [];
+}>();
 const uploads = useUploadsStore();
-const listEl = ref(null);
-const copiedId = ref(null);
+// Cast the store's UploadItem[] to UploadRow[] so the template can access
+// the server-supplied extra fields (created_at, byte_size, width, height).
+const recentRows = computed(() => uploads.recent as UploadRow[]);
+const listEl = ref<HTMLDivElement | null>(null);
+const copiedId = ref<number | null>(null);
 
 onMounted(() => {
-  uploads.loadRecent().catch(() => { /* surfaced via store.listError */ });
+  uploads.loadRecent().catch(() => {
+    /* surfaced via store.listError */
+  });
 });
 
 function onScroll() {
@@ -63,12 +106,12 @@ function onScroll() {
   }
 }
 
-function onInsert(u) {
+function onInsert(u: UploadRow) {
   uploads.requestInsert(u.url);
   emit('close');
 }
 
-async function onCopy(u) {
+async function onCopy(u: UploadRow) {
   try {
     await navigator.clipboard.writeText(u.url);
     copiedId.value = u.id;
@@ -81,11 +124,15 @@ async function onCopy(u) {
   }
 }
 
-async function onDelete(u) {
-  try { await uploads.remove(u.id); } catch (_) { /* listError set */ }
+async function onDelete(u: UploadRow) {
+  try {
+    await uploads.remove(u.id);
+  } catch (_) {
+    /* listError set */
+  }
 }
 
-function formatBytes(n) {
+function formatBytes(n: number) {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
@@ -101,8 +148,12 @@ function formatBytes(n) {
   font: inherit;
   padding: 0 4px;
 }
-.link:hover { color: var(--accent); }
-.link.danger:hover { color: var(--bad); }
+.link:hover {
+  color: var(--accent);
+}
+.link.danger:hover {
+  color: var(--bad);
+}
 
 .error {
   margin: 0 0 8px;
@@ -120,7 +171,11 @@ function formatBytes(n) {
   flex: 1;
   min-height: 0;
 }
-.list { list-style: none; margin: 0; padding: 0; }
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
 .row {
   display: grid;
   grid-template-columns: 80px 1fr max-content;
@@ -132,7 +187,10 @@ function formatBytes(n) {
   padding: 8px 0;
   border-bottom: 1px solid var(--border);
 }
-.thumb-link { display: block; line-height: 0; }
+.thumb-link {
+  display: block;
+  line-height: 0;
+}
 .thumb {
   width: 64px;
   height: 64px;
@@ -146,7 +204,9 @@ function formatBytes(n) {
   justify-content: center;
   color: var(--fg-muted);
 }
-.meta { min-width: 0; }
+.meta {
+  min-width: 0;
+}
 .filename {
   color: var(--fg);
   white-space: nowrap;
@@ -185,7 +245,9 @@ function formatBytes(n) {
     justify-content: flex-end;
     margin-left: 0;
   }
-  .row-actions .link { padding: 6px 10px; }
+  .row-actions .link {
+    padding: 6px 10px;
+  }
 }
 
 .empty {
@@ -193,5 +255,8 @@ function formatBytes(n) {
   color: var(--fg-muted);
   text-align: center;
 }
-.empty.small { padding: 8px 0; font-size: 0.9em; }
+.empty.small {
+  padding: 8px 0;
+  font-size: 0.9em;
+}
 </style>

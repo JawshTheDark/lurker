@@ -24,36 +24,49 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue';
 import { buildNickCandidates } from '../utils/nickCompletion.js';
 import { useIgnoresStore } from '../stores/ignores.js';
+import type { Buffer } from '../stores/buffers.js';
 
-const props = defineProps({
-  open: { type: Boolean, default: false },
-  query: { type: String, default: '' },
-  buffer: { type: Object, default: null },
-  selfNick: { type: String, default: '' },
-  anchor: { type: HTMLElement, default: null },
-});
+const props = withDefaults(
+  defineProps<{
+    open?: boolean;
+    query?: string;
+    buffer?: Buffer | null;
+    selfNick?: string;
+    anchor?: HTMLElement | null;
+  }>(),
+  {
+    open: false,
+    query: '',
+    buffer: null,
+    selfNick: '',
+    anchor: null,
+  },
+);
 
-const emit = defineEmits(['select', 'close']);
+const emit = defineEmits<{
+  select: [nick: string];
+  close: [];
+}>();
 
 const ignores = useIgnoresStore();
-const panelEl = ref(null);
+const panelEl = ref<HTMLElement | null>(null);
 const panelBottom = ref(8);
 
 const rows = computed(() => {
   const networkId = props.buffer?.networkId;
   const isIgnored = networkId
-    ? (nick, userhost) => ignores.isIgnored(networkId, nick, userhost)
+    ? (nick: string, userhost: string | null) => ignores.isIgnored(networkId, nick, userhost ?? '')
     : null;
   return buildNickCandidates(props.buffer, props.selfNick, props.query, isIgnored)
     .slice(0, 50)
     .map((c) => ({ nick: c.nick, lc: c.nick.toLowerCase(), recent: c.recent }));
 });
 
-function pick(nick) {
+function pick(nick: string) {
   emit('select', nick);
 }
 
@@ -76,16 +89,16 @@ function recomputePosition() {
 
 const panelStyle = computed(() => ({ bottom: `${panelBottom.value}px` }));
 
-function onDocPointerDown(e) {
+function onDocPointerDown(e: PointerEvent) {
   if (!props.open) return;
   const panel = panelEl.value;
   const anchor = props.anchor;
-  if (panel && panel.contains(e.target)) return;
-  if (anchor && anchor.contains(e.target)) return;
+  if (panel && panel.contains(e.target as Node)) return;
+  if (anchor && anchor.contains(e.target as Node)) return;
   emit('close');
 }
 
-function onKey(e) {
+function onKey(e: KeyboardEvent) {
   if (!props.open) return;
   if (e.key === 'Escape') emit('close');
 }
@@ -107,7 +120,12 @@ onBeforeUnmount(() => {
   document.removeEventListener('keydown', onKey);
 });
 
-watch(() => props.open, (v) => { if (v) recomputePosition(); });
+watch(
+  () => props.open,
+  (v) => {
+    if (v) recomputePosition();
+  },
+);
 </script>
 
 <style scoped>
@@ -135,10 +153,18 @@ watch(() => props.open, (v) => { if (v) recomputePosition(); });
   border-bottom: 1px solid var(--border);
   user-select: none;
 }
-.row:last-child { border-bottom: none; }
-.row:hover { background: var(--bg); }
-.row.recent .nick { color: var(--accent); }
-.nick { font-weight: 500; }
+.row:last-child {
+  border-bottom: none;
+}
+.row:hover {
+  background: var(--bg);
+}
+.row.recent .nick {
+  color: var(--accent);
+}
+.nick {
+  font-weight: 500;
+}
 .badge {
   font-size: 0.85em;
   color: var(--fg-muted);

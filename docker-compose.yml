@@ -15,7 +15,7 @@ services:
     image: ghcr.io/amiantos/lurker:latest
     container_name: lurker
     ports:
-      - "8015:8015"
+      - '8015:8015'
     volumes:
       # All persistent state — SQLite database, session secret, uploads —
       # lives here. Back this directory up to back up Lurker.

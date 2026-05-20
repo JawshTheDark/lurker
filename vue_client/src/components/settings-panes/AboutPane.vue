@@ -7,32 +7,41 @@
   <section id="about" class="settings-pane">
     <h2>about</h2>
     <p class="section-desc">
-      Lurker is a self-hosted IRC bouncer and web client — your networks stay
-      connected on the server, and every device picks up where you left off.
+      Lurker is a self-hosted IRC bouncer and web client — your networks stay connected on the
+      server, and every device picks up where you left off.
     </p>
     <p class="muted small">version {{ appVersion }}</p>
     <ul class="about-links">
       <li>
         <span class="about-label">source</span>
-        <a href="https://github.com/amiantos/lurker" target="_blank" rel="noopener noreferrer">github.com/amiantos/lurker</a>
+        <a href="https://github.com/amiantos/lurker" target="_blank" rel="noopener noreferrer"
+          >github.com/amiantos/lurker</a
+        >
       </li>
       <li>
         <span class="about-label">discuss</span>
-        <a href="https://discuss.bradroot.me/tags/c/projects/13/lurker/39" target="_blank" rel="noopener noreferrer">discuss.bradroot.me</a>
+        <a
+          href="https://discuss.bradroot.me/tags/c/projects/13/lurker/39"
+          target="_blank"
+          rel="noopener noreferrer"
+          >discuss.bradroot.me</a
+        >
       </li>
       <li>
         <span class="about-label">chat</span>
-        <a href="ircs://irc.libera.chat/lurker" target="_blank" rel="noopener noreferrer">#lurker on Libera.Chat</a>
+        <a href="ircs://irc.libera.chat/lurker" target="_blank" rel="noopener noreferrer"
+          >#lurker on Libera.Chat</a
+        >
       </li>
     </ul>
     <p class="about-warning">
-      Lurker is free and source-available — anyone can host it themselves at
-      no cost. If you're paying for it, be sure you know why.
+      Lurker is free and source-available — anyone can host it themselves at no cost. If you're
+      paying for it, be sure you know why.
     </p>
   </section>
 </template>
 
-<script setup>
+<script setup lang="ts">
 // Build-time constant injected by vite.config.js (define).
 const appVersion = __APP_VERSION__;
 </script>
@@ -66,6 +75,10 @@ const appVersion = __APP_VERSION__;
   letter-spacing: 0.04em;
   min-width: 60px;
 }
-.about-links a { color: var(--accent); }
-.about-links a:hover { color: var(--fg); }
+.about-links a {
+  color: var(--accent);
+}
+.about-links a:hover {
+  color: var(--fg);
+}
 </style>

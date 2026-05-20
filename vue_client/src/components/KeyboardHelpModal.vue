@@ -23,32 +23,38 @@
   </AppModal>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { computed } from 'vue';
 import AppModal from './AppModal.vue';
 
-defineEmits(['close']);
+defineEmits<{ close: [] }>();
 
-const isMac = typeof navigator !== 'undefined'
-  && /mac|iphone|ipad|ipod/i.test(navigator.platform || navigator.userAgent || '');
+interface ShortcutRow {
+  keys: string[];
+  label: string;
+}
+
+const isMac =
+  typeof navigator !== 'undefined' &&
+  /mac|iphone|ipad|ipod/i.test(navigator.platform || navigator.userAgent || '');
 const MOD = isMac ? '⌘' : 'Ctrl';
 const ALT = isMac ? '⌥' : 'Alt';
 
-const shortcuts = computed(() => [
-  { keys: [MOD, 'K'],            label: 'Jump to channel (quick switcher)' },
-  { keys: [ALT, '↑'],            label: 'Previous channel (current network)' },
-  { keys: [ALT, '↓'],            label: 'Next channel (current network)' },
-  { keys: [ALT, 'Shift', '↑'],   label: 'Previous unread channel' },
-  { keys: [ALT, 'Shift', '↓'],   label: 'Next unread channel' },
-  { keys: ['Shift', 'Esc'],      label: 'Mark all channels read' },
-  { keys: ['PgUp'],              label: 'Scroll messages up one page' },
-  { keys: ['PgDn'],              label: 'Scroll messages down one page' },
-  { keys: ['Tab'],               label: 'Autocomplete nicks and channels' },
-  { keys: ['↑', '↓'],            label: 'Browse input history' },
-  { keys: [MOD, 'B'],            label: 'Bold (wraps selection with mIRC code)' },
-  { keys: [MOD, 'I'],            label: 'Italic (wraps selection with mIRC code)' },
-  { keys: [MOD, 'U'],            label: 'Underline (wraps selection with mIRC code)' },
-  { keys: [MOD, '/'],            label: 'Show this help panel' },
+const shortcuts = computed<ShortcutRow[]>(() => [
+  { keys: [MOD, 'K'], label: 'Jump to channel (quick switcher)' },
+  { keys: [ALT, '↑'], label: 'Previous channel (current network)' },
+  { keys: [ALT, '↓'], label: 'Next channel (current network)' },
+  { keys: [ALT, 'Shift', '↑'], label: 'Previous unread channel' },
+  { keys: [ALT, 'Shift', '↓'], label: 'Next unread channel' },
+  { keys: ['Shift', 'Esc'], label: 'Mark all channels read' },
+  { keys: ['PgUp'], label: 'Scroll messages up one page' },
+  { keys: ['PgDn'], label: 'Scroll messages down one page' },
+  { keys: ['Tab'], label: 'Autocomplete nicks and channels' },
+  { keys: ['↑', '↓'], label: 'Browse input history' },
+  { keys: [MOD, 'B'], label: 'Bold (wraps selection with mIRC code)' },
+  { keys: [MOD, 'I'], label: 'Italic (wraps selection with mIRC code)' },
+  { keys: [MOD, 'U'], label: 'Underline (wraps selection with mIRC code)' },
+  { keys: [MOD, '/'], label: 'Show this help panel' },
 ]);
 </script>
 
@@ -71,7 +77,9 @@ const shortcuts = computed(() => [
   border-bottom: 1px solid var(--border);
   vertical-align: middle;
 }
-.list tr:last-child td { border-bottom: none; }
+.list tr:last-child td {
+  border-bottom: none;
+}
 .keys {
   white-space: nowrap;
   width: 1%;
@@ -90,5 +98,7 @@ kbd {
   color: var(--fg-muted);
   margin: 0 2px;
 }
-.label { color: var(--fg); }
+.label {
+  color: var(--fg);
+}
 </style>

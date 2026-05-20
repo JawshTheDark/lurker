@@ -4,7 +4,13 @@
 -->
 
 <template>
-  <div ref="scroller" class="message-list" :class="{ compact: compactMode }" @scroll="onScroll" @wheel="onWheel">
+  <div
+    ref="scroller"
+    class="message-list"
+    :class="{ compact: compactMode }"
+    @scroll="onScroll"
+    @wheel="onWheel"
+  >
     <!-- No "loading older…" notice. It would appear/disappear above the
          user's view during a history fetch, shifting scrollTop and either
          throwing off the prepend anchor math or (with browser anchoring)
@@ -12,82 +18,63 @@
     <div v-if="!buffer?.hasMoreOlder && messages.length" class="notice">— start of history —</div>
     <p v-if="!messages.length" class="notice empty">No messages yet.</p>
     <template v-for="row in renderRows" :key="row.key">
-    <div v-if="row.divider === 'unread'" class="notice unread-divider">— unread —</div>
-    <div v-else-if="row.divider === 'away'" class="notice presence-divider">
-      — away<template v-if="row.awayMessage">: {{ row.awayMessage }}</template> —
-    </div>
-    <div v-else-if="row.divider === 'back'" class="notice presence-divider">
-      — back (gone {{ formatDuration(row.awayAt, row.backAt) }}) —
-    </div>
-    <div v-else-if="row.divider === 'date'" class="notice date-divider">{{ row.dateStr }}</div>
-    <div
-      v-else-if="row.consolidation"
-      class="line"
-      :class="{ 'cont-time': row.continuationTime }"
-      :data-cons-first-id="row.firstId ?? null"
-      :data-cons-last-id="row.lastId ?? null"
-    >
-      <span class="time">{{ row.continuationTime ? '' : time(row.time) }}</span>
-      <span class="prefix p-cons">--</span>
-      <span class="body meta-body">
-        <template v-for="(g, gi) in row.groups" :key="gi"
-          ><template v-if="gi > 0">; </template
-          ><template v-for="(item, ii) in g.visible" :key="ii"
-            ><template v-if="ii > 0">{{ ii === g.visible.length - 1 && g.hidden === 0 ? ' and ' : ', ' }}</template
-            ><template v-if="g.kind === 'renamed'"
-              ><NickRef :nick="item.from" /> → <NickRef :nick="item.to" /></template
-            ><template v-else><NickRef :nick="item.nick" /></template
-          ></template
-          ><template v-if="g.hidden > 0">, and {{ g.hidden }} {{ g.hidden === 1 ? 'other' : 'others' }}</template
-          ><template v-if="g.kind === 'joined'"> joined</template
-          ><template v-else-if="g.kind === 'left'"> left</template
-          ><template v-else-if="g.kind === 'reconnected'"> reconnected</template
-          ><template v-else-if="g.kind === 'joinedAndLeft'"> joined briefly</template
-        ></template>
-      </span>
-    </div>
-    <div
-      v-else
-      class="line"
-      :class="[rowClass(row), { actionable: eligibleForActions(row.m) }]"
-      :data-msg-id="row.m.id ?? null"
-      @contextmenu="onLineContextMenu($event, row.m)"
-      v-bind="longPressBind(row.m)"
-    >
-      <template v-if="compactMode && row.m.type === 'message'">
-        <!-- Compact-mode message rows (IRCCloud-style): nick on its own
+      <div v-if="row.divider === 'unread'" class="notice unread-divider">— unread —</div>
+      <div v-else-if="row.divider === 'away'" class="notice presence-divider">
+        — away<template v-if="row.awayMessage">: {{ row.awayMessage }}</template> —
+      </div>
+      <div v-else-if="row.divider === 'back'" class="notice presence-divider">
+        — back (gone {{ formatDuration(row.awayAt ?? '', row.backAt ?? '') }}) —
+      </div>
+      <div v-else-if="row.divider === 'date'" class="notice date-divider">{{ row.dateStr }}</div>
+      <div
+        v-else-if="row.consolidation"
+        class="line"
+        :class="{ 'cont-time': row.continuationTime }"
+        :data-cons-first-id="row.firstId ?? null"
+        :data-cons-last-id="row.lastId ?? null"
+      >
+        <span class="time">{{ row.continuationTime ? '' : time(row.time) }}</span>
+        <span class="prefix p-cons">--</span>
+        <span class="body meta-body">
+          <template v-for="(g, gi) in row.groups" :key="gi"
+            ><template v-if="gi > 0">; </template
+            ><template v-for="(item, ii) in g.visible" :key="ii"
+              ><template v-if="ii > 0">{{
+                ii === g.visible.length - 1 && g.hidden === 0 ? ' and ' : ', '
+              }}</template
+              ><template v-if="g.kind === 'renamed'"
+                ><NickRef :nick="asRename(item).from" /> →
+                <NickRef :nick="asRename(item).to" /></template
+              ><template v-else><NickRef :nick="asNick(item).nick" /></template></template
+            ><template v-if="g.hidden > 0"
+              >, and {{ g.hidden }} {{ g.hidden === 1 ? 'other' : 'others' }}</template
+            ><template v-if="g.kind === 'joined'"> joined</template
+            ><template v-else-if="g.kind === 'left'"> left</template
+            ><template v-else-if="g.kind === 'reconnected'"> reconnected</template
+            ><template v-else-if="g.kind === 'joinedAndLeft'"> joined briefly</template></template
+          >
+        </span>
+      </div>
+      <div
+        v-else
+        class="line"
+        :class="[rowClass(row), { actionable: eligibleForActions(row.m) }]"
+        :data-msg-id="row.m?.id ?? null"
+        @contextmenu="onLineContextMenu($event, row.m)"
+        v-bind="longPressBind(row.m)"
+      >
+        <template v-if="compactMode && row.m?.type === 'message'">
+          <!-- Compact-mode message rows (IRCCloud-style): nick on its own
              head line above the body; body row carries the body and a
              right-aligned timestamp. The head is omitted entirely on
              author continuations so a run of same-author messages reads
              as one block, but every body row still shows its own time. -->
-        <div v-if="!row.continuationAuthor" class="head">
-          <span class="prefix" :class="prefixClass(row.m)" :style="prefixStyle(row.m)">{{ row.m.nick }}</span>
-        </div>
-        <span class="body" :class="bodyClass(row.m)">
-          <template v-for="(seg, j) in textSegments(row.m)" :key="j">
-            <a
-              v-if="seg.url"
-              class="msg-link"
-              :href="seg.url"
-              target="_blank"
-              rel="noreferrer noopener"
-              :style="segStyle(seg)"
-            >{{ seg.text }}</a>
-            <span v-else-if="segHasStyle(seg)" :style="segStyle(seg)">{{ seg.text }}</span>
-            <template v-else>{{ seg.text }}</template>
-          </template>
-        </span>
-        <span class="time">{{ row.continuationTime ? '' : time(row.m.time) }}</span>
-      </template>
-      <template v-else>
-        <span class="time">{{ row.continuationTime ? '' : time(row.m.time) }}</span>
-        <span
-          class="prefix"
-          :class="prefixClass(row.m)"
-          :style="row.continuationAuthor ? null : prefixStyle(row.m)"
-        >{{ row.continuationAuthor ? '' : prefixText(row.m) }}</span>
-        <span class="body" :class="bodyClass(row.m)">
-          <template v-if="hasInlineText(row.m)">
+          <div v-if="!row.continuationAuthor" class="head">
+            <span class="prefix" :class="prefixClass(row.m)" :style="prefixStyle(row.m)">{{
+              row.m?.nick
+            }}</span>
+          </div>
+          <span class="body" :class="bodyClass(row.m)">
             <template v-for="(seg, j) in textSegments(row.m)" :key="j">
               <a
                 v-if="seg.url"
@@ -96,32 +83,88 @@
                 target="_blank"
                 rel="noreferrer noopener"
                 :style="segStyle(seg)"
-              >{{ seg.text }}</a>
+                >{{ seg.text }}</a
+              >
               <span v-else-if="segHasStyle(seg)" :style="segStyle(seg)">{{ seg.text }}</span>
               <template v-else>{{ seg.text }}</template>
             </template>
-          </template>
-          <template v-else-if="row.m.type === 'join'"><NickRef :nick="row.m.nick" /> joined</template>
-          <template v-else-if="row.m.type === 'part'"><NickRef :nick="row.m.nick" /> left<template v-if="row.m.text"> (<LinkedText :text="row.m.text" />)</template></template>
-          <template v-else-if="row.m.type === 'quit'"><NickRef :nick="row.m.nick" /> quit<template v-if="row.m.text"> (<LinkedText :text="row.m.text" />)</template></template>
-          <template v-else-if="row.m.type === 'kick'"><NickRef :nick="row.m.kicked" /> kicked by <NickRef :nick="row.m.nick" /><template v-if="row.m.text"> (<LinkedText :text="row.m.text" />)</template></template>
-          <template v-else-if="row.m.type === 'nick'"><NickRef :nick="row.m.nick" /> is now <NickRef :nick="row.m.newNick" /></template>
-          <template v-else-if="row.m.type === 'mode'">mode by <NickRef :nick="row.m.nick" /><template v-if="row.m.text">: <LinkedText :text="row.m.text" /></template></template>
-          <template v-else-if="row.m.type === 'topic'">topic set by <NickRef :nick="row.m.nick" /><template v-if="row.m.text">: <LinkedText :text="row.m.text" /></template></template>
-          <template v-else-if="row.m.type === 'motd'"><LinkedText :text="row.m.text" /></template>
-          <template v-else-if="row.m.type === 'error'"><LinkedText :text="row.m.text" /></template>
-        </span>
-      </template>
-      <button
-        v-if="eligibleForActions(row.m)"
-        type="button"
-        class="row-actions"
-        title="Message actions"
-        aria-label="Message actions"
-        @click.stop="onActionsClick($event, row.m)"
-        @contextmenu.stop.prevent
-      ><i class="fa-solid fa-ellipsis-vertical"></i></button>
-    </div>
+          </span>
+          <span class="time">{{ row.continuationTime ? '' : time(row.m?.time) }}</span>
+        </template>
+        <template v-else>
+          <span class="time">{{ row.continuationTime ? '' : time(row.m?.time) }}</span>
+          <span
+            class="prefix"
+            :class="prefixClass(row.m)"
+            :style="row.continuationAuthor ? null : prefixStyle(row.m)"
+            >{{ row.continuationAuthor ? '' : prefixText(row.m) }}</span
+          >
+          <span class="body" :class="bodyClass(row.m)">
+            <template v-if="hasInlineText(row.m)">
+              <template v-for="(seg, j) in textSegments(row.m)" :key="j">
+                <a
+                  v-if="seg.url"
+                  class="msg-link"
+                  :href="seg.url"
+                  target="_blank"
+                  rel="noreferrer noopener"
+                  :style="segStyle(seg)"
+                  >{{ seg.text }}</a
+                >
+                <span v-else-if="segHasStyle(seg)" :style="segStyle(seg)">{{ seg.text }}</span>
+                <template v-else>{{ seg.text }}</template>
+              </template>
+            </template>
+            <template v-else-if="row.m?.type === 'join'"
+              ><NickRef :nick="row.m.nick ?? ''" /> joined</template
+            >
+            <template v-else-if="row.m?.type === 'part'"
+              ><NickRef :nick="row.m.nick ?? ''" /> left<template v-if="row.m.text">
+                (<LinkedText :text="row.m.text" />)</template
+              ></template
+            >
+            <template v-else-if="row.m?.type === 'quit'"
+              ><NickRef :nick="row.m.nick ?? ''" /> quit<template v-if="row.m.text">
+                (<LinkedText :text="row.m.text" />)</template
+              ></template
+            >
+            <template v-else-if="row.m?.type === 'kick'"
+              ><NickRef :nick="row.m.kicked ?? ''" /> kicked by
+              <NickRef :nick="row.m.nick ?? ''" /><template v-if="row.m.text">
+                (<LinkedText :text="row.m.text" />)</template
+              ></template
+            >
+            <template v-else-if="row.m?.type === 'nick'"
+              ><NickRef :nick="row.m.nick ?? ''" /> is now <NickRef :nick="row.m.newNick ?? ''"
+            /></template>
+            <template v-else-if="row.m?.type === 'mode'"
+              >mode by <NickRef :nick="row.m.nick ?? ''" /><template v-if="row.m.text"
+                >: <LinkedText :text="row.m.text" /></template
+            ></template>
+            <template v-else-if="row.m?.type === 'topic'"
+              >topic set by <NickRef :nick="row.m.nick ?? ''" /><template v-if="row.m.text"
+                >: <LinkedText :text="row.m.text" /></template
+            ></template>
+            <template v-else-if="row.m?.type === 'motd'"
+              ><LinkedText :text="row.m.text ?? ''"
+            /></template>
+            <template v-else-if="row.m?.type === 'error'"
+              ><LinkedText :text="row.m.text ?? ''"
+            /></template>
+          </span>
+        </template>
+        <button
+          v-if="eligibleForActions(row.m)"
+          type="button"
+          class="row-actions"
+          title="Message actions"
+          aria-label="Message actions"
+          @click.stop="onActionsClick($event, row.m)"
+          @contextmenu.stop.prevent
+        >
+          <i class="fa-solid fa-ellipsis-vertical"></i>
+        </button>
+      </div>
     </template>
   </div>
   <IgnoreModal
@@ -134,8 +177,9 @@
   />
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue';
+import type { CSSProperties } from 'vue';
 import { useNetworksStore } from '../stores/networks.js';
 import { useBuffersStore } from '../stores/buffers.js';
 import { useSettingsStore } from '../stores/settings.js';
@@ -149,19 +193,76 @@ import {
   resetScrollState,
   useScrollState,
 } from '../composables/useScrollState.js';
+import type { RenderSegment } from '../utils/nickColor.js';
 import { segmentInlineStyle, segmentHasStyle } from '../utils/nickColor.js';
 import { formatTimestamp, formatDuration, formatDate, formatDayLabel } from '../utils/timestamp.js';
 import { consolidateRows } from '../utils/consolidate.js';
+import type { ConsolidationGroup, NickEntry, RenameEntry } from '../../../shared/consolidate.js';
 import { collapseDisplay } from '../utils/collapseDisplay.js';
 import NickRef from './NickRef.vue';
 import LinkedText from './LinkedText.vue';
 import IgnoreModal from './IgnoreModal.vue';
 import { useMessageActions } from '../composables/useMessageActions.js';
+import type { MessageContext } from '../composables/useMessageActions.js';
 import { useLongPress } from '../composables/useLongPress.js';
 
-const props = defineProps({
-  pendingScrollId: { type: [Number, String, null], default: null },
-});
+// Extended BufferMessage fields accessed in the template and script
+// (beyond the core BufferMessage definition which uses [key: string]: unknown).
+interface ChatMessage {
+  id?: number | null;
+  networkId: number;
+  target: string;
+  type: string;
+  nick?: string;
+  text?: string;
+  time?: string;
+  self?: boolean;
+  alt?: boolean;
+  matched?: unknown;
+  newNick?: string;
+  kicked?: string;
+  userhost?: string;
+  [key: string]: unknown;
+}
+
+// A row emitted by renderRows — either a real message row, a consolidation
+// summary, or a divider marker.
+interface RenderRow {
+  // Message row
+  m?: ChatMessage;
+  alt?: boolean;
+  key: string | number;
+  // Divider row
+  divider?: string;
+  dateStr?: string;
+  awayMessage?: string;
+  awayAt?: string;
+  backAt?: string;
+  // Consolidation row (from consolidateRows)
+  consolidation?: boolean;
+  groups?: ConsolidationGroup[];
+  time?: string;
+  firstId?: number | string | null;
+  lastId?: number | string | null;
+  // Display-collapsing tags (mutated by collapseDisplay)
+  continuationAuthor?: boolean;
+  continuationTime?: boolean;
+}
+
+// Ignore-confirm modal target
+interface IgnoreTarget {
+  nick?: string;
+  user: string | null;
+  host: string | null;
+  networkId?: number;
+}
+
+const props = withDefaults(
+  defineProps<{
+    pendingScrollId?: number | string | null;
+  }>(),
+  { pendingScrollId: null },
+);
 
 const networks = useNetworksStore();
 const buffers = useBuffersStore();
@@ -177,11 +278,13 @@ const selfColor = computed(() => settings.effective('look.nick.self_color'));
 // standard-layout timestamps. Note: `tsFormat` is referenced via `time()`
 // inside the collapseDisplay formatter too, so the timestamp-collapse
 // granularity follows the active format automatically.
-const tsFormat = computed(() => settings.effective(
-  compactMode.value ? 'look.buffer.time_format_compact' : 'look.buffer.time_format',
-));
+const tsFormat = computed(() =>
+  settings.effective(
+    compactMode.value ? 'look.buffer.time_format_compact' : 'look.buffer.time_format',
+  ),
+);
 
-const scroller = ref(null);
+const scroller = ref<HTMLElement | null>(null);
 const stickToBottom = ref(true);
 const { scrollToBottomToken } = useScrollState();
 
@@ -194,11 +297,11 @@ const selfLower = computed(() => {
   return sn ? sn.toLowerCase() : null;
 });
 
-const nickSet = computed(() => {
+const nickSet = computed((): Set<string> => {
   const b = buffer.value;
-  const set = new Set();
+  const set = new Set<string>();
   if (!b) return set;
-  for (const mem of (b.members || [])) {
+  for (const mem of b.members || []) {
     const n = typeof mem === 'string' ? mem : mem.nick;
     if (n) set.add(n);
   }
@@ -210,16 +313,17 @@ const nickSet = computed(() => {
   return set;
 });
 
-function time(iso) {
-  return formatTimestamp(iso, tsFormat.value);
+function time(iso: string | undefined): string {
+  return formatTimestamp(iso ?? '', (tsFormat.value as string) ?? '');
 }
 
-function rowClass(row) {
+function rowClass(row: RenderRow) {
+  const m = row.m;
   return {
-    [`type-${row.m.type}`]: true,
-    self: row.m.self,
+    [`type-${m?.type}`]: true,
+    self: m?.self,
     alt: row.alt,
-    highlight: !!row.m.matched,
+    highlight: !!m?.matched,
     'cont-author': !!row.continuationAuthor,
     'cont-time': !!row.continuationTime,
   };
@@ -232,14 +336,17 @@ function rowClass(row) {
 // in (mirrors MemberList's pattern).
 const messageActions = useMessageActions();
 const longPress = useLongPress();
-const ignoreTarget = ref(null);
+const ignoreTarget = ref<IgnoreTarget | null>(null);
 
-function eligibleForActions(m) {
+function eligibleForActions(m: ChatMessage | undefined | null): boolean {
   if (!m || m.id == null) return false;
   return m.type === 'message' || m.type === 'action' || m.type === 'notice';
 }
 
-function parseUserHost(userhost) {
+function parseUserHost(userhost: string | null | undefined): {
+  user: string | null;
+  host: string | null;
+} {
   if (!userhost) return { user: null, host: null };
   // Format is nick!user@host; tolerate missing pieces.
   const bang = userhost.indexOf('!');
@@ -250,9 +357,9 @@ function parseUserHost(userhost) {
   return { user: rest.slice(0, at) || null, host: rest.slice(at + 1) || null };
 }
 
-function menuContext(m) {
+function menuContext(m: ChatMessage): MessageContext {
   return {
-    networkId: buffer.value?.networkId,
+    networkId: buffer.value?.networkId ?? 0,
     onIgnore: (msg) => {
       const { user, host } = parseUserHost(msg.userhost);
       ignoreTarget.value = {
@@ -265,43 +372,63 @@ function menuContext(m) {
   };
 }
 
-function onLineContextMenu(e, m) {
+function onLineContextMenu(e: MouseEvent, m: ChatMessage | undefined) {
   if (!eligibleForActions(m)) return;
   e.preventDefault();
-  messageActions.openMenuFor(m, menuContext(m), e.clientX, e.clientY);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  messageActions.openMenuFor(m as any, menuContext(m!), e.clientX, e.clientY);
 }
 
-function onActionsClick(e, m) {
+function onActionsClick(e: MouseEvent, m: ChatMessage | undefined) {
   if (!eligibleForActions(m)) return;
-  messageActions.openMenuFromButton(m, menuContext(m), e.currentTarget);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  messageActions.openMenuFromButton(
+    m as any,
+    menuContext(m!),
+    (e.currentTarget as Element) || null,
+  );
 }
 
 // Touch long-press → same menu. Eligibility is rechecked inside the callback
 // so the timer set on touchstart of an ineligible row (rare, the v-bind only
 // emits handlers for eligible rows) is a no-op. The bind() factory threads
 // the message through to the callback as the payload arg.
-function longPressBind(m) {
+function longPressBind(m: ChatMessage | undefined) {
   if (!eligibleForActions(m)) return null;
   return longPress.bind((coords, msg) => {
-    messageActions.openMenuFor(msg, menuContext(msg), coords.clientX, coords.clientY);
-  }, m);
+    if (!msg) return;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    messageActions.openMenuFor(msg as any, menuContext(msg), coords.clientX, coords.clientY);
+  }, m as ChatMessage);
 }
 
 const smartFilterEnabled = computed(() => !!settings.effective('chat.smart_filter'));
-const smartFilterDelayMs = computed(() => (settings.effective('chat.smart_filter_delay') || 0) * 60_000);
-const smartFilterUnmaskMs = computed(() => (settings.effective('chat.smart_filter_join_unmask') || 0) * 60_000);
+const smartFilterDelayMs = computed(
+  () => ((settings.effective('chat.smart_filter_delay') as number) || 0) * 60_000,
+);
+const smartFilterUnmaskMs = computed(
+  () => ((settings.effective('chat.smart_filter_join_unmask') as number) || 0) * 60_000,
+);
 const smartFilterJoin = computed(() => !!settings.effective('chat.smart_filter_join'));
 const smartFilterQuit = computed(() => !!settings.effective('chat.smart_filter_quit'));
 const smartFilterNick = computed(() => !!settings.effective('chat.smart_filter_nick'));
 
 const consolidateEnabled = computed(() => !!settings.effective('chat.consolidate_joins'));
-const consolidateMaxNames = computed(() => settings.effective('chat.consolidate_max_names') || 5);
-
-const collapseAuthorsEnabled = computed(() => !!settings.effective('look.message.collapse_authors'));
-const collapseAuthorsWindowMs = computed(() =>
-  Math.max(0, settings.effective('look.message.collapse_authors_window') || 0) * 60_000,
+const consolidateMaxNames = computed(
+  () => (settings.effective('chat.consolidate_max_names') as number) || 5,
 );
-const collapseTimestampsEnabled = computed(() => !!settings.effective('look.message.collapse_timestamps'));
+
+const collapseAuthorsEnabled = computed(
+  () => !!settings.effective('look.message.collapse_authors'),
+);
+const collapseAuthorsWindowMs = computed(
+  () =>
+    Math.max(0, (settings.effective('look.message.collapse_authors_window') as number) || 0) *
+    60_000,
+);
+const collapseTimestampsEnabled = computed(
+  () => !!settings.effective('look.message.collapse_timestamps'),
+);
 
 // look.message.layout: auto / standard / compact. Compact swaps the 3-column
 // subgrid for a two-line stack (head: nick + time, body below) on
@@ -326,10 +453,22 @@ const effectiveCollapseTimestamps = computed(() => collapseTimestampsEnabled.val
 // network broadcasts the same payload, so reading from this buffer's network
 // is equivalent to reading user state. The server pseudo-buffer doesn't get
 // presence markers — it's noise-only.
-const awayState = computed(() => {
+
+// The `away` field in NetworkState is typed as `string | null` but the runtime
+// value is this richer object (applyAwayState sets it from ircManager's shape).
+interface AwayStateObject {
+  active: boolean;
+  message: string | null;
+  since: string | null;
+  autoSet: boolean;
+  backAt: string | null;
+}
+
+const awayState = computed((): AwayStateObject | null => {
   const b = buffer.value;
   if (!b || b.target.startsWith(':server:')) return null;
-  return networks.states[b.networkId]?.away || null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return (networks.states[b.networkId]?.away as any) || null;
 });
 
 // Away/back markers stop being useful once the user has been back a while —
@@ -338,7 +477,7 @@ const awayState = computed(() => {
 // disappear without needing a new message to trigger renderRows.
 const PRESENCE_MARKER_TTL_MS = 30 * 60 * 1000;
 const now = ref(Date.now());
-let nowTimer = null;
+let nowTimer: ReturnType<typeof setInterval> | null = null;
 
 // Striped row types — chat-shaped events that receive .line.alt zebra striping.
 // System events (join/part/quit/nick/mode/topic/etc.) are never striped, so
@@ -349,10 +488,10 @@ const STRIPED_TYPES = new Set(['message', 'action', 'notice']);
 
 // One-pass walk over messages to (a) decide which rows the smart filter
 // should hide and (b) tag rows with alt-row striping.
-const renderRows = computed(() => {
+const renderRows = computed((): RenderRow[] => {
   const list = messages.value;
   const buf = buffer.value;
-  const out = [];
+  const out: RenderRow[] = [];
 
   const filterOn = smartFilterEnabled.value && !!buf?.speakers;
   const ownNickLc = selfLower.value;
@@ -377,7 +516,7 @@ const renderRows = computed(() => {
   const aw = awayState.value;
   const awaySinceMs = aw?.since ? Date.parse(aw.since) : null;
   const backAtMs = aw?.backAt ? Date.parse(aw.backAt) : null;
-  const presenceExpired = backAtMs != null && (now.value - backAtMs) > PRESENCE_MARKER_TTL_MS;
+  const presenceExpired = backAtMs != null && now.value - backAtMs > PRESENCE_MARKER_TTL_MS;
   let awayInserted = !awaySinceMs || presenceExpired;
   let backInserted = !backAtMs || presenceExpired;
 
@@ -386,17 +525,30 @@ const renderRows = computed(() => {
   // message in the buffer). Tracked across the loop below.
   let lastDayKey = null;
   const pushAwayDivider = () => {
-    out.push({ divider: 'away', awayMessage: aw.message, awayAt: aw.since, key: 'presence-away' });
+    if (!aw) return;
+    out.push({
+      divider: 'away',
+      awayMessage: aw.message ?? undefined,
+      awayAt: aw.since ?? undefined,
+      key: 'presence-away',
+    });
   };
   const pushBackDivider = () => {
-    out.push({ divider: 'back', awayAt: aw.since, backAt: aw.backAt, key: 'presence-back' });
+    if (!aw) return;
+    out.push({
+      divider: 'back',
+      awayAt: aw.since ?? undefined,
+      backAt: aw.backAt ?? undefined,
+      key: 'presence-back',
+    });
   };
-
 
   const networkId = buf?.networkId;
 
   for (let i = 0; i < list.length; i++) {
-    const m = list[i];
+    // Cast to ChatMessage so template-used properties are typed; BufferMessage
+    // uses [key: string]: unknown for extra fields (time, self, alt, userhost…).
+    const m = list[i] as ChatMessage;
     const key = m.id ?? `live:${i}`;
     let hidden = false;
 
@@ -405,8 +557,7 @@ const renderRows = computed(() => {
     // bare nick and the full nick!user@host so hostmask entries can fire.
     // Removing a mask re-runs this computed and previously-hidden rows
     // reappear without a backlog reload.
-    if (!m.self && m.nick && networkId
-        && ignores.isIgnored(networkId, m.nick, m.userhost)) {
+    if (!m.self && m.nick && networkId && ignores.isIgnored(networkId, m.nick, m.userhost ?? '')) {
       continue;
     }
 
@@ -416,16 +567,16 @@ const renderRows = computed(() => {
         ((m.type === 'part' || m.type === 'quit') && fQuit) ||
         (m.type === 'nick' && fNick);
       if (filterable && m.nick.toLowerCase() !== ownNickLc) {
-        const lastSpoke = buf.speakers[m.nick.toLowerCase()]?.lastTime;
-        const eventTime = Date.parse(m.time) || 0;
-        const recentlySpoke = lastSpoke != null
-          && lastSpoke <= eventTime
-          && (eventTime - lastSpoke) <= delayMs;
-        const unmasked = m.type === 'join'
-          && unmaskMs > 0
-          && lastSpoke != null
-          && lastSpoke > eventTime
-          && (lastSpoke - eventTime) <= unmaskMs;
+        const lastSpoke = buf?.speakers[m.nick.toLowerCase()]?.lastTime;
+        const eventTime = Date.parse(m.time ?? '') || 0;
+        const recentlySpoke =
+          lastSpoke != null && lastSpoke <= eventTime && eventTime - lastSpoke <= delayMs;
+        const unmasked =
+          m.type === 'join' &&
+          unmaskMs > 0 &&
+          lastSpoke != null &&
+          lastSpoke > eventTime &&
+          lastSpoke - eventTime <= unmaskMs;
         if (!recentlySpoke && !unmasked) hidden = true;
       }
     }
@@ -433,25 +584,25 @@ const renderRows = computed(() => {
     if (hidden) continue;
 
     // Day-change marker before the first visible row of each local day.
-    const dayKey = formatDate(m.time);
+    const dayKey = formatDate(m.time ?? '');
     if (dayKey && dayKey !== lastDayKey) {
-      out.push({ divider: 'date', dateStr: formatDayLabel(m.time), key: `date:${dayKey}` });
+      out.push({ divider: 'date', dateStr: formatDayLabel(m.time ?? ''), key: `date:${dayKey}` });
       lastDayKey = dayKey;
     }
 
-    const mTimeMs = Date.parse(m.time) || 0;
-    if (!awayInserted && mTimeMs > awaySinceMs) {
+    const mTimeMs = Date.parse(m.time ?? '') || 0;
+    if (!awayInserted && awaySinceMs != null && mTimeMs > awaySinceMs) {
       pushAwayDivider();
       awayInserted = true;
     }
-    if (!backInserted && mTimeMs > backAtMs) {
+    if (!backInserted && backAtMs != null && mTimeMs > backAtMs) {
       pushBackDivider();
       backInserted = true;
     }
     // Insert the unread divider before the first visible row with id past
     // the snapshot. Tolerates the exact-id row being filtered out: we just
     // pick the next surviving row past the boundary.
-    if (!dividerInserted && m.id != null && m.id > dividerAfterId) {
+    if (!dividerInserted && m.id != null && Number(m.id) > dividerAfterId) {
       out.push({ divider: 'unread', key: 'unread-divider' });
       dividerInserted = true;
     }
@@ -469,14 +620,15 @@ const renderRows = computed(() => {
   // the away/back/unread markers to land between events, not get swallowed
   // by a multi-event group). Recent speakers come from the same `speakers`
   // map nick completion uses, so the cap prefers nicks the reader knows.
-  let final = out;
+  let final: RenderRow[] = out;
   if (consolidateEnabled.value) {
     const speakers = buf?.speakers ? Object.keys(buf.speakers) : [];
-    final = consolidateRows(out, {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    final = consolidateRows(out as any, {
       enabled: true,
       maxNames: consolidateMaxNames.value,
       recentSpeakers: speakers,
-    });
+    }) as RenderRow[];
   }
   // Per-row display collapsing (nick + timestamp dedupe). Runs over the same
   // row shape consolidateRows emits and tags rows in place — the template
@@ -484,7 +636,8 @@ const renderRows = computed(() => {
   // prefix/time cells (subgrid stays aligned). compactMode tells the util
   // to skip hidden continuation rows when tracking the time chain.
   if (effectiveCollapseAuthors.value || effectiveCollapseTimestamps.value) {
-    collapseDisplay(final, {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    collapseDisplay(final as any, {
       collapseAuthors: effectiveCollapseAuthors.value,
       authorWindowMs: collapseAuthorsWindowMs.value,
       collapseTimestamps: effectiveCollapseTimestamps.value,
@@ -497,67 +650,95 @@ const renderRows = computed(() => {
 
 // What goes in column 2. For chat lines this is the nick (right-aligned);
 // for system events it's a tiny indicator glyph (-->, <--, --, !!).
-function prefixText(m) {
+function prefixText(m: ChatMessage | undefined): string {
+  if (!m) return '';
+
   switch (m.type) {
-    case 'message': return m.nick;
-    case 'action':  return '*';
-    case 'notice':  return `-${m.nick}-`;
-    case 'join':    return '-->';
+    case 'message':
+      return m.nick ?? '';
+    case 'action':
+      return '*';
+    case 'notice':
+      return `-${m.nick ?? ''}-`;
+    case 'join':
+      return '-->';
     case 'part':
     case 'quit':
-    case 'kick':    return '<--';
+    case 'kick':
+      return '<--';
     case 'nick':
     case 'mode':
     case 'topic':
-    case 'motd':    return '--';
-    case 'error':   return '!!';
-    default:        return '';
+    case 'motd':
+      return '--';
+    case 'error':
+      return '!!';
+    default:
+      return '';
   }
 }
 
-function prefixClass(m) {
+function prefixClass(m: ChatMessage | undefined) {
   return {
-    nick: m.type === 'message' || m.type === 'notice',
-    'action-marker': m.type === 'action',
-    italic: m.type === 'action' && actionItalic.value,
-    self: m.self,
-    [`p-${m.type}`]: true,
+    nick: m?.type === 'message' || m?.type === 'notice',
+    'action-marker': m?.type === 'action',
+    italic: m?.type === 'action' && actionItalic.value,
+    self: m?.self,
+    [`p-${m?.type}`]: true,
   };
 }
 
-function prefixStyle(m) {
-  if (m.type === 'message' || m.type === 'notice') {
-    if (m.self) return { color: selfColor.value };
-    const c = nicks.color(m.nick);
+function prefixStyle(m: ChatMessage | undefined): CSSProperties | null {
+  if (m?.type === 'message' || m?.type === 'notice') {
+    if (m.self) return { color: selfColor.value as string };
+    const c = nicks.color(m.nick ?? '');
     return c ? { color: c } : null;
   }
   return null;
 }
 
-function bodyClass(m) {
+function bodyClass(m: ChatMessage | undefined) {
   return {
-    italic: m.type === 'action' && actionItalic.value,
-    'meta-body': m.type !== 'message' && m.type !== 'action' && m.type !== 'notice',
+    italic: m?.type === 'action' && actionItalic.value,
+    'meta-body': m?.type !== 'message' && m?.type !== 'action' && m?.type !== 'notice',
   };
 }
 
 // True for any line type whose body is just `m.text` and should be split
 // through the nick-coloring helper. Action lines render their author's nick
 // at the start of the body, with `m.text` after.
-function hasInlineText(m) {
-  return m.type === 'message' || m.type === 'notice' || m.type === 'action';
+function hasInlineText(m: ChatMessage | undefined): boolean {
+  return m?.type === 'message' || m?.type === 'notice' || m?.type === 'action';
 }
 
-function textSegments(m) {
+function textSegments(m: ChatMessage | undefined): RenderSegment[] {
+  if (!m) return [];
   if (m.type === 'action') {
     // Body is "<nick> <text>" — author's nick then the action text.
-    return nicks.splitText(`${m.nick} ${m.text || ''}`, nickSet.value, selfLower.value);
+    return nicks.splitText(
+      `${m.nick} ${m.text || ''}`,
+      nickSet.value,
+      selfLower.value,
+    ) as RenderSegment[];
   }
-  return nicks.splitText(m.text || '', nickSet.value, selfLower.value);
+  return nicks.splitText(m.text || '', nickSet.value, selfLower.value) as RenderSegment[];
 }
 
-function segStyle(seg) { return segmentInlineStyle(seg, selfColor.value); }
-function segHasStyle(seg) { return segmentHasStyle(seg); }
+function segStyle(seg: RenderSegment): CSSProperties {
+  return segmentInlineStyle(seg, selfColor.value as string | null) as CSSProperties;
+}
+function segHasStyle(seg: RenderSegment) {
+  return segmentHasStyle(seg);
+}
+
+// Template helpers for consolidation row items — vue-tsc can't narrow
+// NickEntry | RenameEntry based on g.kind, so we provide typed accessors.
+function asRename(item: NickEntry | RenameEntry): RenameEntry {
+  return item as RenameEntry;
+}
+function asNick(item: NickEntry | RenameEntry): NickEntry {
+  return item as NickEntry;
+}
 
 function requestMoreHistory() {
   const buf = buffer.value;
@@ -648,7 +829,7 @@ function ensureViewportFilled() {
 // inertia would carry past our set, the dip would be detected again, and
 // another fetch would cascade. We wait until scroll stabilizes before
 // deciding the user is genuinely at the top.
-let pendingHistoryTimer = null;
+let pendingHistoryTimer: ReturnType<typeof setTimeout> | null = null;
 
 // Last seen scroller clientHeight, used to detect resize-induced scroll
 // events. When the scroller shrinks (input grows, keyboard slides up,
@@ -688,7 +869,7 @@ function onScroll() {
 // Without this, a live message can arrive between the user's wheel and the
 // scroll event firing, the watcher resumes on nextTick before onScroll has
 // run, and reads a stale stickToBottom=true — snapping the user back.
-function onWheel(e) {
+function onWheel(e: WheelEvent) {
   if (e.deltaY < 0) {
     stickToBottom.value = false;
     setStuckToBottom(false);
@@ -705,15 +886,12 @@ function scrollToBottom() {
 // the messages-array watcher below doesn't see them. When the user flips
 // state while pinned to the bottom, follow the new divider down — same
 // behavior as sending a normal message.
-watch(
-  [() => awayState.value?.since, () => awayState.value?.backAt],
-  async (next, prev) => {
-    if (next[0] === prev?.[0] && next[1] === prev?.[1]) return;
-    if (!stickToBottom.value) return;
-    await nextTick();
-    scrollToBottom();
-  },
-);
+watch([() => awayState.value?.since, () => awayState.value?.backAt], async (next, prev) => {
+  if (next[0] === prev?.[0] && next[1] === prev?.[1]) return;
+  if (!stickToBottom.value) return;
+  await nextTick();
+  scrollToBottom();
+});
 
 // Watch the messages array shape so we can react to:
 //   - prepend (older history): pin the OLD first row's viewport position.
@@ -738,24 +916,25 @@ watch(
     // yet replaces that tail. Use the surviving tail to tell them apart, so a
     // capped buffer isn't misread as a re-snapshot (and force-scrolled to the
     // bottom) on every single message.
-    const appended = lastChanged && oldLastId != null
-      && messages.value.some((m) => m.id === oldLastId);
+    const appended =
+      lastChanged && oldLastId != null && messages.value.some((m) => m.id === oldLastId);
     // Pure prepend: anchor by element ID so re-flow from changing column
     // widths or differing message heights doesn't drift the math. With the
     // loading notice gone from the template, the OLD DOM and NEW DOM share
     // the same set of [data-msg-id] elements with stable identity above
     // and below the prepend boundary.
     if (firstChanged && !lastChanged && grew && oldFirstId != null) {
-      const anchor = el.querySelector(`[data-msg-id="${oldFirstId}"]`);
+      const anchor = el.querySelector(`[data-msg-id="${oldFirstId}"]`) as HTMLElement | null;
       const anchorOldTop = anchor ? anchor.offsetTop : null;
       const oldScrollTop = el.scrollTop;
       const oldScrollHeight = el.scrollHeight;
       await nextTick();
-      const anchorNew = anchorOldTop != null
-        ? el.querySelector(`[data-msg-id="${oldFirstId}"]`)
-        : null;
+      const anchorNew =
+        anchorOldTop != null
+          ? (el.querySelector(`[data-msg-id="${oldFirstId}"]`) as HTMLElement | null)
+          : null;
       if (anchorNew) {
-        el.scrollTop = anchorNew.offsetTop - (anchorOldTop - oldScrollTop);
+        el.scrollTop = anchorNew.offsetTop - (anchorOldTop! - oldScrollTop);
       } else {
         el.scrollTop = el.scrollHeight - oldScrollHeight + oldScrollTop;
       }
@@ -801,10 +980,14 @@ watch(
     if (appended && !isDetached) {
       if (stickToBottom.value) scrollToBottom();
       else {
-        const tail = messages.value[messages.value.length - 1];
+        const tail = messages.value[messages.value.length - 1] as ChatMessage | undefined;
         const nid = buffer.value?.networkId;
-        const tailIgnored = tail && !tail.self && tail.nick && nid
-          && ignores.isIgnored(nid, tail.nick, tail.userhost);
+        const tailIgnored =
+          tail &&
+          !tail.self &&
+          tail.nick &&
+          nid &&
+          ignores.isIgnored(nid, tail.nick, tail.userhost ?? '');
         if (!tailIgnored) bumpNewBelow();
       }
     }
@@ -817,13 +1000,17 @@ watch(
 // set, so a plain (lazy) watcher would never see it change. The first
 // nextTick after setup resolves after the initial render, so scroller.value
 // is populated by the time scrollToBottom runs.
-watch(() => networks.activeKey, async () => {
-  stickToBottom.value = true;
-  resetScrollState();
-  await nextTick();
-  scrollToBottom();
-  ensureViewportFilled();
-}, { immediate: true });
+watch(
+  () => networks.activeKey,
+  async () => {
+    stickToBottom.value = true;
+    resetScrollState();
+    await nextTick();
+    scrollToBottom();
+    ensureViewportFilled();
+  },
+  { immediate: true },
+);
 
 // Layout toggle reflows every row's height (3-col grid ↔ stacked head+body).
 // scrollTop becomes meaningless across the swap; re-snap if the user was
@@ -853,7 +1040,7 @@ watch(scrollToBottomToken, async () => {
 // snap is done synchronously here so any scroll event the snap triggers is
 // observed against the freshly-updated lastClientHeight (i.e. classified as
 // not-a-user-scroll). Pairs with the resize-induced-scroll guard in onScroll.
-let scrollerObserver = null;
+let scrollerObserver: ResizeObserver | null = null;
 function onScrollerResize() {
   const el = scroller.value;
   if (!el) return;
@@ -868,7 +1055,9 @@ onMounted(() => {
     scrollerObserver = new ResizeObserver(onScrollerResize);
     scrollerObserver.observe(scroller.value);
   }
-  nowTimer = setInterval(() => { now.value = Date.now(); }, 60_000);
+  nowTimer = setInterval(() => {
+    now.value = Date.now();
+  }, 60_000);
 });
 
 onBeforeUnmount(() => {
@@ -876,7 +1065,10 @@ onBeforeUnmount(() => {
     scrollerObserver.disconnect();
     scrollerObserver = null;
   }
-  if (nowTimer) { clearInterval(nowTimer); nowTimer = null; }
+  if (nowTimer) {
+    clearInterval(nowTimer);
+    nowTimer = null;
+  }
 });
 
 // PageUp/PageDown shortcut handler: scroll the message list by ~90% of the
@@ -886,7 +1078,7 @@ onBeforeUnmount(() => {
 // message arriving mid-read doesn't yank the viewport back to the bottom;
 // downward paging that reaches the tail re-engages stick-to-bottom via the
 // normal onScroll path.
-function scrollByPage(direction) {
+function scrollByPage(direction: number) {
   const el = scroller.value;
   if (!el) return;
   const delta = Math.max(el.clientHeight - 40, 80) * (direction < 0 ? -1 : 1);
@@ -899,18 +1091,21 @@ function scrollByPage(direction) {
 
 defineExpose({ scrollByPage });
 
-watch(() => props.pendingScrollId, async (id) => {
-  if (id == null) return;
-  await nextTick();
-  const el = scroller.value;
-  if (!el) return;
-  const target = el.querySelector(`[data-msg-id="${id}"]`);
-  if (!target) return;
-  stickToBottom.value = false;
-  target.scrollIntoView({ block: 'center', behavior: 'smooth' });
-  target.classList.add('scroll-target');
-  setTimeout(() => target.classList.remove('scroll-target'), 1500);
-});
+watch(
+  () => props.pendingScrollId,
+  async (id) => {
+    if (id == null) return;
+    await nextTick();
+    const el = scroller.value;
+    if (!el) return;
+    const target = el.querySelector(`[data-msg-id="${id}"]`);
+    if (!target) return;
+    stickToBottom.value = false;
+    target.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    target.classList.add('scroll-target');
+    setTimeout(() => target.classList.remove('scroll-target'), 1500);
+  },
+);
 </script>
 
 <style scoped>
@@ -963,9 +1158,17 @@ watch(() => props.pendingScrollId, async (id) => {
    rows apart in a dense column. In compact mode, message groups already
    visually separate via the head/gap rhythm, so striping individual lines
    inside a group fights the grouping signal — drop it. */
-.message-list:not(.compact) .line.alt { background: var(--alt-bg); color: var(--alt-fg); }
-.line:hover { background: var(--bg-soft); }
-.message-list:not(.compact) .line.alt:hover { background: var(--bg-soft); color: var(--fg); }
+.message-list:not(.compact) .line.alt {
+  background: var(--alt-bg);
+  color: var(--alt-fg);
+}
+.line:hover {
+  background: var(--bg-soft);
+}
+.message-list:not(.compact) .line.alt:hover {
+  background: var(--bg-soft);
+  color: var(--fg);
+}
 
 /* Hover-revealed three-dots button on eligible rows (desktop only). Sits in
    the gutter on the right edge of the line. Hidden on touch viewports;
@@ -999,7 +1202,9 @@ watch(() => props.pendingScrollId, async (id) => {
   background: var(--bg-soft);
 }
 @media (hover: none), (max-width: 768px) {
-  .row-actions { display: none; }
+  .row-actions {
+    display: none;
+  }
 }
 
 /* Matched highlight (rule fired): warm background tint. Sits above .alt so
@@ -1015,8 +1220,12 @@ watch(() => props.pendingScrollId, async (id) => {
   animation: scroll-target-pulse 1.5s ease-out;
 }
 @keyframes scroll-target-pulse {
-  0%   { background: color-mix(in srgb, var(--accent) 30%, transparent); }
-  100% { background: transparent; }
+  0% {
+    background: color-mix(in srgb, var(--accent) 30%, transparent);
+  }
+  100% {
+    background: transparent;
+  }
 }
 
 .time {
@@ -1029,20 +1238,32 @@ watch(() => props.pendingScrollId, async (id) => {
   white-space: nowrap;
   padding-right: 1ch;
 }
-.prefix.italic { font-style: italic; }
-.prefix.action-marker { color: var(--fg-muted); }
-.prefix.p-join  { color: var(--good); }
+.prefix.italic {
+  font-style: italic;
+}
+.prefix.action-marker {
+  color: var(--fg-muted);
+}
+.prefix.p-join {
+  color: var(--good);
+}
 .prefix.p-part,
-.prefix.p-quit  { color: var(--fg-muted); }
+.prefix.p-quit {
+  color: var(--fg-muted);
+}
 .prefix.p-kick,
-.prefix.p-error { color: var(--bad); }
+.prefix.p-error {
+  color: var(--bad);
+}
 .prefix.p-nick,
 .prefix.p-mode,
 .prefix.p-topic,
 .prefix.p-motd,
 .prefix.p-away,
 .prefix.p-back,
-.prefix.p-cons  { color: var(--fg-muted); }
+.prefix.p-cons {
+  color: var(--fg-muted);
+}
 
 .body {
   position: relative;
@@ -1063,8 +1284,13 @@ watch(() => props.pendingScrollId, async (id) => {
   width: 1px;
   background: var(--border);
 }
-.body.meta-body { color: var(--fg-muted); font-style: italic; }
-.body.italic { font-style: italic; }
+.body.meta-body {
+  color: var(--fg-muted);
+  font-style: italic;
+}
+.body.italic {
+  font-style: italic;
+}
 /* .msg-link styling lives in src/assets/main.css (shared with the topic bar). */
 
 /* Mobile + standard layout: phone widths can't spare the time column or the
@@ -1079,9 +1305,15 @@ watch(() => props.pendingScrollId, async (id) => {
     grid-template-columns: minmax(0, max-content) minmax(0, 1fr);
     padding: 4px 8px;
   }
-  .message-list:not(.compact) .time { display: none; }
-  .message-list:not(.compact) .prefix { padding-right: 0.5ch; }
-  .message-list:not(.compact) .body { padding-left: 0.5ch; }
+  .message-list:not(.compact) .time {
+    display: none;
+  }
+  .message-list:not(.compact) .prefix {
+    padding-right: 0.5ch;
+  }
+  .message-list:not(.compact) .body {
+    padding-left: 0.5ch;
+  }
 }
 
 /* Compact layout (look.message.layout = compact, or = auto on mobile):
@@ -1103,8 +1335,8 @@ watch(() => props.pendingScrollId, async (id) => {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   grid-template-areas:
-    "head   head head"
-    "prefix body time";
+    'head   head head'
+    'prefix body time';
   align-items: baseline;
   column-gap: 0.75ch;
   row-gap: 0;

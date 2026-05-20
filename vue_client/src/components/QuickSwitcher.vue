@@ -17,7 +17,9 @@
           spellcheck="false"
           @keydown="onKeydown"
         />
-        <button class="link" @click="$emit('close')" title="close"><i class="fa-solid fa-xmark"></i></button>
+        <button class="link" @click="$emit('close')" title="close">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
       </header>
       <ul v-if="rows.length" ref="listEl" class="list">
         <li
@@ -38,7 +40,7 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { computed, onMounted, ref, watch, nextTick } from 'vue';
 import { useNetworksStore } from '../stores/networks.js';
 import { useBuffersStore } from '../stores/buffers.js';
@@ -46,7 +48,18 @@ import { usePinsStore } from '../stores/pins.js';
 import { useNickColors } from '../composables/useNickColors.js';
 import { flattenBufferOrder } from '../utils/bufferOrder.js';
 
-const emit = defineEmits(['close']);
+interface Row {
+  networkId: string | number;
+  target: string;
+  networkName: string;
+  label: string;
+  unread: number;
+  style: { color: string } | null;
+}
+
+const emit = defineEmits<{
+  close: [];
+}>();
 
 const networks = useNetworksStore();
 const buffers = useBuffersStore();
@@ -55,17 +68,21 @@ const nicks = useNickColors();
 
 const query = ref('');
 const selected = ref(0);
-const inputEl = ref(null);
-const listEl = ref(null);
+const inputEl = ref<HTMLInputElement | null>(null);
+const listEl = ref<HTMLUListElement | null>(null);
 
-function isServerTarget(t) { return t.startsWith(':server:'); }
-function isDmTarget(t) { return !isServerTarget(t) && !t.startsWith('#'); }
+function isServerTarget(t: string) {
+  return t.startsWith(':server:');
+}
+function isDmTarget(t: string) {
+  return !isServerTarget(t) && !t.startsWith('#');
+}
 
-function netById(id) {
+function netById(id: string | number) {
   return networks.networks.find((n) => n.id === id);
 }
 
-function dmStyle(networkId, target) {
+function dmStyle(networkId: string | number, target: string): { color: string } | null {
   if (!isDmTarget(target)) return null;
   const selfNick = networks.states[networkId]?.nick;
   if (selfNick && target.toLowerCase() === selfNick.toLowerCase()) return null;
@@ -73,7 +90,7 @@ function dmStyle(networkId, target) {
   return c ? { color: c } : null;
 }
 
-const allRows = computed(() => {
+const allRows = computed<Row[]>(() => {
   const order = flattenBufferOrder({
     networks: networks.networks,
     buffers,
@@ -82,7 +99,7 @@ const allRows = computed(() => {
   return order.map((entry) => {
     const net = netById(entry.networkId);
     const buf = buffers.byKey(`${entry.networkId}::${entry.target}`);
-    const isServer = isServerTarget(entry.target);
+    const isServer = isServerTarget(entry.target as string);
     return {
       networkId: entry.networkId,
       target: entry.target,
@@ -94,23 +111,24 @@ const allRows = computed(() => {
   });
 });
 
-const rows = computed(() => {
+const rows = computed<Row[]>(() => {
   const q = query.value.trim().toLowerCase();
   if (!q) return allRows.value;
   return allRows.value.filter((r) => {
-    return r.label.toLowerCase().includes(q)
-      || r.networkName.toLowerCase().includes(q);
+    return r.label.toLowerCase().includes(q) || r.networkName.toLowerCase().includes(q);
   });
 });
 
-watch(rows, () => { selected.value = 0; });
+watch(rows, () => {
+  selected.value = 0;
+});
 
-function pick(row) {
+function pick(row: Row) {
   buffers.activate(row.networkId, row.target);
   emit('close');
 }
 
-function onKeydown(e) {
+function onKeydown(e: KeyboardEvent) {
   if (e.key === 'ArrowDown') {
     e.preventDefault();
     if (rows.value.length === 0) return;
@@ -187,7 +205,10 @@ onMounted(() => {
   padding: 4px 8px;
   font: inherit;
 }
-.filter:focus { outline: none; border-color: var(--accent); }
+.filter:focus {
+  outline: none;
+  border-color: var(--accent);
+}
 .link {
   background: none;
   border: none;
@@ -196,7 +217,9 @@ onMounted(() => {
   font: inherit;
   padding: 0 4px;
 }
-.link:hover { color: var(--fg); }
+.link:hover {
+  color: var(--fg);
+}
 
 .list {
   list-style: none;
@@ -213,11 +236,22 @@ onMounted(() => {
   padding: 4px 12px;
   cursor: pointer;
 }
-.row.active { background: var(--bg-soft); }
-.row .net { color: var(--accent); }
-.row .sep { color: var(--border); }
-.row .target { flex: 1; color: var(--fg); }
-.row .badge { color: var(--accent); }
+.row.active {
+  background: var(--bg-soft);
+}
+.row .net {
+  color: var(--accent);
+}
+.row .sep {
+  color: var(--border);
+}
+.row .target {
+  flex: 1;
+  color: var(--fg);
+}
+.row .badge {
+  color: var(--accent);
+}
 
 .empty {
   text-align: center;

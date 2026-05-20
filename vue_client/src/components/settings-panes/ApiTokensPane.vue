@@ -11,10 +11,9 @@
   <section id="api-tokens" class="settings-pane">
     <h2>api tokens</h2>
     <p class="section-desc">
-      Bearer tokens grant scripts and AI agents access to your Lurker data
-      through the MCP endpoint at <code>/mcp</code>. Each token belongs to your
-      account only and can be revoked at any time. The token itself is shown
-      <strong>once</strong> on creation — copy it before closing the row.
+      Bearer tokens grant scripts and AI agents access to your Lurker data through the MCP endpoint
+      at <code>/mcp</code>. Each token belongs to your account only and can be revoked at any time.
+      The token itself is shown <strong>once</strong> on creation — copy it before closing the row.
     </p>
     <p v-if="error" class="error inline">{{ error }}</p>
 
@@ -34,16 +33,13 @@
         <span>Allow this token to send messages and write notes</span>
       </label>
       <div class="create-actions">
-        <button class="link" type="submit" :disabled="busy || !newName.trim()">
-          create token
-        </button>
+        <button class="link" type="submit" :disabled="busy || !newName.trim()">create token</button>
       </div>
     </form>
 
     <div v-if="revealed" class="reveal">
       <p class="reveal-warning">
-        <strong>{{ revealed.name }}</strong> — copy this token now. It will
-        not be shown again.
+        <strong>{{ revealed.name }}</strong> — copy this token now. It will not be shown again.
       </p>
       <div class="reveal-row">
         <code class="token">{{ revealed.token }}</code>
@@ -63,14 +59,15 @@
           <span v-if="t.revokedAt" class="revoked">revoked</span>
         </span>
         <span class="last-seen" :title="t.lastUsedAt || t.createdAt">
-          {{ t.lastUsedAt ? `last used ${formatRelative(t.lastUsedAt)}` : `created ${formatRelative(t.createdAt)}` }}
+          {{
+            t.lastUsedAt
+              ? `last used ${formatRelative(t.lastUsedAt)}`
+              : `created ${formatRelative(t.createdAt)}`
+          }}
         </span>
-        <button
-          v-if="!t.revokedAt"
-          class="link danger"
-          :disabled="busy"
-          @click="onRevoke(t)"
-        >revoke</button>
+        <button v-if="!t.revokedAt" class="link danger" :disabled="busy" @click="onRevoke(t)">
+          revoke
+        </button>
         <span v-else class="placeholder" />
       </li>
     </ul>
@@ -78,27 +75,43 @@
   </section>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, onMounted } from 'vue';
 import { api } from '../../api.js';
 import { formatRelative } from '../../utils/timestamp.js';
 
-const tokens = ref([]);
+interface ApiToken {
+  id: string;
+  name: string;
+  scope: string;
+  createdAt: string;
+  lastUsedAt: string | null;
+  revokedAt: string | null;
+}
+
+interface RevealedToken {
+  name: string;
+  token: string;
+}
+
+const tokens = ref<ApiToken[]>([]);
 const newName = ref('');
 const newAllowWrite = ref(false);
-const revealed = ref(null);
+const revealed = ref<RevealedToken | null>(null);
 const copied = ref(false);
 const busy = ref(false);
 const error = ref('');
 
-onMounted(() => { refresh(); });
+onMounted(() => {
+  refresh();
+});
 
 async function refresh() {
   error.value = '';
   try {
     const { items } = await api('/api/api-tokens');
     tokens.value = items;
-  } catch (e) {
+  } catch (e: any) {
     error.value = e.message || 'failed to load tokens';
   }
 }
@@ -120,7 +133,7 @@ async function onCreate() {
     newName.value = '';
     newAllowWrite.value = false;
     await refresh();
-  } catch (e) {
+  } catch (e: any) {
     error.value = e.message || 'failed to create token';
   } finally {
     busy.value = false;
@@ -139,14 +152,14 @@ async function onCopy() {
   }
 }
 
-async function onRevoke(token) {
+async function onRevoke(token: ApiToken) {
   if (!confirm(`Revoke ${token.name}? Scripts using this token will lose access.`)) return;
   error.value = '';
   busy.value = true;
   try {
     await api(`/api/api-tokens/${token.id}`, { method: 'DELETE' });
     await refresh();
-  } catch (e) {
+  } catch (e: any) {
     error.value = e.message || 'revoke failed';
   } finally {
     busy.value = false;
@@ -198,7 +211,10 @@ async function onRevoke(token) {
   border: 1px solid var(--accent);
   background: var(--bg-soft);
 }
-.reveal-warning { margin: 0 0 6px; color: var(--fg); }
+.reveal-warning {
+  margin: 0 0 6px;
+  color: var(--fg);
+}
 .reveal-row {
   display: flex;
   align-items: center;
@@ -221,7 +237,9 @@ async function onRevoke(token) {
   align-items: center;
   gap: 1ch;
 }
-.token-row .name { color: var(--fg); }
+.token-row .name {
+  color: var(--fg);
+}
 .token-row .scope {
   color: var(--fg-muted);
   font-variant: small-caps;
@@ -230,5 +248,7 @@ async function onRevoke(token) {
   color: var(--bad);
   font-variant: small-caps;
 }
-.token-row .placeholder { width: 0; }
+.token-row .placeholder {
+  width: 0;
+}
 </style>

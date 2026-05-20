@@ -1,0 +1,248 @@
+// Copyright (c) 2026 Brad Root
+// SPDX-License-Identifier: MPL-2.0
+
+import { defineStore } from 'pinia';
+import { startRegistration, startAuthentication } from '@simplewebauthn/browser';
+import { api } from '../api.js';
+import { resetSession } from '../composables/useSessionReset.js';
+
+export interface AuthUser {
+  id: number;
+  username: string;
+  role: 'admin' | 'user';
+}
+
+export interface SetupStatus {
+  needsSetup: boolean;
+  mode?: string;
+  username?: string;
+}
+
+export interface Passkey {
+  id: string;
+  label: string | null;
+  createdAt: string;
+}
+
+export const useAuthStore = defineStore('auth', {
+  state: () => ({
+    user: null as AuthUser | null,
+    checked: false,
+    error: null as string | null,
+    setupStatus: null as SetupStatus | null, // { needsSetup, mode?, username? }
+  }),
+  actions: {
+    async fetchMe() {
+      try {
+        const { user } = await api('/api/auth/me');
+        this.user = user;
+      } catch (_err) {
+        this.user = null;
+      } finally {
+        this.checked = true;
+      }
+      return this.user;
+    },
+    async fetchSetupStatus() {
+      try {
+        this.setupStatus = await api('/api/auth/setup-status');
+      } catch (_err) {
+        this.setupStatus = { needsSetup: false };
+      }
+      return this.setupStatus;
+    },
+    async fetchAuthMethods() {
+      try {
+        return await api('/api/auth/auth-methods');
+      } catch (_err) {
+        return { passkey: false };
+      }
+    },
+    async loginWithPasskey() {
+      this.error = null;
+      try {
+        const { options } = await api('/api/auth/login/options', { method: 'POST' });
+        const response = await startAuthentication({ optionsJSON: options });
+        const { user } = await api('/api/auth/login/verify', {
+          method: 'POST',
+          body: { response },
+        });
+        this.user = user;
+        this.checked = true;
+        return user as AuthUser;
+      } catch (err: any) {
+        this.error = friendlyError(err, 'login failed');
+        throw err;
+      }
+    },
+    async setupFirstPasskey({ username }: { username?: string } = {}) {
+      this.error = null;
+      try {
+        const { options } = await api('/api/auth/setup/options', {
+          method: 'POST',
+          body: { username },
+        });
+        const response = await startRegistration({ optionsJSON: options });
+        const { user } = await api('/api/auth/setup/verify', {
+          method: 'POST',
+          body: { response },
+        });
+        this.user = user;
+        this.checked = true;
+        this.setupStatus = { needsSetup: false };
+        return user as AuthUser;
+      } catch (err: any) {
+        this.error = friendlyError(err, 'setup failed');
+        throw err;
+      }
+    },
+    async setupFirstPassword({
+      username,
+      password,
+    }: { username?: string; password?: string } = {}) {
+      this.error = null;
+      try {
+        const { user } = await api('/api/auth/setup/password', {
+          method: 'POST',
+          body: { username, password },
+        });
+        this.user = user;
+        this.checked = true;
+        this.setupStatus = { needsSetup: false };
+        return user as AuthUser;
+      } catch (err: any) {
+        this.error = friendlyError(err, 'setup failed');
+        throw err;
+      }
+    },
+    async loginWithPassword({ username, password }: { username?: string; password?: string } = {}) {
+      this.error = null;
+      try {
+        const { user } = await api('/api/auth/login/password', {
+          method: 'POST',
+          body: { username, password },
+        });
+        this.user = user;
+        this.checked = true;
+        return user as AuthUser;
+      } catch (err: any) {
+        this.error = friendlyError(err, 'login failed');
+        throw err;
+      }
+    },
+    async fetchInviteStatus(token: string) {
+      // Public endpoint, never throws on a missing/expired token — returns
+      // { valid: bool, expired?: bool } so the landing page can pick its copy.
+      const data = await api(`/api/auth/invite/${encodeURIComponent(token)}`);
+      return data;
+    },
+    async acceptInvite({
+      token,
+      username,
+      label,
+    }: { token?: string; username?: string; label?: string } = {}) {
+      this.error = null;
+      try {
+        const { options } = await api(`/api/auth/invite/${encodeURIComponent(token!)}/options`, {
+          method: 'POST',
+          body: { username },
+        });
+        const response = await startRegistration({ optionsJSON: options });
+        const { user } = await api(`/api/auth/invite/${encodeURIComponent(token!)}/verify`, {
+          method: 'POST',
+          body: { response, label },
+        });
+        // If a prior user was logged into this browser, wipe their state
+        // before the new session takes over. Clear `user` first so the WS
+        // onclose reconnect arm sees no user (matches the logout pattern).
+        this.user = null;
+        resetSession();
+        this.user = user;
+        this.checked = true;
+        return user as AuthUser;
+      } catch (err: any) {
+        this.error = friendlyError(err, 'invite redemption failed');
+        throw err;
+      }
+    },
+    async acceptInviteWithPassword({
+      token,
+      username,
+      password,
+    }: { token?: string; username?: string; password?: string } = {}) {
+      this.error = null;
+      try {
+        const { user } = await api(`/api/auth/invite/${encodeURIComponent(token!)}/password`, {
+          method: 'POST',
+          body: { username, password },
+        });
+        this.user = null;
+        resetSession();
+        this.user = user;
+        this.checked = true;
+        return user as AuthUser;
+      } catch (err: any) {
+        this.error = friendlyError(err, 'invite redemption failed');
+        throw err;
+      }
+    },
+    async addPasskey({ label }: { label?: string } = {}) {
+      const { options } = await api('/api/auth/passkeys/options', { method: 'POST' });
+      const response = await startRegistration({ optionsJSON: options });
+      const { passkey } = await api('/api/auth/passkeys/verify', {
+        method: 'POST',
+        body: { response, label },
+      });
+      return passkey as Passkey;
+    },
+    async listPasskeys() {
+      const { passkeys } = await api('/api/auth/passkeys');
+      return passkeys as Passkey[];
+    },
+    async renamePasskey(id: string, label: string) {
+      await api(`/api/auth/passkeys/${id}`, { method: 'PATCH', body: { label } });
+    },
+    async deletePasskey(id: string) {
+      await api(`/api/auth/passkeys/${id}`, { method: 'DELETE' });
+    },
+    async fetchPasswordStatus() {
+      try {
+        const { hasPassword } = await api('/api/auth/password');
+        return !!hasPassword;
+      } catch (_) {
+        return false;
+      }
+    },
+    async setPassword({
+      password,
+      currentPassword,
+    }: { password?: string; currentPassword?: string } = {}) {
+      await api('/api/auth/password', {
+        method: 'PUT',
+        body: { password, currentPassword },
+      });
+    },
+    async removePassword() {
+      await api('/api/auth/password', { method: 'DELETE' });
+    },
+    async logout() {
+      try {
+        await api('/api/auth/logout', { method: 'POST' });
+      } finally {
+        // Clear user before resetSession so any late WS onclose handler
+        // sees a null user and skips its 2s reconnect arm.
+        this.user = null;
+        resetSession();
+      }
+    },
+  },
+});
+
+function friendlyError(err: any, fallback: string): string {
+  if (!err) return fallback;
+  // Browser cancellation comes back as a DOMException; show something less
+  // alarming than "NotAllowedError: ...".
+  if (err.name === 'NotAllowedError') return 'cancelled';
+  if (err.name === 'InvalidStateError') return 'this passkey is already registered';
+  return err.message || fallback;
+}

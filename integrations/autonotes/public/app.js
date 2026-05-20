@@ -4,22 +4,22 @@
 
 const $ = (id) => document.getElementById(id);
 const els = {
-  config: $("view-config"),
-  scan: $("view-scan"),
-  review: $("view-review"),
-  configForm: $("config-form"),
-  configStatus: $("config-status"),
-  envWarning: $("env-warning"),
-  scanForm: $("scan-form"),
-  scanStatus: $("scan-status"),
-  scanSubmit: $("scan-submit"),
-  reviewSummary: $("review-summary"),
-  reviewList: $("review-list"),
-  reviewActions: $("review-actions"),
-  applyAll: $("apply-all"),
-  tracePanel: $("trace-panel"),
-  traceList: $("trace-list"),
-  traceTotals: $("trace-totals"),
+  config: $('view-config'),
+  scan: $('view-scan'),
+  review: $('view-review'),
+  configForm: $('config-form'),
+  configStatus: $('config-status'),
+  envWarning: $('env-warning'),
+  scanForm: $('scan-form'),
+  scanStatus: $('scan-status'),
+  scanSubmit: $('scan-submit'),
+  reviewSummary: $('review-summary'),
+  reviewList: $('review-list'),
+  reviewActions: $('review-actions'),
+  applyAll: $('apply-all'),
+  tracePanel: $('trace-panel'),
+  traceList: $('trace-list'),
+  traceTotals: $('trace-totals'),
 };
 
 // Sonnet 4.6 pricing per million tokens. Used purely for the audit-view cost
@@ -48,7 +48,7 @@ const state = {
 
 async function api(path, opts = {}) {
   const res = await fetch(path, {
-    headers: { "content-type": "application/json" },
+    headers: { 'content-type': 'application/json' },
     ...opts,
   });
   const body = await res.json().catch(() => ({}));
@@ -56,13 +56,13 @@ async function api(path, opts = {}) {
   return body;
 }
 
-function setStatus(el, msg, kind = "") {
+function setStatus(el, msg, kind = '') {
   el.textContent = msg;
-  el.className = "status" + (kind ? ` ${kind}` : "");
+  el.className = 'status' + (kind ? ` ${kind}` : '');
 }
 
 function showView(name) {
-  for (const v of ["config", "scan", "review"]) {
+  for (const v of ['config', 'scan', 'review']) {
     els[v].hidden = v !== name;
   }
 }
@@ -70,89 +70,89 @@ function showView(name) {
 // ---------------- Router ----------------
 
 function route() {
-  const h = location.hash || "";
-  if (h.startsWith("#review/")) {
-    const id = h.slice("#review/".length);
+  const h = location.hash || '';
+  if (h.startsWith('#review/')) {
+    const id = h.slice('#review/'.length);
     enterReview(id);
-  } else if (h === "#scan") {
+  } else if (h === '#scan') {
     enterScan();
   } else {
     enterConfig();
   }
 }
 
-window.addEventListener("hashchange", route);
+window.addEventListener('hashchange', route);
 
 // ---------------- Config view ----------------
 
 async function enterConfig() {
-  showView("config");
+  showView('config');
   stopPolling();
   try {
-    const cfg = await api("/api/config");
+    const cfg = await api('/api/config');
     if (cfg.lurkerUrl) els.configForm.lurkerUrl.value = cfg.lurkerUrl;
     if (cfg.hasToken) {
       els.configForm.lurkerToken.placeholder = `current: ${cfg.lurkerToken}`;
     }
     els.envWarning.hidden = Boolean(cfg.anthropicKeyPresent);
     if (cfg.hasToken && state.scope === null) {
-      setStatus(els.configStatus, "Token saved. Re-test to confirm scope.");
+      setStatus(els.configStatus, 'Token saved. Re-test to confirm scope.');
     }
   } catch (err) {
-    setStatus(els.configStatus, err.message, "err");
+    setStatus(els.configStatus, err.message, 'err');
   }
 }
 
-els.configForm.addEventListener("submit", async (e) => {
+els.configForm.addEventListener('submit', async (e) => {
   e.preventDefault();
-  setStatus(els.configStatus, "Testing connection…");
+  setStatus(els.configStatus, 'Testing connection…');
   const fd = new FormData(els.configForm);
   try {
-    const result = await api("/api/config", {
-      method: "POST",
+    const result = await api('/api/config', {
+      method: 'POST',
       body: JSON.stringify({
-        lurkerUrl: fd.get("lurkerUrl"),
-        lurkerToken: fd.get("lurkerToken"),
+        lurkerUrl: fd.get('lurkerUrl'),
+        lurkerToken: fd.get('lurkerToken'),
       }),
     });
     state.scope = result.scope;
     setStatus(
       els.configStatus,
       `Connected. Token scope: ${result.scope}. ${result.toolNames.length} tools visible.`,
-      "ok",
+      'ok',
     );
-    setTimeout(() => (location.hash = "#scan"), 400);
+    setTimeout(() => (location.hash = '#scan'), 400);
   } catch (err) {
-    setStatus(els.configStatus, err.message, "err");
+    setStatus(els.configStatus, err.message, 'err');
   }
 });
 
 // ---------------- Scan view ----------------
 
 async function enterScan() {
-  showView("scan");
+  showView('scan');
   stopPolling();
-  setStatus(els.scanStatus, "");
+  setStatus(els.scanStatus, '');
   try {
-    const cfg = await api("/api/config");
+    const cfg = await api('/api/config');
     if (!cfg.hasToken) {
-      location.hash = "#config";
+      location.hash = '#config';
       return;
     }
-    state.networks = await api("/api/networks");
+    state.networks = await api('/api/networks');
     populateNetworks(cfg.lastNetworkId, cfg.lastTarget, cfg.lastDepth);
   } catch (err) {
-    setStatus(els.scanStatus, err.message, "err");
+    setStatus(els.scanStatus, err.message, 'err');
   }
 }
 
 function populateNetworks(lastNetworkId, lastTarget, lastDepth) {
   const netSel = els.scanForm.networkId;
-  netSel.innerHTML = "";
+  netSel.innerHTML = '';
   for (const n of state.networks) {
-    const opt = document.createElement("option");
+    const opt = document.createElement('option');
     opt.value = String(n.id);
-    opt.textContent = `${n.name} (${n.connected ? "connected" : "offline"} as ${n.nick})`;
+    opt.textContent = `${n.name} (${n.connected ? 'connected' : 'offline'} as ${n.nick})`;
     netSel.appendChild(opt);
   }
   if (lastNetworkId != null && state.networks.some((n) => n.id === lastNetworkId)) {
@@ -170,16 +170,16 @@ async function loadBuffers(preferredTarget) {
   const networkId = Number(els.scanForm.networkId.value);
   if (!networkId) return;
   const bufSel = els.scanForm.target;
-  bufSel.innerHTML = "<option>loading…</option>";
+  bufSel.innerHTML = '<option>loading…</option>';
   try {
     let buffers = state.buffersByNetwork.get(networkId);
     if (!buffers) {
       buffers = await api(`/api/buffers?networkId=${networkId}`);
       state.buffersByNetwork.set(networkId, buffers);
     }
-    bufSel.innerHTML = "";
+    bufSel.innerHTML = '';
     for (const b of buffers) {
-      const opt = document.createElement("option");
+      const opt = document.createElement('option');
       opt.value = b.target;
       opt.textContent = `${b.target} (${b.kind})`;
       bufSel.appendChild(opt);
@@ -188,28 +188,28 @@ async function loadBuffers(preferredTarget) {
       bufSel.value = preferredTarget;
     }
   } catch (err) {
-    bufSel.innerHTML = "";
-    setStatus(els.scanStatus, err.message, "err");
+    bufSel.innerHTML = '';
+    setStatus(els.scanStatus, err.message, 'err');
   }
 }
 
-els.scanForm.addEventListener("submit", async (e) => {
+els.scanForm.addEventListener('submit', async (e) => {
   e.preventDefault();
   els.scanSubmit.disabled = true;
-  setStatus(els.scanStatus, "Starting scan…");
+  setStatus(els.scanStatus, 'Starting scan…');
   try {
     const body = {
       networkId: Number(els.scanForm.networkId.value),
       target: els.scanForm.target.value,
       depth: Number(els.scanForm.depth.value),
     };
-    const { scanId } = await api("/api/scan", {
-      method: "POST",
+    const { scanId } = await api('/api/scan', {
+      method: 'POST',
       body: JSON.stringify(body),
     });
     location.hash = `#review/${scanId}`;
   } catch (err) {
-    setStatus(els.scanStatus, err.message, "err");
+    setStatus(els.scanStatus, err.message, 'err');
   } finally {
     els.scanSubmit.disabled = false;
   }
@@ -218,18 +218,18 @@ els.scanForm.addEventListener("submit", async (e) => {
 // ---------------- Review view ----------------
 
 function enterReview(scanId) {
-  showView("review");
+  showView('review');
   stopPolling();
   state.activeScanId = scanId;
   state.cards.clear();
   state.renderedEventCount = 0;
   state.turnEls.clear();
-  els.reviewList.innerHTML = "";
-  els.traceList.innerHTML = "";
-  els.traceTotals.textContent = "";
+  els.reviewList.innerHTML = '';
+  els.traceList.innerHTML = '';
+  els.traceTotals.textContent = '';
   els.tracePanel.hidden = true;
   els.reviewActions.hidden = true;
-  setStatus(els.reviewSummary, "Running scan…");
+  setStatus(els.reviewSummary, 'Running scan…');
   pollScan(scanId);
 }
 
@@ -253,19 +253,19 @@ async function pollScan(scanId) {
     state.scan = scan;
     renderTrace(scan);
 
-    if (scan.status === "running") {
+    if (scan.status === 'running') {
       setStatus(els.reviewSummary, `Running… ${scan.toolCallCount} tool calls so far`);
       state.pollHandle = setTimeout(() => pollScan(scanId), 2000);
       return;
     }
-    if (scan.status === "error") {
-      setStatus(els.reviewSummary, `Scan failed: ${scan.error}`, "err");
+    if (scan.status === 'error') {
+      setStatus(els.reviewSummary, `Scan failed: ${scan.error}`, 'err');
       return;
     }
     renderReview(scan);
   } catch (err) {
     if (scanId !== state.activeScanId) return;
-    setStatus(els.reviewSummary, err.message, "err");
+    setStatus(els.reviewSummary, err.message, 'err');
   }
 }
 
@@ -283,21 +283,21 @@ function renderTrace(scan) {
 
   // The last `turn` event carries the running totals; surface them in the summary.
   let lastTurn = null;
-  for (const ev of events) if (ev.type === "turn") lastTurn = ev;
+  for (const ev of events) if (ev.type === 'turn') lastTurn = ev;
   if (lastTurn?.totals) {
     els.traceTotals.textContent = formatTotalsLine(lastTurn.totals);
   }
 }
 
 function appendTraceEvent(ev) {
-  if (ev.type === "turn") {
-    const wrap = document.createElement("div");
-    wrap.className = "turn";
-    const head = document.createElement("div");
-    head.className = "turn-head";
+  if (ev.type === 'turn') {
+    const wrap = document.createElement('div');
+    wrap.className = 'turn';
+    const head = document.createElement('div');
+    head.className = 'turn-head';
     head.textContent = `Turn ${ev.turn + 1} · ${formatUsageLine(ev.usage)} · ${ev.durationMs}ms · stop=${ev.stopReason}`;
-    const body = document.createElement("div");
-    body.className = "turn-body";
+    const body = document.createElement('div');
+    body.className = 'turn-body';
     wrap.appendChild(head);
     wrap.appendChild(body);
     els.traceList.appendChild(wrap);
@@ -309,46 +309,46 @@ function appendTraceEvent(ev) {
   if (!turnEl) return;
   const body = turnEl.body;
 
-  if (ev.type === "thinking") {
-    const div = document.createElement("div");
-    div.className = "trace-thinking";
+  if (ev.type === 'thinking') {
+    const div = document.createElement('div');
+    div.className = 'trace-thinking';
     div.innerHTML = `<span class="trace-tag">thinking</span> <span class="trace-text"></span>`;
-    div.querySelector(".trace-text").textContent = ev.text;
+    div.querySelector('.trace-text').textContent = ev.text;
     body.appendChild(div);
-  } else if (ev.type === "text") {
-    const div = document.createElement("div");
-    div.className = "trace-text-block";
+  } else if (ev.type === 'text') {
+    const div = document.createElement('div');
+    div.className = 'trace-text-block';
     div.innerHTML = `<span class="trace-tag">say</span> <span class="trace-text"></span>`;
-    div.querySelector(".trace-text").textContent = ev.text;
+    div.querySelector('.trace-text').textContent = ev.text;
     body.appendChild(div);
-  } else if (ev.type === "tool_use") {
-    const div = document.createElement("div");
-    div.className = "trace-tool";
+  } else if (ev.type === 'tool_use') {
+    const div = document.createElement('div');
+    div.className = 'trace-tool';
     div.dataset.toolUseId = ev.id;
     const args = formatToolArgs(ev.input);
     div.innerHTML = `<div class="trace-tool-call"><span class="trace-tag">tool</span> <code class="tool-name"></code><code class="tool-args"></code></div><div class="trace-tool-result trace-pending">running…</div>`;
-    div.querySelector(".tool-name").textContent = ev.name;
-    div.querySelector(".tool-args").textContent = args;
+    div.querySelector('.tool-name').textContent = ev.name;
+    div.querySelector('.tool-args').textContent = args;
     body.appendChild(div);
-  } else if (ev.type === "tool_result") {
-    const target = body.querySelector(`.trace-tool[data-tool-use-id="${ev.toolUseId}"] .trace-tool-result`);
+  } else if (ev.type === 'tool_result') {
+    const target = body.querySelector(
+      `.trace-tool[data-tool-use-id="${ev.toolUseId}"] .trace-tool-result`,
+    );
     if (target) {
-      target.classList.remove("trace-pending");
-      target.classList.toggle("trace-error", Boolean(ev.isError));
+      target.classList.remove('trace-pending');
+      target.classList.toggle('trace-error', Boolean(ev.isError));
       target.textContent = `→ ${ev.summary}`;
     }
   }
 }
 
 function formatUsageLine(u) {
-  if (!u) return "";
-  const parts = [
-    `${formatNumber(u.input_tokens)} in`,
-    `${formatNumber(u.output_tokens)} out`,
-  ];
-  if (u.cache_creation_input_tokens) parts.push(`${formatNumber(u.cache_creation_input_tokens)} cache-w`);
+  if (!u) return '';
+  const parts = [`${formatNumber(u.input_tokens)} in`, `${formatNumber(u.output_tokens)} out`];
+  if (u.cache_creation_input_tokens)
+    parts.push(`${formatNumber(u.cache_creation_input_tokens)} cache-w`);
   if (u.cache_read_input_tokens) parts.push(`${formatNumber(u.cache_read_input_tokens)} cache-r`);
-  return parts.join(" · ");
+  return parts.join(' · ');
 }
 
 function formatTotalsLine(t) {
@@ -368,27 +368,27 @@ function formatNumber(n) {
 function formatToolArgs(input) {
   try {
     const compact = JSON.stringify(input);
-    return compact.length > 140 ? compact.slice(0, 139) + "…" : compact;
+    return compact.length > 140 ? compact.slice(0, 139) + '…' : compact;
   } catch {
-    return "{}";
+    return '{}';
   }
 }
 
 function renderReview(scan) {
   const proposals = scan.proposals || [];
   if (proposals.length === 0) {
-    setStatus(els.reviewSummary, "Scan complete. No proposed changes.", "ok");
+    setStatus(els.reviewSummary, 'Scan complete. No proposed changes.', 'ok');
     return;
   }
   setStatus(
     els.reviewSummary,
-    `Scan complete. ${proposals.length} proposal${proposals.length === 1 ? "" : "s"}. Review and apply.`,
-    "ok",
+    `Scan complete. ${proposals.length} proposal${proposals.length === 1 ? '' : 's'}. Review and apply.`,
+    'ok',
   );
-  els.reviewList.innerHTML = "";
+  els.reviewList.innerHTML = '';
   for (const p of proposals) {
     const card = buildCard(p, scan.messages || {});
-    state.cards.set(p.nick, { proposal: p, status: "pending", card });
+    state.cards.set(p.nick, { proposal: p, status: 'pending', card });
     els.reviewList.appendChild(card.root);
   }
   els.reviewActions.hidden = false;
@@ -396,55 +396,55 @@ function renderReview(scan) {
 }
 
 function buildCard(p, messages) {
-  const root = document.createElement("div");
-  root.className = "card";
+  const root = document.createElement('div');
+  root.className = 'card';
 
   root.appendChild(
     h(`<div class="card-head"><span class="nick">${escapeHtml(p.nick)}</span></div>`),
   );
 
-  const currentField = document.createElement("div");
-  currentField.className = "field";
+  const currentField = document.createElement('div');
+  currentField.className = 'field';
   currentField.innerHTML = `<div class="field-label">Current note</div>`;
-  const currentNote = document.createElement("div");
-  currentNote.className = "current-note" + (p.currentNote ? "" : " empty");
-  currentNote.textContent = p.currentNote || "(none)";
+  const currentNote = document.createElement('div');
+  currentNote.className = 'current-note' + (p.currentNote ? '' : ' empty');
+  currentNote.textContent = p.currentNote || '(none)';
   currentField.appendChild(currentNote);
   root.appendChild(currentField);
 
-  const proposedField = document.createElement("div");
-  proposedField.className = "field";
+  const proposedField = document.createElement('div');
+  proposedField.className = 'field';
   proposedField.innerHTML = `<div class="field-label">Proposed note (editable)</div>`;
-  const textarea = document.createElement("textarea");
-  textarea.className = "proposed-textarea";
+  const textarea = document.createElement('textarea');
+  textarea.className = 'proposed-textarea';
   textarea.rows = 2;
   textarea.value = p.proposedNote;
   proposedField.appendChild(textarea);
   root.appendChild(proposedField);
 
   if (p.rationale) {
-    const r = document.createElement("div");
-    r.className = "field rationale";
+    const r = document.createElement('div');
+    r.className = 'field rationale';
     r.textContent = p.rationale;
     root.appendChild(r);
   }
 
   if (p.evidence && p.evidence.length > 0) {
-    const toggle = document.createElement("button");
-    toggle.className = "evidence-toggle";
-    toggle.type = "button";
-    toggle.textContent = `Show ${p.evidence.length} evidence message${p.evidence.length === 1 ? "" : "s"}`;
+    const toggle = document.createElement('button');
+    toggle.className = 'evidence-toggle';
+    toggle.type = 'button';
+    toggle.textContent = `Show ${p.evidence.length} evidence message${p.evidence.length === 1 ? '' : 's'}`;
     root.appendChild(toggle);
 
-    const evidence = document.createElement("div");
-    evidence.className = "evidence";
+    const evidence = document.createElement('div');
+    evidence.className = 'evidence';
     evidence.hidden = true;
     for (const id of p.evidence) {
       const msg = messages[id];
-      const line = document.createElement("div");
-      line.className = "evidence-line";
+      const line = document.createElement('div');
+      line.className = 'evidence-line';
       if (msg) {
-        const ts = new Date(msg.time).toISOString().replace("T", " ").slice(0, 16);
+        const ts = new Date(msg.time).toISOString().replace('T', ' ').slice(0, 16);
         line.innerHTML = `<span class="ts">${ts}</span><strong>${escapeHtml(msg.nick)}:</strong> ${escapeHtml(msg.text)}`;
       } else {
         line.textContent = `[message ${id} not in cache]`;
@@ -453,32 +453,32 @@ function buildCard(p, messages) {
     }
     root.appendChild(evidence);
 
-    toggle.addEventListener("click", () => {
+    toggle.addEventListener('click', () => {
       evidence.hidden = !evidence.hidden;
       toggle.textContent = evidence.hidden
-        ? `Show ${p.evidence.length} evidence message${p.evidence.length === 1 ? "" : "s"}`
-        : "Hide evidence";
+        ? `Show ${p.evidence.length} evidence message${p.evidence.length === 1 ? '' : 's'}`
+        : 'Hide evidence';
     });
   }
 
-  const actions = document.createElement("div");
-  actions.className = "card-actions";
-  const applyBtn = document.createElement("button");
-  applyBtn.textContent = "Apply";
-  const rejectBtn = document.createElement("button");
-  rejectBtn.className = "secondary";
-  rejectBtn.textContent = "Reject";
+  const actions = document.createElement('div');
+  actions.className = 'card-actions';
+  const applyBtn = document.createElement('button');
+  applyBtn.textContent = 'Apply';
+  const rejectBtn = document.createElement('button');
+  rejectBtn.className = 'secondary';
+  rejectBtn.textContent = 'Reject';
   actions.appendChild(applyBtn);
   actions.appendChild(rejectBtn);
   root.appendChild(actions);
 
-  const result = document.createElement("div");
-  result.className = "result";
+  const result = document.createElement('div');
+  result.className = 'result';
   result.hidden = true;
   root.appendChild(result);
 
-  applyBtn.addEventListener("click", () => applyCard(p.nick, textarea.value));
-  rejectBtn.addEventListener("click", () => rejectCard(p.nick));
+  applyBtn.addEventListener('click', () => applyCard(p.nick, textarea.value));
+  rejectBtn.addEventListener('click', () => rejectCard(p.nick));
 
   return { root, textarea, applyBtn, rejectBtn, result };
 }
@@ -489,29 +489,29 @@ async function applyCard(nick, note) {
   entry.card.applyBtn.disabled = true;
   entry.card.rejectBtn.disabled = true;
   try {
-    const resp = await api("/api/apply", {
-      method: "POST",
+    const resp = await api('/api/apply', {
+      method: 'POST',
       body: JSON.stringify({ scanId: state.scan.id, items: [{ nick, note }] }),
     });
     const r = resp.results?.[0];
     if (r?.ok) {
-      entry.status = "applied";
-      entry.card.root.classList.add("applied");
+      entry.status = 'applied';
+      entry.card.root.classList.add('applied');
       entry.card.result.hidden = false;
-      entry.card.result.className = "result ok";
-      entry.card.result.textContent = "Applied.";
+      entry.card.result.className = 'result ok';
+      entry.card.result.textContent = 'Applied.';
     } else {
-      entry.status = "failed";
-      entry.card.root.classList.add("failed");
+      entry.status = 'failed';
+      entry.card.root.classList.add('failed');
       entry.card.result.hidden = false;
-      entry.card.result.className = "result err";
-      entry.card.result.textContent = `Failed: ${r?.error || "unknown error"}`;
+      entry.card.result.className = 'result err';
+      entry.card.result.textContent = `Failed: ${r?.error || 'unknown error'}`;
       entry.card.applyBtn.disabled = false;
       entry.card.rejectBtn.disabled = false;
     }
   } catch (err) {
     entry.card.result.hidden = false;
-    entry.card.result.className = "result err";
+    entry.card.result.className = 'result err';
     entry.card.result.textContent = err.message;
     entry.card.applyBtn.disabled = false;
     entry.card.rejectBtn.disabled = false;
@@ -522,30 +522,28 @@ async function applyCard(nick, note) {
 function rejectCard(nick) {
   const entry = state.cards.get(nick);
   if (!entry) return;
-  entry.status = "rejected";
-  entry.card.root.classList.add("rejected");
+  entry.status = 'rejected';
+  entry.card.root.classList.add('rejected');
   entry.card.applyBtn.disabled = true;
   entry.card.rejectBtn.disabled = true;
   entry.card.result.hidden = false;
-  entry.card.result.className = "result";
-  entry.card.result.textContent = "Rejected (not written).";
+  entry.card.result.className = 'result';
+  entry.card.result.textContent = 'Rejected (not written).';
   updateApplyAll();
 }
 
 function updateApplyAll() {
-  const remaining = [...state.cards.values()].filter((e) => e.status === "pending");
+  const remaining = [...state.cards.values()].filter((e) => e.status === 'pending');
   // Stay disabled while an apply-all loop is running — each applyCard() call
   // ends in updateApplyAll(), which would otherwise re-enable the button
   // mid-loop and allow a second, overlapping run.
   els.applyAll.disabled = remaining.length === 0 || state.isApplyingAll;
   els.applyAll.textContent =
-    remaining.length === 0
-      ? "Nothing left to apply"
-      : `Apply all remaining (${remaining.length})`;
+    remaining.length === 0 ? 'Nothing left to apply' : `Apply all remaining (${remaining.length})`;
 }
 
-els.applyAll.addEventListener("click", async () => {
-  const remaining = [...state.cards.values()].filter((e) => e.status === "pending");
+els.applyAll.addEventListener('click', async () => {
+  const remaining = [...state.cards.values()].filter((e) => e.status === 'pending');
   if (remaining.length === 0 || state.isApplyingAll) return;
   state.isApplyingAll = true;
   els.applyAll.disabled = true;
@@ -563,18 +561,18 @@ els.applyAll.addEventListener("click", async () => {
 // ---------------- helpers ----------------
 
 function h(html) {
-  const t = document.createElement("template");
+  const t = document.createElement('template');
   t.innerHTML = html.trim();
   return t.content.firstChild;
 }
 
 function escapeHtml(s) {
   return String(s)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 route();

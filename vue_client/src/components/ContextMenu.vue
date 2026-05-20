@@ -32,13 +32,13 @@
   </Teleport>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
-import { useContextMenu } from '../composables/useContextMenu.js';
+import { useContextMenu, type ContextMenuItem } from '../composables/useContextMenu.js';
 
 const menu = useContextMenu();
 const { state } = menu;
-const menuEl = ref(null);
+const menuEl = ref<HTMLElement | null>(null);
 // Position the panel from the raw cursor coords first; once mounted, measure
 // actual size and clamp/flip so it stays in the viewport. Without the clamp,
 // a right-click near the right/bottom edges would push the menu off-screen.
@@ -69,18 +69,22 @@ watch(
   },
 );
 
-function activate(item) {
+function activate(item: ContextMenuItem): void {
   if (item.disabled) return;
-  try { item.onClick?.(); } finally { menu.close(); }
+  try {
+    item.onClick?.();
+  } finally {
+    menu.close();
+  }
 }
 
-function onWindowMouseDown(e) {
+function onWindowMouseDown(e: MouseEvent): void {
   if (!state.open) return;
-  if (menuEl.value && menuEl.value.contains(e.target)) return;
+  if (menuEl.value && menuEl.value.contains(e.target as Node)) return;
   // Re-clicking the same trigger should close (toggle behavior). Without
   // swallowing the event, the trigger's own @click handler runs next and
   // immediately reopens the menu on the same gesture.
-  if (state.triggerEl && state.triggerEl.contains(e.target)) {
+  if (state.triggerEl && state.triggerEl.contains(e.target as Node)) {
     e.preventDefault();
     e.stopPropagation();
     menu.close();
@@ -88,10 +92,10 @@ function onWindowMouseDown(e) {
   }
   menu.close();
 }
-function onWindowKey(e) {
+function onWindowKey(e: KeyboardEvent): void {
   if (state.open && e.key === 'Escape') menu.close();
 }
-function onWindowResize() {
+function onWindowResize(): void {
   if (state.open) menu.close();
 }
 
@@ -150,8 +154,13 @@ onBeforeUnmount(() => {
   text-align: left;
   cursor: pointer;
 }
-.item:hover:not(:disabled) { background: var(--bg-soft); }
-.item:disabled { color: var(--fg-muted); cursor: default; }
+.item:hover:not(:disabled) {
+  background: var(--bg-soft);
+}
+.item:disabled {
+  color: var(--fg-muted);
+  cursor: default;
+}
 .icon {
   display: inline-flex;
   width: 14px;

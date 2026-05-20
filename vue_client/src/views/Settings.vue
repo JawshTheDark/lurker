@@ -39,8 +39,9 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, computed, onMounted, watch, nextTick } from 'vue';
+import type { Component } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useSettingsStore } from '../stores/settings.js';
 import { useAuthStore } from '../stores/auth.js';
@@ -70,7 +71,7 @@ const error = ref('');
 
 // One component per bespoke category. Registry-driven categories all share
 // RegistryPane and pick out their items by `categoryId` prop.
-const BESPOKE_PANES = {
+const BESPOKE_PANES: Record<string, Component> = {
   notifications: NotificationsPane,
   highlights: HighlightsPane,
   ignores: IgnoresPane,
@@ -82,15 +83,14 @@ const BESPOKE_PANES = {
   about: AboutPane,
 };
 
-const visibleCategories = computed(() =>
-  CATEGORIES.filter((c) => !c.adminOnly || isAdmin.value)
-);
+const visibleCategories = computed(() => CATEGORIES.filter((c) => !c.adminOnly || isAdmin.value));
 
 const firstCategoryId = computed(() => visibleCategories.value[0]?.id || 'appearance');
 
-const activeCategoryId = computed(() => {
+const activeCategoryId = computed((): string => {
   const param = route.params.category;
-  if (param && visibleCategories.value.some((c) => c.id === param)) return param;
+  const id = Array.isArray(param) ? param[0] : param;
+  if (id && visibleCategories.value.some((c) => c.id === id)) return id;
   return firstCategoryId.value;
 });
 
@@ -117,11 +117,13 @@ watch(
   { immediate: true },
 );
 
-const contentEl = ref(null);
+const contentEl = ref<HTMLElement | null>(null);
 
 onMounted(() => {
   if (!settings.loaded) {
-    settings.fetchAll().catch((e) => { error.value = e.message; });
+    settings.fetchAll().catch((e) => {
+      error.value = e.message;
+    });
   }
 });
 
@@ -160,7 +162,6 @@ watch(
   },
   { immediate: true },
 );
-
 </script>
 
 <style scoped>
@@ -225,7 +226,9 @@ watch(
   align-items: center;
   padding: 0 4px;
 }
-.bar .back:hover { color: var(--fg); }
+.bar .back:hover {
+  color: var(--fg);
+}
 
 .link {
   background: none;
@@ -235,9 +238,16 @@ watch(
   cursor: pointer;
   font: inherit;
 }
-.link:hover:not(:disabled) { color: var(--fg); }
-.link:disabled { opacity: 0.4; cursor: not-allowed; }
-.link.danger { color: var(--bad); }
+.link:hover:not(:disabled) {
+  color: var(--fg);
+}
+.link:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.link.danger {
+  color: var(--bad);
+}
 
 .error {
   color: var(--bad);
@@ -258,7 +268,9 @@ watch(
   overflow-y: auto;
 }
 @media (max-width: 720px) {
-  .body { flex-direction: column; }
+  .body {
+    flex-direction: column;
+  }
 }
 
 /* Brief highlight applied to a row that the user jumped to via search, so
@@ -267,7 +279,13 @@ watch(
   animation: flash-target 1.4s ease-out;
 }
 @keyframes flash-target {
-  0%   { background: var(--bg-soft); box-shadow: inset 0 0 0 1px var(--accent); }
-  100% { background: transparent;    box-shadow: inset 0 0 0 1px transparent; }
+  0% {
+    background: var(--bg-soft);
+    box-shadow: inset 0 0 0 1px var(--accent);
+  }
+  100% {
+    background: transparent;
+    box-shadow: inset 0 0 0 1px transparent;
+  }
 }
 </style>

@@ -9,8 +9,9 @@ Lurker is a self-hosted modern IRC client with a retro flair, most easily descri
 Lurker runs as an always-on server that stays connected to IRC on your behalf, keeps full message history, and lets you reattach from any browser — desktop or mobile — picking up exactly where you left off. Open it on as many devices and tabs as you like; read state, settings, and history stay in sync everywhere; when all clients are disconnected, auto-away sets your status, and web push notifications inform you of highlights. Oh, and the icon rules.
 
 # Features
+
 - **Always-on and multi-user.** Each invited user connects to their own set of IRC networks, and Lurker stays connected when they're away.
-- **Full history and search.** Every message is stored *and* searchable. Auto-away triggers after your last client disconnects, and smart push notifications fire on highlights.
+- **Full history and search.** Every message is stored _and_ searchable. Auto-away triggers after your last client disconnects, and smart push notifications fire on highlights.
 - **IRC with Modern Convienences.** Peer presence, automatic nick regain, join/part summarization, tab nickname completion, message drafts, saved messages, user notes, and a searchable channel browser w/ cache.
 - **Image uploads.** Paste, drag, or pick an image; Lurker optimizes it, uploads it to [x0.at](https://x0.at) or [catbox.moe](https://catbox.moe), inserts the link into your message, and keeps a history of all your uploads.
 - **Customizable UI.** The beautiful retro terminal-style interface has 40+ settings to customize it how you want, and you can freely pin and rearrange channels and DMs.
@@ -27,8 +28,10 @@ Lurker runs as an always-on server that stays connected to IRC on your behalf, k
 - `<skdoo> amiantos makes cool shit`
 
 # Stack
-- **Server** — Express, `irc-framework`, `ws`, `better-sqlite3`, `sharp`, `web-push`
-- **Client** — Vue 3, Vite, Pinia, `vue-router`
+
+- **Server** — TypeScript on Node (run via `tsx`), Express, `irc-framework`, `ws`, `better-sqlite3`, `sharp`, `web-push`
+- **Client** — TypeScript, Vue 3, Vite, Pinia, `vue-router`
+- **Tooling** — Vitest, oxlint, oxfmt
 
 # Installation
 
@@ -70,4 +73,5 @@ npm run dev
 When I got back into IRC, I started off with [thelounge](https://github.com/thelounge/thelounge) but felt like it was kind of ugly, push notifications were very flaky, it was missing features, and development seemed to be stagnant. So I switched to [weechat](https://github.com/weechat) + [tmux](https://github.com/tmux/tmux) for a while, which looked and felt a lot better, but I missed being able to use IRC from my phone. Long story short, I had no choice but to make my own client, and with the help of some new friends on IRC, I believe I likely made one of the nicest IRC clients you've ever used. Try it out, and let me know what you think.
 
 # License
+
 Mozilla Public License 2.0 — see [LICENSE](LICENSE).

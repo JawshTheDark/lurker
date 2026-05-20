@@ -16,9 +16,7 @@
       <!-- First-run bootstrap: empty DB, ask for admin username -->
       <template v-else-if="setup?.needsSetup">
         <p class="subtitle">First run — pick a username and password.</p>
-        <p class="warning">
-          Only use a Lurker instance belonging to yourself or a close friend!
-        </p>
+        <p class="warning">Only use a Lurker instance belonging to yourself or a close friend!</p>
         <form @submit.prevent="onCreateUser">
           <label>
             <span>Username</span>
@@ -51,12 +49,7 @@
       <!-- Normal login -->
       <template v-else>
         <p class="subtitle">Sign in to your IRC client.</p>
-        <button
-          v-if="authMethods.passkey"
-          class="primary"
-          :disabled="working"
-          @click="onLogin"
-        >
+        <button v-if="authMethods.passkey" class="primary" :disabled="working" @click="onLogin">
           {{ working && loginMode === 'passkey' ? 'Waiting for passkey…' : 'Sign in with passkey' }}
         </button>
 
@@ -65,7 +58,9 @@
           type="button"
           class="link toggle-link"
           @click="showPasswordForm = true"
-        >or sign in with password</button>
+        >
+          or sign in with password
+        </button>
 
         <form
           v-if="showPasswordForm || !authMethods.passkey"
@@ -91,11 +86,16 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
+import type { SetupStatus } from '../stores/auth.js';
 import { useAuthStore } from '../stores/auth.js';
 import WordBackdrop from '../components/WordBackdrop.vue';
+
+interface AuthMethods {
+  passkey: boolean;
+}
 
 const username = ref('');
 const password = ref('');
@@ -104,10 +104,10 @@ const loadingStatus = ref(true);
 const auth = useAuthStore();
 const router = useRouter();
 const route = useRoute();
-const setup = ref(null);
-const authMethods = ref({ passkey: false });
+const setup = ref<SetupStatus | null>(null);
+const authMethods = ref<AuthMethods>({ passkey: false });
 const showPasswordForm = ref(false);
-const loginMode = ref(null);
+const loginMode = ref<'passkey' | 'password' | null>(null);
 
 const submitLabel = computed(() => (working.value ? 'Creating account…' : 'Create account'));
 
@@ -124,8 +124,9 @@ onMounted(async () => {
   loadingStatus.value = false;
 });
 
-function nextDestination() {
-  return route.query.next || '/';
+function nextDestination(): string {
+  const next = route.query.next;
+  return typeof next === 'string' && next ? next : '/';
 }
 
 async function onLogin() {
@@ -207,7 +208,10 @@ h1 {
   line-height: 1.15;
   letter-spacing: -0.02em;
 }
-.subtitle { margin: 0; color: var(--fg-muted); }
+.subtitle {
+  margin: 0;
+  color: var(--fg-muted);
+}
 .warning {
   margin: 0;
   padding: 8px 10px;
@@ -215,12 +219,32 @@ h1 {
   color: var(--warn, var(--accent));
   background: transparent;
 }
-form { display: flex; flex-direction: column; gap: 12px; margin: 0; }
-label { display: flex; flex-direction: column; gap: 3px; color: var(--fg-muted); }
-label span { text-transform: uppercase; letter-spacing: 0.04em; }
-button { cursor: pointer; }
-button.primary { padding: 8px 12px; }
-.error { margin: 0; color: var(--bad); }
+form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 0;
+}
+label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  color: var(--fg-muted);
+}
+label span {
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+button {
+  cursor: pointer;
+}
+button.primary {
+  padding: 8px 12px;
+}
+.error {
+  margin: 0;
+  color: var(--bad);
+}
 .toggle-link {
   background: none;
   border: none;
@@ -229,7 +253,15 @@ button.primary { padding: 8px 12px; }
   text-align: left;
   cursor: pointer;
 }
-.toggle-link:hover { color: var(--fg); }
-.password-form { margin-top: 4px; }
-.hint { margin: 0; color: var(--fg-muted); font-size: 0.9em; }
+.toggle-link:hover {
+  color: var(--fg);
+}
+.password-form {
+  margin-top: 4px;
+}
+.hint {
+  margin: 0;
+  color: var(--fg-muted);
+  font-size: 0.9em;
+}
 </style>

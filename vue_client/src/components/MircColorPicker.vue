@@ -4,12 +4,7 @@
 -->
 
 <template>
-  <div
-    v-if="open"
-    class="mirc-picker"
-    @pointerdown.stop
-    @mousedown.prevent.stop
-  >
+  <div v-if="open" class="mirc-picker" @pointerdown.stop @mousedown.prevent.stop>
     <!-- iOS keyboard preservation: same trick as NickSuggestionStrip — div
          role=button + @mousedown.prevent keeps focus on the textarea so the
          soft keyboard stays up while the user picks a colour. Action fires on
@@ -34,38 +29,51 @@
         title="Clear formatting (inserts reset)"
         @mousedown.prevent
         @click="emit('reset')"
-      >clear</div>
-      <div
-        role="button"
-        class="action"
-        title="Close"
-        @mousedown.prevent
-        @click="emit('close')"
-      >close</div>
+      >
+        clear
+      </div>
+      <div role="button" class="action" title="Close" @mousedown.prevent @click="emit('close')">
+        close
+      </div>
     </div>
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 // The 16-color palette here mirrors MIRC_PALETTE in utils/nickColor.js — those
 // are the only codes our renderer styles, so anything outside 0-15 wouldn't
 // round-trip visibly anyway.
 const PALETTE = [
-  { code: '00', hex: '#ffffff' }, { code: '01', hex: '#000000' },
-  { code: '02', hex: '#00007f' }, { code: '03', hex: '#009300' },
-  { code: '04', hex: '#ff0000' }, { code: '05', hex: '#7f0000' },
-  { code: '06', hex: '#9c009c' }, { code: '07', hex: '#fc7f00' },
-  { code: '08', hex: '#ffff00' }, { code: '09', hex: '#00fc00' },
-  { code: '10', hex: '#009393' }, { code: '11', hex: '#00ffff' },
-  { code: '12', hex: '#0000fc' }, { code: '13', hex: '#ff00ff' },
-  { code: '14', hex: '#7f7f7f' }, { code: '15', hex: '#d2d2d2' },
+  { code: '00', hex: '#ffffff' },
+  { code: '01', hex: '#000000' },
+  { code: '02', hex: '#00007f' },
+  { code: '03', hex: '#009300' },
+  { code: '04', hex: '#ff0000' },
+  { code: '05', hex: '#7f0000' },
+  { code: '06', hex: '#9c009c' },
+  { code: '07', hex: '#fc7f00' },
+  { code: '08', hex: '#ffff00' },
+  { code: '09', hex: '#00fc00' },
+  { code: '10', hex: '#009393' },
+  { code: '11', hex: '#00ffff' },
+  { code: '12', hex: '#0000fc' },
+  { code: '13', hex: '#ff00ff' },
+  { code: '14', hex: '#7f7f7f' },
+  { code: '15', hex: '#d2d2d2' },
 ];
 
-defineProps({
-  open: { type: Boolean, default: false },
-});
+withDefaults(
+  defineProps<{
+    open?: boolean;
+  }>(),
+  { open: false },
+);
 
-const emit = defineEmits(['color', 'reset', 'close']);
+const emit = defineEmits<{
+  color: [code: string];
+  reset: [];
+  close: [];
+}>();
 
 const swatches = PALETTE;
 </script>
@@ -95,7 +103,9 @@ const swatches = PALETTE;
   cursor: pointer;
   touch-action: manipulation;
 }
-.swatch:hover { outline: 1px solid var(--accent); }
+.swatch:hover {
+  outline: 1px solid var(--accent);
+}
 .row {
   display: flex;
   justify-content: space-between;
@@ -107,5 +117,7 @@ const swatches = PALETTE;
   user-select: none;
   touch-action: manipulation;
 }
-.action:hover { color: var(--accent); }
+.action:hover {
+  color: var(--accent);
+}
 </style>

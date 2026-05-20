@@ -15,11 +15,9 @@
       >
         <div class="row">
           <span class="title">{{ t.title }}</span>
-          <button
-            class="x"
-            title="dismiss"
-            @click.stop="toasts.dismiss(t.id)"
-          ><i class="fa-solid fa-xmark"></i></button>
+          <button class="x" title="dismiss" @click.stop="toasts.dismiss(t.id)">
+            <i class="fa-solid fa-xmark"></i>
+          </button>
         </div>
         <div v-if="t.body" class="body">{{ t.body }}</div>
       </div>
@@ -27,21 +25,22 @@
   </Teleport>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { useToastsStore } from '../stores/toasts.js';
+import type { Toast } from '../stores/toasts.js';
 import { useBuffersStore } from '../stores/buffers.js';
 
 const toasts = useToastsStore();
 const buffers = useBuffersStore();
 
-function onClick(t) {
+function onClick(t: Toast) {
   if (!t.networkId || !t.target) return;
   // The buffer can be closed between the toast firing and the user clicking
   // it; activating would recreate an empty shell. Replace the toast with a
   // "closed" notice instead.
   if (!buffers.isOpen(t.networkId, t.target)) {
     toasts.dismiss(t.id);
-    toasts.push({ kind: 'info', title: 'Buffer is closed', ttlMs: 4000 });
+    toasts.push({ kind: 'info', title: 'Buffer is closed', body: '', ttlMs: 4000 });
     return;
   }
   buffers.activate(t.networkId, t.target);
@@ -72,8 +71,12 @@ function onClick(t) {
   font-size: 0.95em;
   animation: toast-in 140ms ease-out;
 }
-.toast.clickable { cursor: pointer; }
-.toast.clickable:hover { background: var(--bg-soft); }
+.toast.clickable {
+  cursor: pointer;
+}
+.toast.clickable:hover {
+  background: var(--bg-soft);
+}
 .row {
   display: flex;
   align-items: center;
@@ -95,7 +98,9 @@ function onClick(t) {
   font: inherit;
   padding: 0 2px;
 }
-.x:hover { color: var(--fg); }
+.x:hover {
+  color: var(--fg);
+}
 .body {
   color: var(--fg);
   margin-top: 2px;
@@ -107,7 +112,13 @@ function onClick(t) {
   overflow: hidden;
 }
 @keyframes toast-in {
-  from { opacity: 0; transform: translateY(-4px); }
-  to { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 </style>

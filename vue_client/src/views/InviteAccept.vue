@@ -22,9 +22,7 @@
 
       <template v-else>
         <p class="subtitle">Welcome — pick a username and password.</p>
-        <p class="warning">
-          Only use a Lurker instance belonging to yourself or a close friend!
-        </p>
+        <p class="warning">Only use a Lurker instance belonging to yourself or a close friend!</p>
         <form @submit.prevent="onAccept">
           <label>
             <span>Username</span>
@@ -58,7 +56,7 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useAuthStore } from '../stores/auth.js';
@@ -67,7 +65,12 @@ const route = useRoute();
 const router = useRouter();
 const auth = useAuthStore();
 
-const status = ref(null);
+interface InviteStatus {
+  valid: boolean;
+  expired?: boolean;
+}
+
+const status = ref<InviteStatus | null>(null);
 const checking = ref(true);
 const username = ref('');
 const password = ref('');
@@ -83,7 +86,7 @@ const submitLabel = computed(() => (working.value ? 'Creating account…' : 'Cre
 
 onMounted(async () => {
   try {
-    status.value = await auth.fetchInviteStatus(route.params.token);
+    status.value = await auth.fetchInviteStatus(route.params.token as string);
   } catch (_) {
     status.value = { valid: false };
   } finally {
@@ -97,7 +100,7 @@ async function onAccept() {
   working.value = true;
   try {
     await auth.acceptInviteWithPassword({
-      token: route.params.token,
+      token: route.params.token as string,
       username: name,
       password: password.value,
     });
@@ -125,9 +128,20 @@ async function onAccept() {
   flex-direction: column;
   gap: 12px;
 }
-h1 { margin: 0; color: var(--accent); font-weight: 600; }
-.subtitle { margin: 0; color: var(--fg-muted); }
-.muted { margin: 0; color: var(--fg-muted); font-style: italic; }
+h1 {
+  margin: 0;
+  color: var(--accent);
+  font-weight: 600;
+}
+.subtitle {
+  margin: 0;
+  color: var(--fg-muted);
+}
+.muted {
+  margin: 0;
+  color: var(--fg-muted);
+  font-style: italic;
+}
 .warning {
   margin: 0;
   padding: 8px 10px;
@@ -135,11 +149,36 @@ h1 { margin: 0; color: var(--accent); font-weight: 600; }
   color: var(--warn, var(--accent));
   background: transparent;
 }
-form { display: flex; flex-direction: column; gap: 12px; margin: 0; }
-label { display: flex; flex-direction: column; gap: 3px; color: var(--fg-muted); }
-label span { text-transform: uppercase; letter-spacing: 0.04em; }
-button { cursor: pointer; padding: 8px 12px; }
-.error { margin: 0; color: var(--bad); }
-.link { color: var(--accent); }
-.hint { margin: 0; color: var(--fg-muted); font-size: 0.9em; }
+form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 0;
+}
+label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  color: var(--fg-muted);
+}
+label span {
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+button {
+  cursor: pointer;
+  padding: 8px 12px;
+}
+.error {
+  margin: 0;
+  color: var(--bad);
+}
+.link {
+  color: var(--accent);
+}
+.hint {
+  margin: 0;
+  color: var(--fg-muted);
+  font-size: 0.9em;
+}
 </style>
