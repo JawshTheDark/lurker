@@ -72,6 +72,7 @@
       @close="closeColorPicker"
     />
     <NickPicker
+      ref="nickPickerEl"
       :open="pickerOpen"
       :query="pickerQuery"
       :buffer="buffer"
@@ -137,6 +138,7 @@ const fileInputEl = ref<HTMLInputElement | null>(null);
 const dragOver = ref(false);
 const pickerOpen = ref(false);
 const pickerQuery = ref('');
+const nickPickerEl = ref<InstanceType<typeof NickPicker> | null>(null);
 let pickerTokenStart = -1;
 let pickerTokenEnd = -1;
 const stripOpen = ref(false);
@@ -395,6 +397,17 @@ function tokenAtCursor(
   return { token: value.slice(start, end), start, end };
 }
 
+// True when `before` (the text preceding a token) sits at the start of a
+// logical line — nothing but whitespace since the last newline, or the very
+// start of the input. Callers use this to detect a nick that's being
+// *addressed* and so wants an opening ': '. Shared by Tab-completion and both
+// @-driven selectors so all three detect line starts identically, including
+// on multi-line drafts; what each appends *off* a line start still differs
+// (see the call sites).
+function isAtLineStart(before: string): boolean {
+  return /(^|\n)\s*$/.test(before);
+}
+
 function buildNickMatches(buf: Buffer, networkId: number, prefix: string): string[] {
   const own = networks.states[networkId]?.nick || '';
   const isIgnored = (nick: string, userhost: string | null) =>
@@ -539,6 +552,32 @@ function onKeydown(e: KeyboardEvent): void {
     closeColorPicker();
     return;
   }
+  // While the desktop @-nick picker is open with candidates it owns the
+  // navigation keys: arrows move the highlight, Tab/Enter confirm it. This
+  // runs ahead of the history-nav, Tab-completion, and Enter-submit handlers
+  // below so they don't double-fire. Escape is left to NickPicker's own
+  // document listener. Gated on hasCandidates() so a no-match token like
+  // `@zzz` still lets Enter send and Tab fall through to word completion.
+  // Skipped entirely during an IME composition so the same arrows/Tab/Enter
+  // stay free to drive the IME's candidate window. The picker is desktop-only
+  // — the mobile suggestion strip never opens it.
+  if (pickerOpen.value && !e.isComposing && nickPickerEl.value?.hasCandidates()) {
+    if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+      if (!e.altKey && !e.metaKey && !e.ctrlKey) {
+        e.preventDefault();
+        nickPickerEl.value.moveActive(e.key === 'ArrowUp' ? 1 : -1);
+        return;
+      }
+    } else if (e.key === 'Tab') {
+      e.preventDefault();
+      nickPickerEl.value.confirmActive();
+      return;
+    } else if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      nickPickerEl.value.confirmActive();
+      return;
+    }
+  }
   if (e.key === 'Enter') {
     // Textareas don't submit forms on Enter, so we trigger submission here.
     // Shift+Enter falls through to the default newline insert. e.isComposing
@@ -555,6 +594,8 @@ function onKeydown(e: KeyboardEvent): void {
     // Bare arrows only — Alt+Arrow is buffer navigation (handled globally in
     // useKeyboardShortcuts), so don't hijack it for input history here.
     if (e.altKey || e.metaKey || e.ctrlKey) return;
+    // Leave the arrows to an active IME — they navigate its candidate window.
+    if (e.isComposing) return;
     // Multi-line textarea: only walk history at the logical-line edges, so
     // arrows still move the caret between newline-separated lines within
     // the draft. Up = at first logical line (no \n before caret).
@@ -599,7 +640,7 @@ function onKeydown(e: KeyboardEvent): void {
 
   const prefix = value.slice(0, start);
   const tail = value.slice(end);
-  const atLineStart = /^\s*$/.test(prefix);
+  const atLineStart = isAtLineStart(prefix);
 
   completion = { prefix, tail, token, isChannel, atLineStart, matches, index: 0, caret: 0 };
   applyCompletion();
@@ -676,14 +717,19 @@ function onPickerSelect(nick: string): void {
   }
   const before = value.slice(0, pickerTokenStart);
   const after = value.slice(pickerTokenEnd);
+  // A nick at the start of a line is being addressed → ': '; mid-sentence
+  // gets a bare space. Identical to the mobile strip (onStripSelect). Tab-
+  // completion shares the isAtLineStart() check but appends nothing
+  // mid-sentence, since it cycles the completion in place.
+  const suffix = isAtLineStart(before) ? ': ' : ' ';
   cycling = true;
-  text.value = before + nick + ' ' + after;
+  text.value = before + nick + suffix + after;
   cycling = false;
   closePicker();
   queueMicrotask(() => {
     const el = inputEl.value;
     if (!el) return;
-    const caret = before.length + nick.length + 1;
+    const caret = before.length + nick.length + suffix.length;
     el.focus();
     el.setSelectionRange(caret, caret);
   });
@@ -697,11 +743,10 @@ function onStripSelect(nick: string): void {
   }
   const before = value.slice(0, stripTokenStart);
   const after = value.slice(stripTokenEnd);
-  // Match Tab-completion's suffix rule (applyCompletion above): a nick at the
-  // start of a line is being addressed, so it gets ': '; mid-sentence gets a
-  // bare space. This is what the old @-menu was missing (task #198).
-  const atLineStart = /(^|\n)\s*$/.test(before);
-  const suffix = atLineStart ? ': ' : ' ';
+  // A nick at the start of a line is being addressed → ': '; mid-sentence
+  // gets a bare space (what the old @-menu was missing — task #198). Shares
+  // isAtLineStart() with Tab-completion and the desktop picker.
+  const suffix = isAtLineStart(before) ? ': ' : ' ';
   cycling = true;
   text.value = before + nick + suffix + after;
   cycling = false;
