@@ -20,6 +20,21 @@
       @click.stop
       >{{ seg.text }}</a
     >
+    <!-- Channel name: clickable only when a network is in scope (the message
+         list passes one). Without a network — topic bar, motd — it falls
+         through to the plain-text branch. @click.stop for the same row-jump
+         reason as links above. -->
+    <span
+      v-else-if="seg.channel && networkId != null"
+      class="msg-channel"
+      role="button"
+      tabindex="0"
+      :style="styleFor(seg)"
+      @click.stop="openChannel(seg.channel)"
+      @keydown.enter.prevent="openChannel(seg.channel)"
+      @keydown.space.prevent="openChannel(seg.channel)"
+      >{{ seg.text }}</span
+    >
     <span v-else-if="hasStyle(seg)" :style="styleFor(seg)">{{ seg.text }}</span>
     <template v-else>{{ seg.text }}</template>
   </template>
@@ -29,31 +44,50 @@
 import type { CSSProperties } from 'vue';
 import type { RenderSegment } from '../utils/nickColor.js';
 import { segmentInlineStyle, segmentHasStyle } from '../utils/nickColor.js';
+import { useBuffersStore } from '../stores/buffers.js';
+import { socketSend } from '../composables/useSocket.js';
 import SpoilerText from './SpoilerText.vue';
 
 // The single renderer for an array of RenderSegments (the output of
 // splitTextByTokens): URLs, mIRC fg/bg colour, bold/italic/underline/strike,
-// nick coloring, and spoilers. Every message-list layout and LinkedText
-// funnel their segments through here, so a new segment kind only has to be
-// handled in one place — no render path can silently miss it.
+// nick coloring, channel names, and spoilers. Every message-list layout and
+// LinkedText funnel their segments through here, so a new segment kind only
+// has to be handled in one place — no render path can silently miss it.
 //
 // Branch order matters: spoiler is matched first because a spoiler segment
 // must never fall through to the plain <span>/text branches, which would
 // reveal the hidden content. `selfColor` tints segments belonging to the
 // current user; pass null where there's no message context (topic bar,
-// motd, part reasons, etc.).
+// motd, part reasons, etc.). `networkId` scopes clickable channel names to
+// the network the text belongs to — pass null and channels render as plain
+// text.
 const props = withDefaults(
   defineProps<{
     segments: RenderSegment[];
     selfColor?: string | null;
+    networkId?: number | null;
   }>(),
-  { selfColor: null },
+  { selfColor: null, networkId: null },
 );
+
+const buffers = useBuffersStore();
 
 function styleFor(seg: RenderSegment): CSSProperties {
   return segmentInlineStyle(seg, props.selfColor ?? null) as CSSProperties;
 }
 function hasStyle(seg: RenderSegment): boolean {
   return segmentHasStyle(seg);
+}
+
+// Clicking a channel name mirrors IRCCloud: if a buffer for it already exists
+// — you've been there before, even if since parted — just switch to it;
+// otherwise JOIN, which both enters the channel and opens its buffer.
+function openChannel(channel: string): void {
+  const nid = props.networkId;
+  if (nid == null) return;
+  if (!buffers.byKey(`${nid}::${channel}`)) {
+    socketSend({ type: 'join', networkId: nid, channel });
+  }
+  buffers.activate(nid, channel);
 }
 </script>
