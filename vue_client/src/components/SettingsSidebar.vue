@@ -42,14 +42,38 @@
           {{ cat.label }}
         </option>
       </select>
-      <RouterLink
-        v-for="cat in visibleCategories"
-        :key="cat.id"
-        :to="{ name: 'settings', params: { category: cat.id } }"
-        class="sidebar-link"
-        :class="{ active: cat.id === activeCategoryId }"
-        >{{ cat.label }}</RouterLink
-      >
+      <template v-for="cat in visibleCategories" :key="cat.id">
+        <RouterLink
+          :to="{ name: 'settings', params: { category: cat.id } }"
+          class="sidebar-link"
+          :class="{ active: cat.id === activeCategoryId }"
+          >{{ cat.label }}</RouterLink
+        >
+        <div
+          v-if="
+            cat.id === 'appearance' &&
+            activeCategoryId === 'appearance' &&
+            appearanceSubsections.length > 1
+          "
+          class="sidebar-subnav"
+          aria-label="appearance subsections"
+        >
+          <RouterLink
+            v-for="subsection in appearanceSubsections"
+            :key="subsection.id"
+            class="sidebar-sublink"
+            :class="{ active: subsection.id === activeAppearanceSubsectionId }"
+            :to="{
+              name: 'settings',
+              params: { category: 'appearance' },
+              hash: `#${subsection.id}`,
+            }"
+            @click="$emit('selectAppearanceSubsection', subsection.id)"
+          >
+            {{ subsection.label }}
+          </RouterLink>
+        </div>
+      </template>
     </template>
 
     <!-- Search mode: flat list of matching settings with breadcrumb. -->
@@ -79,7 +103,18 @@ import { REGISTRY, CATEGORIES } from '../utils/settingsRegistry.js';
 const props = defineProps<{
   activeCategoryId: string;
   visibleCategories: SettingCategory[];
+  appearanceSubsections: SettingsSubsection[];
+  activeAppearanceSubsectionId: string;
 }>();
+
+defineEmits<{
+  selectAppearanceSubsection: [id: string];
+}>();
+
+interface SettingsSubsection {
+  id: string;
+  label: string;
+}
 
 const router = useRouter();
 const searchInput = ref('');
@@ -206,6 +241,27 @@ watch(searchEl, (el) => {
   border-left-color: var(--accent);
 }
 
+.sidebar-subnav {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 1px 0 4px;
+}
+.sidebar-sublink {
+  color: var(--fg-muted);
+  text-decoration: none;
+  padding: 3px 16px 3px 32px;
+  font-size: 0.9em;
+  line-height: 1.35;
+  text-transform: lowercase;
+  letter-spacing: 0.03em;
+}
+.sidebar-sublink:hover,
+.sidebar-sublink.active {
+  color: var(--fg);
+  background: var(--bg-soft);
+}
+
 .result {
   background: none;
   border: none;
@@ -280,6 +336,9 @@ watch(searchEl, (el) => {
     background-size: 10px 6px;
   }
   .sidebar-link {
+    display: none;
+  }
+  .sidebar-subnav {
     display: none;
   }
 }
