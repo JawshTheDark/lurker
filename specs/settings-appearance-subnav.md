@@ -95,7 +95,11 @@ Examples:
 - `/settings/appearance#fonts` scrolls to the Fonts subsection heading.
 - `/settings/appearance#palette` scrolls to the Colors subsection heading.
 
-This lets subsection links be shareable and keeps browser back/forward behavior intuitive.
+This does not add a new route or change how settings are loaded. The route remains `/settings/:category`; the hash is just an in-page pointer after the `#`.
+
+Today, the hash is already used by settings search results. For example, clicking a search result can route to `/settings/appearance#look.font.size`, and `Settings.vue` looks for a row with `data-setting-key="look.font.size"`. This feature keeps that behavior and adds one more thing the same hash watcher can find: a group heading with `data-setting-group="fonts"`.
+
+The reason to update the hash for subsection clicks is that it makes the navigation state visible and durable. A user can copy the URL, reload the page, or use browser back/forward and land on the same subsection. The main compatibility risk is accidentally changing the existing setting-row hash behavior, so the implementation should try `data-setting-key` first and only fall back to `data-setting-group` if no row target exists.
 
 ## Implementation Plan
 
@@ -123,6 +127,15 @@ Keep this local to the settings view/sidebar unless another nearby file already 
 
 Update the rendered subsection heading so it can be targeted by hash scrolling and scrollspy logic.
 
+In the current markup, groups are not wrapped in a parent element. `RegistryPane.vue` renders this repeating pattern:
+
+```vue
+<h3 class="subhead">{{ grp.title }}</h3>
+<ul class="rows">...</ul>
+```
+
+That means the smallest useful change is to make the `h3.subhead` itself the target for each subsection. We do not need to wrap each group in a new parent `div` just to support navigation.
+
 Recommended attributes:
 
 ```vue
@@ -136,7 +149,7 @@ Recommended attributes:
 </h3>
 ```
 
-The `data-setting-group` attribute is the important part because it avoids confusing group targets with setting row targets. The `id` helps native anchor behavior and makes the markup easier to inspect.
+The `data-setting-group` attribute is the important part because it avoids confusing group targets with setting row targets. The `id` helps native anchor behavior and makes the markup easier to inspect. If a future implementation finds that native `id` behavior fights with the custom scroll container, keeping only `data-setting-group` is acceptable; the scroll code should use the data attribute as the source of truth.
 
 ### 3. Extend Hash Scrolling in `Settings.vue`
 
@@ -196,19 +209,66 @@ The active nested link should be based on the scrollspy state, not only the curr
 
 Add styles in `SettingsSidebar.vue` near the existing `.sidebar-link` styles.
 
-Recommended class names:
+Use all three class names together, each with a different job:
 
 - `.sidebar-subnav`
 - `.sidebar-sublink`
 - `.sidebar-sublink.active`
 
+Recommended usage:
+
+```vue
+<div class="sidebar-subnav" aria-label="appearance subsections">
+  <RouterLink
+    v-for="subsection in appearanceSubsections"
+    :key="subsection.id"
+    class="sidebar-sublink"
+    :class="{ active: subsection.id === activeAppearanceSubsectionId }"
+    :to="{ name: 'settings', params: { category: 'appearance' }, hash: `#${subsection.id}` }"
+  >
+    {{ subsection.label }}
+  </RouterLink>
+</div>
+```
+
+In that structure, `.sidebar-subnav` styles the nested container, `.sidebar-sublink` styles every nested link, and `.sidebar-sublink.active` styles the currently active subsection.
+
 Style direction:
 
 - Indent under the active Appearance link.
-- Use `var(--fg-muted)` for default text.
-- Use `var(--fg)` and/or `var(--bg-soft)` for active state.
+- Use `var(--fg-muted)` for default text, but make nested links visually distinct from the parent with smaller type, extra left padding, and no top-level accent border.
+- Use `var(--fg)` and `var(--bg-soft)` for hover/active states so the active subsection is clear without competing with the parent Appearance item.
 - Keep the top-level active Appearance border as-is.
 - Hide nested links on mobile with the existing `@media (max-width: 720px)` block.
+
+Suggested starting CSS:
+
+```css
+.sidebar-subnav {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 1px 0 4px;
+}
+
+.sidebar-sublink {
+  color: var(--fg-muted);
+  text-decoration: none;
+  padding: 3px 16px 3px 32px;
+  font-size: 0.9em;
+  line-height: 1.35;
+  text-transform: lowercase;
+  letter-spacing: 0.03em;
+}
+
+.sidebar-sublink:hover,
+.sidebar-sublink.active {
+  color: var(--fg);
+  background: var(--bg-soft);
+}
+```
+
+This keeps the parent `Appearance` row as the strongest navigation item through its existing accent border, while the nested links still have enough indentation, scale difference, and active background to read as clickable subsection targets.
 
 ## Acceptance Criteria
 
