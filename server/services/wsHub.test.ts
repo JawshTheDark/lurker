@@ -13,6 +13,7 @@ let createNetwork: typeof import('../db/networks.js').createNetwork;
 let insertMessage: typeof import('../db/messages.js').insertMessage;
 let closeBuffer: typeof import('../db/closedBuffers.js').closeBuffer;
 let isClosed: typeof import('../db/closedBuffers.js').isClosed;
+let setClearedState: typeof import('../db/bufferReads.js').setClearedState;
 let buildBufferBacklog: typeof import('./wsHub.js').buildBufferBacklog;
 let handleOpenBuffer: typeof import('./wsHub.js').handleOpenBuffer;
 
@@ -24,6 +25,7 @@ beforeAll(async () => {
   ({ createNetwork } = await import('../db/networks.js'));
   ({ insertMessage } = await import('../db/messages.js'));
   ({ closeBuffer, isClosed } = await import('../db/closedBuffers.js'));
+  ({ setClearedState } = await import('../db/bufferReads.js'));
   ({ buildBufferBacklog, handleOpenBuffer } = await import('./wsHub.js'));
 
   userId = createUser('alice').id;
@@ -78,6 +80,26 @@ describe('buildBufferBacklog', () => {
   it('reports a non-channel buffer (DM) as joined', () => {
     seed('carol', 'hi');
     expect(buildBufferBacklog(userId, networkId, 'carol').joined).toBe(true);
+  });
+
+  it('omits clear-state by default (no marker)', () => {
+    seed('#noclear', 'just a message');
+    const frame = buildBufferBacklog(userId, networkId, '#noclear');
+    expect(frame.clearedBeforeId).toBe(0);
+    expect(frame.clearedAt).toBeNull();
+  });
+
+  it('ships the /clear marker in the backlog so the client can restore the filter after a reconnect', () => {
+    seed('#clear', 'one');
+    seed('#clear', 'two');
+    const beforeFrame = buildBufferBacklog(userId, networkId, '#clear');
+    const boundary = (beforeFrame.events as Array<{ id: number }>).at(-1)!.id;
+    const ts = '2026-05-27T12:00:00.000Z';
+    setClearedState(userId, networkId, '#clear', boundary, ts);
+
+    const frame = buildBufferBacklog(userId, networkId, '#clear');
+    expect(frame.clearedBeforeId).toBe(boundary);
+    expect(frame.clearedAt).toBe(ts);
   });
 });
 

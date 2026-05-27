@@ -18,6 +18,7 @@ let searchMessages: typeof import('./messages.js').searchMessages;
 let countNewer: typeof import('./messages.js').countNewer;
 let countHighlightsNewer: typeof import('./messages.js').countHighlightsNewer;
 let listUserHighlights: typeof import('./messages.js').listUserHighlights;
+let maxIdForBuffer: typeof import('./messages.js').maxIdForBuffer;
 
 beforeAll(async () => {
   ({ createUser } = await import('./users.js'));
@@ -30,6 +31,7 @@ beforeAll(async () => {
     countNewer,
     countHighlightsNewer,
     listUserHighlights,
+    maxIdForBuffer,
   } = await import('./messages.js'));
 });
 
@@ -573,5 +575,42 @@ describe('from_ignored excludes ignored senders from unread/highlight counts', (
       { nick: 'alice', fromIgnored: false },
       { nick: 'spammer', fromIgnored: true },
     ]);
+  });
+});
+
+describe('maxIdForBuffer', () => {
+  it('returns 0 for a buffer with no rows', () => {
+    const user = createUser('mfb-empty');
+    const net = createNetwork(user.id, {
+      name: 'n',
+      host: 'h',
+      port: 6697,
+      tls: true,
+      nick: 'me',
+    })!;
+    expect(maxIdForBuffer(net.id, '#nope')).toBe(0);
+  });
+
+  it('returns the largest id in the buffer, ignoring other targets and networks', () => {
+    const user = createUser('mfb-multi');
+    const net1 = createNetwork(user.id, {
+      name: 'n1',
+      host: 'h',
+      port: 6697,
+      tls: true,
+      nick: 'me',
+    })!;
+    const net2 = createNetwork(user.id, {
+      name: 'n2',
+      host: 'h',
+      port: 6697,
+      tls: true,
+      nick: 'me',
+    })!;
+    chat(net1.id, '#a', 'alice', 'a1');
+    const a2 = chat(net1.id, '#a', 'alice', 'a2');
+    chat(net1.id, '#b', 'bob', 'b1');
+    chat(net2.id, '#a', 'eve', 'e1');
+    expect(maxIdForBuffer(net1.id, '#a')).toBe(a2.id);
   });
 });
