@@ -5,15 +5,14 @@
 
 <!--
   Generic horizontal suggestion strip rendered as a StatusBar overlay — the
-  IRCCloud-style autocomplete bar. Visually it mirrors NickSuggestionStrip
-  (same chrome as the bar it covers); behaviourally it's keyboard-navigable
-  via an externally-owned activeIndex so the host's keydown handler can
-  drive it without an imperative ref.
+  IRCCloud-style autocomplete bar. Same chrome as the bar it covers (so the
+  bar visually disappears while the strip is up); keyboard-navigable via an
+  externally-owned activeIndex so the host's keydown handler can drive it
+  without an imperative ref.
 
   The strip is content-agnostic: callers pass an `items` array, a `keyFor`
   function, and the current `activeIndex`, and render each chip's body
-  through the `chip` slot. The emoji suggester is the first consumer;
-  NickSuggestionStrip could later adopt it.
+  through the `chip` slot. Used by both the nick and emoji suggesters.
 -->
 
 <template>
@@ -24,10 +23,16 @@
     @pointerdown.stop
     @mousedown.prevent.stop
   >
-    <!-- iOS keyboard preservation, same rationale as NickSuggestionStrip:
-         fire on `click` (end of touch), keep `@mousedown.prevent` on the chip
-         so focus never leaves the textarea, and use a plain <div role=button>
-         rather than a focusable <button>. -->
+    <!-- iOS keyboard preservation:
+         - Fire the action on `click` (end of the touch sequence). Emitting on
+           pointerdown closes the strip *mid-touch*, so the subsequent mousedown
+           lands on whatever's underneath (StatusBar) instead of this chip —
+           defeating @mousedown.prevent and dismissing the soft keyboard.
+         - @mousedown.prevent is the canonical iOS hook that prevents the
+           browser from shifting focus away from the textarea on tap. It must
+           fire on the chip itself, which is why the action moved to click.
+         - Plain <div>, not <button>: a <button> is focusable, so iOS would
+           still steal focus during the touch before mousedown.prevent runs. -->
     <div
       v-for="(item, i) in items"
       :key="keyFor(item)"
