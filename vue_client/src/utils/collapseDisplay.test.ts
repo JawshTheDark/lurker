@@ -213,13 +213,12 @@ describe('collapseDisplay — timestamp collapsing', () => {
   });
 });
 
-describe('collapseDisplay — compact-mode time-chain skip', () => {
-  it('skips hidden continuation message rows when tracking the time chain', () => {
-    // In compact mode the second message hides its head (continuationAuthor=true
-    // for same nick within window), so its time isn't displayed. The third row
-    // is from a different nick — its time should compare against row 0's time
-    // (still displayed), not row 1's hidden time. With the same minute key for
-    // all three, the third row collapses against row 0 ⇒ continuationTime.
+describe('collapseDisplay — continuation rows participate in time chain', () => {
+  // continuationAuthor rows still render their own time span in the template
+  // (compact mode's head omission only hides the nick — the body row keeps a
+  // right-aligned time). So the time chain must track them like any other
+  // visible row, otherwise repeated timestamps fail to collapse.
+  it('flags continuationAuthor rows as continuationTime when times match', () => {
     const rows = [
       msg({ id: 1, nick: 'alice', time: '2026-05-16T10:00:00Z' }),
       msg({ id: 2, nick: 'alice', time: '2026-05-16T10:00:30Z' }),
@@ -229,36 +228,6 @@ describe('collapseDisplay — compact-mode time-chain skip', () => {
       collapseAuthors: true,
       authorWindowMs: 5 * 60_000,
       collapseTimestamps: true,
-      compactMode: true,
-      formatTime: minuteFormat,
-    });
-    expect(rows[0].continuationAuthor).toBeUndefined();
-    expect(rows[1].continuationAuthor).toBe(true);
-    expect(rows[2].continuationAuthor).toBeUndefined();
-    // Time chain: row 0 set baseline, row 1 skipped (hidden head),
-    // row 2 displayed time matches row 0 → continuationTime.
-    expect(rows[0].continuationTime).toBeUndefined();
-    expect(rows[1].continuationTime).toBeUndefined();
-    expect(rows[2].continuationTime).toBe(true);
-  });
-
-  it('without compactMode the same scenario tracks the hidden row in the chain', () => {
-    // Regression guard: in standard mode the continuation row still occupies
-    // the .time cell as an empty span; the util treats it as "would display
-    // empty" — but timeStr is the formatted string, not '' — so prevTimeStr
-    // gets updated. Row 2's continuationTime is set against row 1's tracked
-    // time (which equals row 0's, so still true here — but the chain went
-    // through row 1, exercising the non-compact path).
-    const rows = [
-      msg({ id: 1, nick: 'alice', time: '2026-05-16T10:00:00Z' }),
-      msg({ id: 2, nick: 'alice', time: '2026-05-16T10:00:30Z' }),
-      msg({ id: 3, nick: 'bob', time: '2026-05-16T10:00:45Z' }),
-    ];
-    collapseDisplay(rows, {
-      collapseAuthors: true,
-      authorWindowMs: 5 * 60_000,
-      collapseTimestamps: true,
-      compactMode: false,
       formatTime: minuteFormat,
     });
     expect(rows[1].continuationAuthor).toBe(true);

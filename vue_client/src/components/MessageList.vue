@@ -628,15 +628,13 @@ const renderRows = computed((): RenderRow[] => {
   // Per-row display collapsing (nick + timestamp dedupe). Runs over the same
   // row shape consolidateRows emits and tags rows in place — the template
   // checks row.continuationAuthor / row.continuationTime to render empty
-  // prefix/time cells (subgrid stays aligned). compactMode tells the util
-  // to skip hidden continuation rows when tracking the time chain.
+  // prefix/time cells (subgrid stays aligned).
   if (effectiveCollapseAuthors.value || effectiveCollapseTimestamps.value) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     collapseDisplay(final as any, {
       collapseAuthors: effectiveCollapseAuthors.value,
       authorWindowMs: collapseAuthorsWindowMs.value,
       collapseTimestamps: effectiveCollapseTimestamps.value,
-      compactMode: compactMode.value,
       formatTime: (iso) => time(iso),
     });
   }

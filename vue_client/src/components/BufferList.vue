@@ -77,7 +77,7 @@
                 unreadLabel(countFor(buf.unread, buf.highlighted))
               }}</span>
               <button
-                v-if="!isServerBuffer(buf)"
+                v-if="!isServerBuffer(buf) && !hasUnreadIndicator(buf)"
                 type="button"
                 class="row-actions"
                 title="Actions"
@@ -125,7 +125,7 @@
               unreadLabel(countFor(buf.unread, buf.highlighted))
             }}</span>
             <button
-              v-if="!isServerBuffer(buf)"
+              v-if="!isServerBuffer(buf) && !hasUnreadIndicator(buf)"
               type="button"
               class="row-actions"
               title="Actions"
@@ -206,6 +206,16 @@ function countFor(unread: number, highlights: number): number {
   if (unreadDisplay.value === 'full') return unread;
   if (unreadDisplay.value === 'highlights') return highlights;
   return 0;
+}
+
+// Hover-revealed kebab lives in the same right-edge slot as the unread/
+// highlight badges. When the row has unread state, the badge wins — the
+// kebab stays hidden so it doesn't overlay the indicator the user is
+// scanning for. Right-click on the row still opens the same action menu.
+function hasUnreadIndicator(buf: Buffer): boolean {
+  return (
+    (buf.highlighted > 0 && showHighlightBadge.value) || countFor(buf.unread, buf.highlighted) > 0
+  );
 }
 
 // Per-network local mirror of the pinned buffer list, kept as concrete buffer
