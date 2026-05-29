@@ -439,8 +439,8 @@ function formatUA(ua: string | null | undefined): string {
 }
 
 .notif-signal + .notif-signal {
-  margin-top: 18px;
-  padding-top: 14px;
+  margin-top: var(--space-7);
+  padding-top: var(--space-6);
   border-top: 1px dashed var(--border);
 }
 .notif-signal-title {

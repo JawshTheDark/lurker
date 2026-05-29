@@ -245,7 +245,7 @@ async function remove(): Promise<void> {
 label {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: var(--space-2);
   color: var(--fg-muted);
 }
 label span {

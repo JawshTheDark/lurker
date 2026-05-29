@@ -219,7 +219,7 @@ watch(
   overflow-y: auto;
   background: var(--bg-soft);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.4);
   z-index: var(--z-popover);
 }
@@ -227,7 +227,7 @@ watch(
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: var(--space-6) 14px;
+  padding: var(--space-6);
   min-height: 44px;
   cursor: pointer;
   border-bottom: 1px solid var(--border);

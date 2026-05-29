@@ -119,7 +119,7 @@ textarea:focus {
   background: none;
   border: 1px solid var(--border);
   color: var(--fg);
-  padding: var(--space-3) 14px;
+  padding: var(--space-3) var(--space-6);
   cursor: pointer;
   font: inherit;
 }

@@ -93,7 +93,7 @@ onMounted(() => {
   color: var(--fg);
   cursor: pointer;
   font: inherit;
-  padding: var(--space-3) 14px;
+  padding: var(--space-3) var(--space-6);
 }
 .btn:hover:not(:disabled) {
   border-color: var(--accent);

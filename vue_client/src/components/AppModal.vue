@@ -161,7 +161,7 @@ onMounted(() => {
   /* Card horizontal padding lives in a custom property so scrolling
      children can break out with margin: 0 calc(-1 * var(--card-pad-x))
      and have their scrollbar sit against the card border. */
-  --card-pad-x: 28px;
+  --card-pad-x: var(--space-9);
   padding: var(--space-9) var(--card-pad-x);
   outline: none;
 }

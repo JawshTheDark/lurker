@@ -1188,7 +1188,7 @@ watch(
   pointer-events: none;
   z-index: var(--z-base);
   padding: 0;
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
 }
 .line:hover .row-actions,
 .row-actions:focus-visible {

@@ -162,7 +162,7 @@ onBeforeUnmount(() => {
   /* Asymmetric horizontal padding: more on the right so the label has
      breathing room from the menu edge — reads tight at 12px once the menu
      widens out for a long label. */
-  padding: var(--space-4) var(--space-7) var(--space-4) 14px;
+  padding: var(--space-4) var(--space-7) var(--space-4) var(--space-6);
   background: none;
   border: none;
   color: inherit;

@@ -85,6 +85,7 @@
   /* Corner radii. The app is intentionally flat (most things are square);
      these are the few deliberate exceptions. */
   --radius-sm: 2px;
+  --radius-md: 6px;
   --radius-pill: 999px;
 }
 

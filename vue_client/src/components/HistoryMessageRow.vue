@@ -151,7 +151,7 @@ const nickStyle = computed((): CSSProperties | null => {
   cursor: pointer;
   opacity: 0;
   padding: 0;
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
 }
 .row:hover .remove {
   opacity: 1;

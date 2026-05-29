@@ -193,7 +193,7 @@ async function onCreateUser() {
   z-index: var(--z-base);
   background: var(--bg);
   border: 1px solid var(--accent);
-  padding: var(--space-9) 28px;
+  padding: var(--space-9);
   width: 360px;
   display: flex;
   flex-direction: column;
@@ -228,7 +228,7 @@ form {
 label {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: var(--space-2);
   color: var(--fg-muted);
 }
 label span {
