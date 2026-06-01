@@ -33,6 +33,7 @@ import * as systemLog from './services/systemLog.js';
 import { purgeExpiredSessions } from './db/sessions.js';
 import { resolveSessionSecret } from './utils/sessionSecret.js';
 import { getEdition, isNodeMode } from './utils/edition.js';
+import { startOrchestratorClient, stopOrchestratorClient } from './services/orchestratorClient.js';
 
 const PORT = Number(process.env.PORT || 8010);
 const EDITION = getEdition();
@@ -106,6 +107,10 @@ systemLog.log({ scope: 'server', text: `Lurker server starting up (edition: ${ED
 
 ircManager.initAll();
 
+// In node edition, start reporting to the orchestrator (register on boot +
+// heartbeat on an interval). No-op in standalone or when unconfigured.
+startOrchestratorClient();
+
 server.listen(PORT, () => {
   console.log(`[lurker] listening on http://localhost:${PORT}`);
   systemLog.log({ scope: 'server', text: `Listening on port ${PORT}` });
@@ -114,6 +119,7 @@ server.listen(PORT, () => {
 function shutdown(signal: string): void {
   console.log(`[lurker] received ${signal}, shutting down`);
   systemLog.log({ scope: 'server', level: 'warn', text: `Received ${signal}, shutting down` });
+  stopOrchestratorClient();
   ircManager.shutdown();
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(1), 5000).unref();
