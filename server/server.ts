@@ -22,15 +22,17 @@ import draftsRouter from './routes/drafts.js';
 import { exportsRouter, importRouter } from './routes/exports.js';
 import apiTokensRouter from './routes/apiTokens.js';
 import configRouter from './routes/config.js';
+import nodeRouter from './routes/node.js';
 import ircManager from './services/ircManager.js';
 import { attachWsHub } from './services/wsHub.js';
 import './services/verbs/index.js';
 import mcpRouter from './services/mcpServer.js';
 import { requireApiAuth } from './middleware/apiAuth.js';
+import { getNodeSecret } from './middleware/nodeAuth.js';
 import * as systemLog from './services/systemLog.js';
 import { purgeExpiredSessions } from './db/sessions.js';
 import { resolveSessionSecret } from './utils/sessionSecret.js';
-import { getEdition } from './utils/edition.js';
+import { getEdition, isNodeMode } from './utils/edition.js';
 
 const PORT = Number(process.env.PORT || 8010);
 const EDITION = getEdition();
@@ -39,6 +41,11 @@ if (sessionSecretSource === 'generated') {
   console.log('[lurker] generated new session secret in data/session-secret.key');
 }
 console.log(`[lurker] edition: ${EDITION}`);
+if (isNodeMode() && !getNodeSecret()) {
+  console.warn(
+    '[lurker] node edition is active but LURKER_NODE_SECRET is unset — the node control API will reject every request (503) until it is configured',
+  );
+}
 
 const app = express();
 
@@ -61,6 +68,12 @@ app.use('/api/exports', exportsRouter);
 app.use('/api/imports', importRouter);
 app.use('/api/api-tokens', apiTokensRouter);
 app.use('/api/config', configRouter);
+
+// Orchestrator-only control surface. Mounted exclusively in node edition so a
+// standalone self-hosted instance never exposes it at all.
+if (isNodeMode()) {
+  app.use('/api/node', nodeRouter);
+}
 
 app.use('/mcp', requireApiAuth, mcpRouter);
 
