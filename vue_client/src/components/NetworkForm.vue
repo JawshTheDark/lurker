@@ -37,6 +37,27 @@
         <span>Real name (optional)</span>
         <input v-model="form.realname" />
       </label>
+      <div class="row">
+        <label class="grow">
+          <span>SASL account (optional)</span>
+          <input
+            v-model="form.sasl_account"
+            :placeholder="form.nick || 'defaults to nick'"
+            autocomplete="off"
+          />
+        </label>
+        <label class="grow">
+          <span>SASL password (optional)</span>
+          <input
+            v-model="form.sasl_password"
+            type="password"
+            autocomplete="off"
+            :placeholder="
+              isEdit && props.network?.has_sasl_password ? '(saved — type to replace)' : ''
+            "
+          />
+        </label>
+      </div>
       <button type="button" class="advanced-toggle" @click="showAdvanced = !showAdvanced">
         {{ showAdvanced ? '− Advanced options' : '+ Advanced options' }}
       </button>
@@ -50,27 +71,6 @@
             :placeholder="isEdit && props.network?.has_password ? '(saved — type to replace)' : ''"
           />
         </label>
-        <div class="row">
-          <label class="grow">
-            <span>SASL account (optional)</span>
-            <input
-              v-model="form.sasl_account"
-              :placeholder="form.nick || 'defaults to nick'"
-              autocomplete="off"
-            />
-          </label>
-          <label class="grow">
-            <span>SASL password (optional)</span>
-            <input
-              v-model="form.sasl_password"
-              type="password"
-              autocomplete="off"
-              :placeholder="
-                isEdit && props.network?.has_sasl_password ? '(saved — type to replace)' : ''
-              "
-            />
-          </label>
-        </div>
         <label v-if="!isEdit">
           <span>Default channel</span>
           <input v-model="form.default_channel" placeholder="#lurker" />
@@ -151,12 +151,11 @@ const form = reactive({
 
 // Auto-expand advanced when editing a row that already has any advanced value
 // set, so the user doesn't have to hunt for a saved password or connect script
-// they configured previously.
+// they configured previously. SASL now lives outside advanced, so it no longer
+// forces the section open.
 const showAdvanced = ref(
   !!props.network &&
     (!!netRaw?.has_password ||
-      !!netRaw?.has_sasl_password ||
-      !!netRaw?.sasl_account ||
       !!netRaw?.connect_commands ||
       netRaw?.autoconnect === false),
 );
