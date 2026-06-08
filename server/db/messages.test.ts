@@ -354,6 +354,33 @@ describe('searchMessages', () => {
     const hits = searchMessages(user.id, { query: 'banana' });
     expect(hits[0].networkName).toBe('OFTC');
   });
+
+  it('excludes from_ignored senders', () => {
+    const user = createUser('search-ignored');
+    const net = createNetwork(user.id, {
+      name: 'n',
+      host: 'h',
+      port: 6697,
+      tls: true,
+      nick: 'search-ignored',
+    });
+    chat(net!.id, '#a', 'alice', 'shared keyword here');
+    insertMessage({
+      networkId: net!.id,
+      target: '#a',
+      time: new Date().toISOString(),
+      type: 'message',
+      nick: 'spammer',
+      text: 'shared keyword here',
+      self: false,
+      fromIgnored: true,
+    });
+
+    // Free-text search skips the ignored row...
+    expect(searchMessages(user.id, { query: 'keyword' }).map((m) => m.nick)).toEqual(['alice']);
+    // ...and so does a structured-only filter (no FTS join).
+    expect(searchMessages(user.id, { target: '#a' }).map((m) => m.nick)).toEqual(['alice']);
+  });
 });
 
 describe('listMessagesAround', () => {

@@ -395,7 +395,10 @@ function toFtsMatch(text: string): string {
 // join scopes every result to the caller's own networks — this is the
 // access-control boundary, so a missing networkId means "all my networks", not
 // "all networks". Cursor pagination via `before` (a message id); rows ordered
-// newest-first, restricted to chat-shaped types.
+// newest-first, restricted to chat-shaped types. Ignored senders are excluded
+// via the insert-time from_ignored stamp (same as listUserHighlights / the
+// unread counts) so an ignored user stays ignored everywhere, including for
+// non-UI consumers of the search verb that have no client-side ignore filter.
 export function searchMessages(
   userId: number,
   {
@@ -419,7 +422,11 @@ export function searchMessages(
   if (!text && !networkId && !target && !nick) return [];
 
   let from = 'messages m JOIN networks n ON n.id = m.network_id';
-  const where: string[] = ['n.user_id = ?', `m.type IN ${COUNTABLE_TYPES_SQL}`];
+  const where: string[] = [
+    'n.user_id = ?',
+    `m.type IN ${COUNTABLE_TYPES_SQL}`,
+    'm.from_ignored = 0',
+  ];
   const params: (string | number)[] = [userId];
 
   if (text) {

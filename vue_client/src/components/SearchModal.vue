@@ -53,9 +53,10 @@ const emit = defineEmits<{
 const store = useSearchStore();
 const ignores = useIgnoresStore();
 
-// Search runs against the full message history; ignored senders are
-// filtered after results arrive so /unignore restores the rows without
-// re-issuing the query.
+// The server already drops senders ignored when the message arrived (the
+// insert-time from_ignored stamp). This second, live pass also hides anyone
+// ignored *after* those messages were stored, and reactively restores rows on
+// /unignore without re-issuing the query.
 const visibleResults = computed(() =>
   store.results.filter((m) => !ignores.isIgnored(m.networkId, m.nick, m.userhost ?? '')),
 );
