@@ -137,7 +137,9 @@
             :title="showMembers ? 'Hide members' : 'Show members'"
             :aria-label="showMembers ? 'Hide members' : 'Show members'"
             @click="toggleMembers"
-          ></button>
+          >
+            <i class="fa-solid fa-users"></i>
+          </button>
           <span
             v-if="memberCount != null"
             class="member-count"
