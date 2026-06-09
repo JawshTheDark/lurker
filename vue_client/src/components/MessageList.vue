@@ -1090,19 +1090,65 @@ watch(scrollToBottomToken, async () => {
   scrollToBottom();
 });
 
-// StatusBar's "Jump to unread" click increments scrollToUnreadToken. Center
-// the pinned divider; mark not-stuck so a live message can't yank us back to
-// the tail mid-read. The observer flips unreadSeen once the divider lands in
-// view, which retires the button for the rest of the visit.
-watch(scrollToUnreadToken, async () => {
-  await nextTick();
-  const el = scroller.value;
-  if (!el) return;
-  const target = el.querySelector('.unread-divider');
+// Center the (single) unread divider element, marking not-stuck first so a
+// live message can't yank us back to the tail mid-read. The observer flips
+// unreadSeen once the divider lands in view, retiring the button.
+function scrollDividerIntoView() {
+  const target = scroller.value?.querySelector('.unread-divider');
   if (!target) return;
   stickToBottom.value = false;
   setStuckToBottom(false);
   target.scrollIntoView({ block: 'center', behavior: 'smooth' });
+}
+
+// StatusBar's "Jump to unread" click increments scrollToUnreadToken.
+//
+// The divider only sits at the real read/unread seam when some loaded row is
+// at or below the boundary (dividerAfterId). In a large backlog every loaded
+// row is newer than the boundary, so renderRows pins the divider to the TOP
+// of the slice instead — scrolling to that fiction lands at scrollTop≈0, trips
+// the history pager, and stalls before reaching the seam (issue #216). In that
+// case fetch a slice centered on the boundary first — the same loadAround path
+// jump-to-message uses — then center the real divider once it lands.
+watch(scrollToUnreadToken, async () => {
+  await nextTick();
+  if (!scroller.value) return;
+  const buf = buffer.value;
+  const dividerAfterId = buf?.dividerAfterId || 0;
+  const dividerPinnedToTop =
+    dividerAfterId > 0 && buf != null && buf.oldestId != null && buf.oldestId > dividerAfterId;
+  if (dividerPinnedToTop && buf.hasMoreOlder && !buf.loadingHistory) {
+    stickToBottom.value = false;
+    setStuckToBottom(false);
+    const wantKey = networks.activeKey;
+    buffers.loadAround(buf.networkId, buf.target, dividerAfterId);
+    // loadAround rolls loadingHistory back to false synchronously if the send
+    // failed (offline) — nothing will land to drive the scroll, and there's no
+    // more history to pull, so fall back to centering the top-pinned divider so
+    // the click still has a visible effect.
+    if (!buf.loadingHistory) {
+      scrollDividerIntoView();
+      return;
+    }
+    // applyAroundSlice clears loadingHistory when the around response replaces
+    // buf.messages; that false transition is our "slice landed" signal (more
+    // reliable than messages.length, which can be unchanged when both the live
+    // window and the slice sit at MAX_PER_BUFFER).
+    const stop = watch(
+      () => buf.loadingHistory,
+      async (loading) => {
+        if (loading) return;
+        stop();
+        // Bail if the user switched buffers while the slice was in flight —
+        // the scroller now belongs to a different buffer.
+        if (networks.activeKey !== wantKey) return;
+        await nextTick();
+        scrollDividerIntoView();
+      },
+    );
+    return;
+  }
+  scrollDividerIntoView();
 });
 
 // Anything that shrinks MessageList's clientHeight (iOS soft keyboard sliding
