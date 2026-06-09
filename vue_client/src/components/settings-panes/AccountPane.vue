@@ -6,13 +6,11 @@
 <template>
   <section id="account" class="settings-pane">
     <h2>account</h2>
-    <p v-if="auth.user" class="account-identity">
-      Signed in as <strong>{{ auth.user.username }}</strong>
+    <p v-if="auth.user && identityReady" class="account-identity">
+      Signed in as <strong>{{ identity }}</strong>
     </p>
     <p v-if="config.isNode" class="section-desc">
-      Your account sign-in is managed at
-      <a href="https://lurker.chat" target="_blank" rel="noopener">lurker.chat</a> — passkeys and
-      passwords are set on your account there, not on this server.
+      Manage your subscription and payment details on the <a href="/billing">billing</a> page.
     </p>
     <p v-else class="section-desc">
       You can sign in with a passkey, a password, or both. Removing your last sign-in method would
@@ -107,7 +105,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useAuthStore } from '../../stores/auth.js';
 import { useConfigStore } from '../../stores/config.js';
@@ -126,6 +124,14 @@ interface PasskeyRow {
 const auth = useAuthStore();
 const config = useConfigStore();
 const router = useRouter();
+
+// In node mode the cell only knows a synthetic `acct-N` username; the real
+// account email lives on the control plane, so we fetch it (see the config
+// watcher below) and prefer it. `identityReady` holds the line until we know
+// what to show, so `acct-N` never flashes before the email resolves.
+const accountEmail = ref<string | null>(null);
+const identityReady = ref(false);
+const identity = computed(() => accountEmail.value || auth.user?.username || '');
 
 const passkeys = ref<PasskeyRow[]>([]);
 const passkeyError = ref('');
@@ -148,13 +154,27 @@ const removePasskeyTitle = computed(() => {
   return 'set a password first — this is your only sign-in method';
 });
 
-onMounted(() => {
-  // In node edition sign-in lives at the control plane (lurker.chat); the cell
-  // exposes no passkey/password management, so skip those lookups entirely.
-  if (config.isNode) return;
-  refreshPasskeys();
-  refreshPasswordStatus();
-});
+// config.edition is fetched asynchronously and defaults to standalone, so the
+// edition can still be unknown when this pane mounts. Defer setup until config
+// resolves (config.checked), then branch once: a hosted (node) cell pulls the
+// real account email from the control plane (the cell only knows the synthetic
+// acct-N username), while standalone loads its passkey/password management.
+let initialized = false;
+watch(
+  () => config.checked,
+  async (checked) => {
+    if (!checked || initialized) return;
+    initialized = true;
+    if (config.isNode) {
+      accountEmail.value = await auth.fetchHostedAccountEmail();
+    } else {
+      refreshPasskeys();
+      refreshPasswordStatus();
+    }
+    identityReady.value = true;
+  },
+  { immediate: true },
+);
 
 async function refreshPasskeys() {
   try {
@@ -253,7 +273,18 @@ async function onRemovePassword() {
 
 async function signOut() {
   await auth.logout();
-  router.replace('/login');
+  if (config.isNode) {
+    // On a hosted cell, sign-in lives at the control plane, not in this SPA.
+    // The in-memory router can't reach it — only a full-page navigation re-hits
+    // the reverse proxy, which now sees no cp_session and serves the hosted
+    // sign-in page. A router.replace would just swap SPA views while leaving the
+    // already-loaded app on screen, so the user never appears to sign out.
+    // Use replace(), not assign(): sign-out should leave no history entry that
+    // Back/bfcache could use to flash the signed-in app back onto the screen.
+    window.location.replace('/');
+  } else {
+    router.replace('/login');
+  }
 }
 </script>
 
