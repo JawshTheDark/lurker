@@ -41,7 +41,7 @@ Lurker runs as an always-on server that stays connected to IRC on your behalf, k
 
 # Installation
 
-## Install (Docker — Recommended)
+## Install (Docker)
 
 ```bash
 curl -O https://raw.githubusercontent.com/amiantos/lurker/main/docker-compose.yml
@@ -49,6 +49,10 @@ docker compose up -d
 ```
 
 Then open <http://localhost:8015> and create your admin account. Username + password is the default; passkeys are optional. See [SELF_HOSTING.md](docs/SELF_HOSTING.md) for the full guide — reverse proxy + HTTPS, enabling passkeys, push notifications, updating, and backups.
+
+## Lurker.Chat Managed Hosting
+
+Don't want to run a server yourself? **[Lurker.Chat](https://lurker.chat)** is official managed hosting: an always-on Lurker instance with backups, updates, and HTTPS handled for you — **$5/mo**, with a 14-day money-back guarantee.
 
 ## Deploy on DigitalOcean
 
