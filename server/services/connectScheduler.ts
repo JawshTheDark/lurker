@@ -118,13 +118,15 @@ export class ConnectScheduler {
     const hostKey = (host || '').trim().toLowerCase();
     const pendingForHost = this.queue.reduce((n, t) => (t.hostKey === hostKey ? n + 1 : n), 0);
     this.queue.push({ hostKey, run });
-    if (pendingForHost > 0) {
-      // At least one connect to this host is already waiting, so this one gets
-      // spaced out behind it — surface the herd size so an operator can see the
-      // throttle working on a dense restart ("staggering N connects to Libera").
+    if (pendingForHost === 1) {
+      // Log ONCE, the moment this host first becomes contended (its 2nd queued
+      // connect) — not per excess connect, which would spam O(N) lines on a
+      // dense restart and drown out other operational logs. The per-connection
+      // "Starting connection" lines (spaced out as they launch) carry the drain
+      // detail; this is just the "throttle engaged for this host" marker.
       console.log(
-        `[connect-scheduler] staggering outbound connects to ${hostKey || '(unknown)'} — ` +
-          `${pendingForHost + 1} queued`,
+        `[connect-scheduler] staggering outbound connects to ${hostKey || '(unknown)'} ` +
+          `to avoid a registration flood`,
       );
     }
     this.schedulePump();

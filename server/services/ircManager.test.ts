@@ -32,6 +32,17 @@ afterAll(() => ctx.cleanup());
 // launch never fires against a torn-down connection in a later test.
 afterEach(() => connectScheduler.reset());
 
+// Poll until a condition holds, bounded by a timeout — for awaiting a scheduler
+// timer to fire without betting on a fixed real-time delay (a 0ms timer can
+// slip well past a hard-coded sleep under CI load).
+async function waitUntil(pred: () => boolean, timeoutMs = 1000): Promise<void> {
+  const start = Date.now();
+  while (!pred()) {
+    if (Date.now() - start > timeoutMs) throw new Error('waitUntil: condition not met in time');
+    await new Promise((resolve) => setTimeout(resolve, 2));
+  }
+}
+
 describe('ircManager pause linchpin', () => {
   it('startNetwork refuses a paused user and creates no connection', () => {
     const user = createUser('irc-paused');
@@ -142,12 +153,13 @@ describe('ircManager deferrable connect (issue #236 throttle seam)', () => {
     expect(conn!.disposed).toBe(true);
     expect(ircManager.getConnection(user.id, net.id)).toBeNull();
 
-    await new Promise((resolve) => setTimeout(resolve, 5));
+    // Let the scheduler's queued 0ms launch fire — pump() splices the task out
+    // of the queue and runs it, so the count returning to 0 means the launch
+    // ran (and its guard short-circuited).
+    await waitUntil(() => connectScheduler.pendingCount() === 0);
 
-    // The launch guard short-circuited: the queue drained without ever logging
-    // a "Starting connection" line (which only the connect path emits) and
-    // nothing is left pending.
-    expect(connectScheduler.pendingCount()).toBe(0);
+    // The launch guard short-circuited: it ran without ever logging a "Starting
+    // connection" line (which only the connect path emits).
     const lines = systemLog.getRecent(user.id);
     expect(lines.some((l) => /Starting connection/.test(l.text))).toBe(false);
   });
