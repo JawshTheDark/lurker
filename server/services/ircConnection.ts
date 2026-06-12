@@ -949,24 +949,29 @@ export class IrcConnection {
     c.on('part', (event: Record<string, unknown>) => {
       const eventChannel = event.channel as string;
       const eventNick = event.nick as string;
+      // Resolve the canonical (joined-case) channel name *before* the self-part
+      // deletes it from this.channels below — the post-delete channel-parted
+      // publish can't normalize once the entry is gone, and would otherwise leak
+      // the server's relayed case (#268).
+      const channel = canonicalChannelTarget(eventChannel, this.channels) ?? eventChannel;
       const ch = this.channels.get(eventChannel.toLowerCase());
       if (ch) ch.members.delete(eventNick.toLowerCase());
       this.publish({
         type: 'part',
-        target: eventChannel,
+        target: channel,
         nick: eventNick,
         text: event.message as string | undefined,
         userhost: buildUserhost(event),
       });
       if (eventNick === c.user.nick) {
         this.channels.delete(eventChannel.toLowerCase());
-        this.publish({ type: 'channel-parted', target: eventChannel });
+        this.publish({ type: 'channel-parted', target: channel });
         systemLog.log({
           userId: this.network.user_id,
           scope: this.logScope(),
           text: event.message
-            ? `Parted ${eventChannel}: ${event.message as string}`
-            : `Parted ${eventChannel}`,
+            ? `Parted ${channel}: ${event.message as string}`
+            : `Parted ${channel}`,
         });
       }
     });
@@ -975,11 +980,17 @@ export class IrcConnection {
       const eventChannel = event.channel as string;
       const eventNick = event.nick as string;
       const eventKicked = event.kicked as string;
+      // Canonical (joined-case) name, resolved before the self-kick deletes the
+      // channel from this.channels — so the persisted channels row and the
+      // channel-parted publish use our case, not the server's relayed case. A
+      // kick relayed as #Christian was how a stray-case channels row got written
+      // and then auto-rejoined verbatim (#268).
+      const channel = canonicalChannelTarget(eventChannel, this.channels) ?? eventChannel;
       const ch = this.channels.get(eventChannel.toLowerCase());
       if (ch) ch.members.delete(eventKicked.toLowerCase());
       this.publish({
         type: 'kick',
-        target: eventChannel,
+        target: channel,
         nick: eventNick,
         kicked: eventKicked,
         text: event.message as string | undefined,
@@ -991,11 +1002,11 @@ export class IrcConnection {
       if (eventKicked && c.user.nick && eventKicked.toLowerCase() === c.user.nick.toLowerCase()) {
         this.channels.delete(eventChannel.toLowerCase());
         try {
-          upsertChannel(this.network.id, eventChannel, false);
+          upsertChannel(this.network.id, channel, false);
         } catch (_) {
           /* ignore */
         }
-        this.publish({ type: 'channel-parted', target: eventChannel });
+        this.publish({ type: 'channel-parted', target: channel });
       }
     });
 
