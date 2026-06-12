@@ -256,8 +256,23 @@ export class IrcConnection {
     return !NON_PERSISTED_TYPES.has(event.type);
   }
 
+  // Channels are case-insensitive on IRC, but servers can relay events for the
+  // same channel with different casing than we joined with — DALnet echoes your
+  // own JOIN as #christian (the case you sent) yet relays everyone else's
+  // messages/joins/modes as the registered #Christian. The client keys buffers
+  // by exact target string, so a stray case spawns a second, metadata-less
+  // buffer (#268). Normalize every channel-scoped target to the case we know
+  // the channel by (this.channels is keyed lowercase; .name holds the
+  // first-seen/joined case) so all of a channel's events land in one buffer.
+  normalizeChannelTarget(event: IrcEvent): IrcEvent {
+    const target = canonicalChannelTarget(event.target, this.channels);
+    if (target === event.target) return event;
+    return { ...event, target };
+  }
+
   publish(event: IrcEvent): void {
     if (this.disposed) return;
+    event = this.normalizeChannelTarget(event);
     const time = (event.time as string | undefined) || new Date().toISOString();
     const enriched: EnrichedEvent = {
       ...event,
@@ -327,6 +342,7 @@ export class IrcConnection {
 
   publishEphemeral(event: IrcEvent): void {
     if (this.disposed) return;
+    event = this.normalizeChannelTarget(event);
     this.onEvent({
       ...event,
       userId: this.network.user_id,
@@ -2035,6 +2051,20 @@ const JOIN_REJECTION_TAGS: Record<string, string> = {
   banned_from_channel: JOIN_REJECTION_MESSAGES['474'],
   bad_channel_key: JOIN_REJECTION_MESSAGES['475'],
 };
+
+// Resolve a published event's channel target to the case we know the channel
+// by. IRC channels are case-insensitive, so an event the server relays with a
+// different case (DALnet's registered #Christian vs. the #christian you joined)
+// must map onto the same buffer instead of forking a new one (#268). Returns
+// the input unchanged for non-channel targets and channels we don't track.
+export function canonicalChannelTarget(
+  target: string | undefined,
+  channels: Map<string, { name: string }>,
+): string | undefined {
+  if (typeof target !== 'string' || !target.startsWith('#')) return target;
+  const known = channels.get(target.toLowerCase());
+  return known ? known.name : target;
+}
 
 export function joinRejectionMessage(numeric: string): string | null {
   return JOIN_REJECTION_MESSAGES[numeric] || null;

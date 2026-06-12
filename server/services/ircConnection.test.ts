@@ -4,6 +4,7 @@
 import { describe, it, expect } from 'vitest';
 import { ircLineParser } from 'irc-framework';
 import {
+  canonicalChannelTarget,
   computeFallbackNick,
   formatServerNumeric,
   formatUnknownNumeric,
@@ -204,5 +205,29 @@ describe('join-rejection messages (#260)', () => {
     expect(joinRejectionMessage('001')).toBeNull();
     expect(joinRejectionMessageByTag('no_such_nick')).toBeNull();
     expect(joinRejectionMessageByTag('password_mismatch')).toBeNull();
+  });
+});
+
+describe('canonicalChannelTarget (#268)', () => {
+  // this.channels is keyed lowercase; .name holds the case we joined with.
+  const channels = new Map([['#christian', { name: '#christian' }]]);
+
+  it('maps a server-relayed differently-cased channel onto the joined case', () => {
+    expect(canonicalChannelTarget('#Christian', channels)).toBe('#christian');
+    expect(canonicalChannelTarget('#CHRISTIAN', channels)).toBe('#christian');
+  });
+
+  it('leaves the already-canonical case untouched', () => {
+    expect(canonicalChannelTarget('#christian', channels)).toBe('#christian');
+  });
+
+  it('passes through channels we are not in', () => {
+    expect(canonicalChannelTarget('#elsewhere', channels)).toBe('#elsewhere');
+  });
+
+  it('passes through non-channel targets (DMs, server buffer, undefined)', () => {
+    expect(canonicalChannelTarget('SomeNick', channels)).toBe('SomeNick');
+    expect(canonicalChannelTarget(':server:7', channels)).toBe(':server:7');
+    expect(canonicalChannelTarget(undefined, channels)).toBeUndefined();
   });
 });
