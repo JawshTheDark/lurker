@@ -19,7 +19,10 @@
 export const SYSTEM_KEY = ':system:';
 export const FRIENDS_KEY = ':friends:';
 
-export type VirtualRenderMode = 'console' | 'buffer';
+// 'console' — own store + monospace component (system log).
+// 'buffer'  — a real Buffer in the buffers store, rendered by MessageList.
+// 'overview'— a bespoke component in the message-pane slot (Friends overview).
+export type VirtualRenderMode = 'console' | 'buffer' | 'overview';
 
 export interface VirtualBufferConfig {
   key: string;
@@ -40,8 +43,8 @@ export const VIRTUAL_BUFFERS: Readonly<Record<string, VirtualBufferConfig>> = Ob
   [FRIENDS_KEY]: {
     key: FRIENDS_KEY,
     label: 'Friends',
-    renderMode: 'buffer',
-    hasNicklist: true,
+    renderMode: 'overview',
+    hasNicklist: false,
     hasInput: false,
   },
 });

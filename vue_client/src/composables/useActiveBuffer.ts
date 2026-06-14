@@ -33,10 +33,9 @@ export function useActiveBuffer(): ActiveBufferState {
   const isFriendsBuffer = computed(() => activeKey.value === FRIENDS_KEY);
   const activeBuf = computed(() => {
     if (!activeKey.value) return null;
-    // Console-mode virtual buffers (system) render from their own store and
-    // have no Buffer object. Buffer-mode virtual buffers (friends) DO live in
-    // the buffers store under their flat key, so resolve them normally.
-    if (virtualCfg.value?.renderMode === 'console') return null;
+    // Only 'buffer'-mode virtual buffers have a Buffer object in the store;
+    // 'console' (system log) and 'overview' (friends) render their own bodies.
+    if (virtualCfg.value && virtualCfg.value.renderMode !== 'buffer') return null;
     return buffers.byKey(activeKey.value);
   });
   const topic = computed(() => (activeBuf.value as any)?.topic);

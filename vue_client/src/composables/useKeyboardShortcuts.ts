@@ -78,7 +78,7 @@ export function useKeyboardShortcuts({
   // Activate the right way for the entry: the virtual FRIENDS feed goes through
   // the friends store (select + lazy-load); everything else is a real buffer.
   function activateEntry(entry: { networkId: string | number; target: string; key: string }): void {
-    if (entry.key === FRIENDS_KEY) friends.activateFeed();
+    if (entry.key === FRIENDS_KEY) friends.open();
     else buffers.activate(entry.networkId, entry.target);
   }
 

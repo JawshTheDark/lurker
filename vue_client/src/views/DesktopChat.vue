@@ -152,6 +152,7 @@
     <div v-if="active || isVirtual" class="topic-divider"></div>
 
     <SystemConsole v-if="isSystemConsole" />
+    <FriendsOverview v-else-if="isFriendsBuffer" @view-activity="onViewActivity" />
     <MessageList v-else ref="messageListRef" :pending-scroll-id="pendingScrollId" />
     <MemberList v-if="showMembers && !isSystemConsole" />
     <StatusBar />
@@ -217,6 +218,7 @@ import { useSettingsStore } from '../stores/settings.js';
 import BufferList from '../components/BufferList.vue';
 import MessageList from '../components/MessageList.vue';
 import SystemConsole from '../components/SystemConsole.vue';
+import FriendsOverview from '../components/FriendsOverview.vue';
 import MessageInput from '../components/MessageInput.vue';
 import MemberList from '../components/MemberList.vue';
 import StatusBar from '../components/StatusBar.vue';
@@ -238,6 +240,7 @@ import { useKeyboardShortcuts } from '../composables/useKeyboardShortcuts.js';
 import { useNicklistCollapseStore } from '../stores/nicklistCollapse.js';
 import { useNickNotesStore } from '../stores/nickNotes.js';
 import { useFriendsStore } from '../stores/friends.js';
+import { useSearchStore } from '../stores/search.js';
 import { useWhoisStore } from '../stores/whois.js';
 import { useChannelNotifyStore } from '../stores/channelNotify.js';
 import { useChannelListModal } from '../composables/useChannelListModal.js';
@@ -256,6 +259,7 @@ const {
   bufferLabel,
   isSystemConsole,
   isVirtual,
+  isFriendsBuffer,
 } = useActiveBuffer();
 
 function openSystemConsole() {
@@ -279,6 +283,15 @@ const showSwitcher = ref(false);
 const showSearch = ref(false);
 const showKbdHelp = ref(false);
 const pendingScrollId = ref<number | null>(null);
+
+// "View activity" from the Friends overview: open Search pre-filtered to the
+// friend's nick and run it immediately.
+function onViewActivity(nick: string) {
+  const search = useSearchStore();
+  search.setQuery(`from:${nick}`);
+  search.runSearch();
+  showSearch.value = true;
+}
 const messageInputRef = ref<{ focus: () => void } | null>(null);
 const messageListRef = ref<{ scrollByPage: (dir: number) => void } | null>(null);
 

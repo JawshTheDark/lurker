@@ -485,7 +485,7 @@ const friendsStatusTitle = computed(() =>
       : 'Connected',
 );
 function selectFriends(): void {
-  friends.activateFeed();
+  friends.open();
 }
 // Clicking a friend opens their DM on the primary network — the FRIENDS group
 // is a cross-network launcher/pin list for DMs. A target-less contact (none

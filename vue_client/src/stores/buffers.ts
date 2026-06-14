@@ -5,7 +5,6 @@ import { defineStore } from 'pinia';
 import { useNetworksStore } from './networks.js';
 import { useToastsStore } from './toasts.js';
 import { socketSend } from '../composables/useSocket.js';
-import { FRIENDS_KEY } from '../lib/virtualBuffers.js';
 
 const MAX_PER_BUFFER = 500;
 const MAX_SPEAKERS = 128;
@@ -540,37 +539,6 @@ export const useBuffersStore = defineStore('buffers', {
       buf.members = members;
     },
 
-    // --- Friends virtual buffer -------------------------------------------
-    // A real Buffer object stored under the flat :friends: key (sentinel
-    // networkId 0) so MessageList/MemberList render it wholesale. hasMoreOlder
-    // is false: the feed seeds the most recent page via REST and MessageList's
-    // WS history pager stays dormant (further scroll-back is a follow-up).
-    // Messages carry their ORIGINAL networkId/nick; only their text is prefixed
-    // with [network/#channel] by the friends store before ingest.
-    ensureFriendsBuffer(): Buffer {
-      if (!this.buffers[FRIENDS_KEY]) {
-        const buf = makeBuffer(0, FRIENDS_KEY);
-        buf.hasMoreOlder = false;
-        this.buffers[FRIENDS_KEY] = buf;
-      }
-      return this.buffers[FRIENDS_KEY];
-    },
-    // Replace the feed contents (initial load). Expects ascending-by-id rows.
-    setFriendMessages(messages: BufferMessage[]) {
-      const buf = this.ensureFriendsBuffer();
-      buf.messages = messages.slice(-MAX_PER_BUFFER);
-    },
-    // Append one live friend message (deduped by id). Live events are always
-    // newer than the loaded tail, so a plain append keeps id order.
-    pushFriendMessage(message: BufferMessage): boolean {
-      const buf = this.ensureFriendsBuffer();
-      const id = message.id;
-      if (id != null && buf.messages.some((m) => m.id === id)) return false;
-      buf.messages.push(message);
-      if (buf.messages.length > MAX_PER_BUFFER)
-        buf.messages.splice(0, buf.messages.length - MAX_PER_BUFFER);
-      return true;
-    },
     setTopic(networkId: number | string, target: string, topic: string | null) {
       const buf = ensureBuffer(this, networkId, target);
       buf.topic = topic;

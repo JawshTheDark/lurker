@@ -2,23 +2,16 @@
 // SPDX-License-Identifier: MPL-2.0
 
 import { defineStore } from 'pinia';
-import { api } from '../api.js';
 import { socketSend } from '../composables/useSocket.js';
 import { useNetworksStore } from './networks.js';
 import { useBuffersStore } from './buffers.js';
-import type { BufferMessage } from './buffers.js';
 import { isPeerOnline, isPeerAway, isPeerOffline } from '../utils/peerPresence.js';
 import { FRIENDS_KEY } from '../lib/virtualBuffers.js';
 
 // Friends / contacts. The server is the source of truth: contacts ship in the
 // `contacts-snapshot` on connect and `contact-updated`/`contact-deleted` echoes
-// keep every tab in sync. This store owns:
-//   - the contact list + the Configure-Friend modal editor state,
-//   - the synthetic nicklist for the :friends: buffer (contacts × presence),
-//   - the cross-network feed loader (REST /api/friends-feed), which prefixes
-//     each row with [network/#channel] and pushes it into the :friends: buffer.
-
-const PAGE_SIZE = 200;
+// keep every tab in sync. This store owns the contact list, the Configure-Friend
+// modal editor state, and the presence/ordering getters the FRIENDS UI reads.
 
 export interface ContactTarget {
   networkId: number;
@@ -70,11 +63,6 @@ export const useFriendsStore = defineStore('friends', {
   state: () => ({
     contacts: [] as Contact[],
     editor: { open: false, contact: null, prefill: null } as FriendEditorState,
-    // Feed pagination state (mirrors the highlights store).
-    nextBefore: null as number | null,
-    loading: false,
-    loaded: false,
-    error: '',
   }),
   getters: {
     // Best presence across a friend's targets: online wins, then away, then a
@@ -99,6 +87,17 @@ export const useFriendsStore = defineStore('friends', {
         const networks = useNetworksStore();
         const c = state.contacts.find((x) => x.id === contactId);
         return !!c && c.targets.map((t) => targetPresence(networks, t)).some(isPeerOnline);
+      },
+    // Presence for a single (network, nick) target — the per-network breakdown
+    // in the Friends overview. Same disconnected-aware derivation as presenceState.
+    presenceForTarget:
+      () =>
+      (networkId: number, nick: string): FriendPresence => {
+        const row = targetPresence(useNetworksStore(), { networkId, nick, isPrimary: false });
+        if (isPeerOnline(row)) return 'online';
+        if (isPeerAway(row)) return 'away';
+        if (isPeerOffline(row)) return 'offline';
+        return 'unknown';
       },
     // `${networkId}::${nickLower}` for every contact's PRIMARY target — the DMs
     // surfaced under FRIENDS, so BufferList hides them from their real network.
@@ -193,6 +192,9 @@ export const useFriendsStore = defineStore('friends', {
     openEditorForContact(contact: Contact) {
       this.editor = { open: true, contact: normalizeContact(contact), prefill: null };
     },
+    openEditorNew() {
+      this.editor = { open: true, contact: null, prefill: null };
+    },
     closeEditor() {
       this.editor = { open: false, contact: null, prefill: null };
     },
@@ -216,44 +218,31 @@ export const useFriendsStore = defineStore('friends', {
       socketSend({ type: 'delete-contact', contactId });
     },
 
-    // ---- feed (cross-network friend messages) ----
-    // Open the FRIENDS feed buffer: select it, ensure it exists, and lazily
-    // fetch the first page. Shared by the sidebar header click and keyboard nav.
-    activateFeed() {
+    // ---- navigation ----
+    // Open the FRIENDS overview pane (the virtual buffer's body).
+    open() {
       useNetworksStore().activateVirtual(FRIENDS_KEY);
-      useBuffersStore().ensureFriendsBuffer();
-      if (!this.loaded) this.loadFeed();
     },
-    // Initial load: newest page from REST (descending), reversed to ascending,
-    // prefixed, and seeded into the :friends: buffer.
-    async loadFeed() {
-      this.loading = true;
-      this.error = '';
-      try {
-        const { items, nextBefore } = await api(`/api/friends-feed?limit=${PAGE_SIZE}`);
-        const ascending = (items || []).toReversed().map((row: any) => this.prefixRow(row));
-        useBuffersStore().setFriendMessages(ascending);
-        this.nextBefore = nextBefore ?? null;
-        this.loaded = true;
-      } catch (e: any) {
-        this.error = e.message || 'failed to load friends feed';
-      } finally {
-        this.loading = false;
+    // Open the friend's primary DM, resolving to an existing buffer's case so we
+    // don't fork a second buffer that differs only by nick case. A target-less
+    // contact falls back to its editor.
+    openDm(contact: Contact) {
+      const t = primaryTargetOf(contact);
+      if (!t) {
+        this.openEditorForContact(contact);
+        return;
       }
-    },
-    // Append one live friend message (an irc event already flagged friend:true).
-    applyLiveMessage(event: any) {
-      useBuffersStore().pushFriendMessage(this.prefixRow(event));
-    },
-    // Prepend the [network/#channel] origin to a row's text. Operates on a copy
-    // so the message in its real buffer keeps its original text.
-    prefixRow(row: any): BufferMessage {
-      const networks = useNetworksStore();
-      const name =
-        row.networkName || networks.networkById(row.networkId)?.name || `net:${row.networkId}`;
-      const origin = `[${name}/${row.target}] `;
-      const text = typeof row.text === 'string' ? row.text : '';
-      return { ...row, text: origin + text } as BufferMessage;
+      const buffers = useBuffersStore();
+      const lower = t.nick.toLowerCase();
+      const existing = buffers
+        .forNetwork(t.networkId)
+        .find(
+          (b) =>
+            b.target.toLowerCase() === lower &&
+            !b.target.startsWith('#') &&
+            !b.target.startsWith(':'),
+        );
+      buffers.activate(t.networkId, existing ? existing.target : t.nick);
     },
   },
 });

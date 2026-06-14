@@ -101,10 +101,6 @@ function applyEvent(event: any): void {
       // server's read-state broadcast (fired after every countable event),
       // so we don't increment them here.
       if (!buffers.pushMessage(event)) break;
-      // Server stamps friend:true when the sender is on the watch list — file
-      // a prefixed copy into the cross-network :friends: buffer. Deduped above,
-      // so a resume-gap replay can't double-file it.
-      if (event.friend) useFriendsStore().applyLiveMessage(event);
       // Speakers feeds tab-complete and the nick-picker. Our own messages
       // would just clutter our own suggestions, so they don't count as
       // "people who recently spoke here."
@@ -123,7 +119,6 @@ function applyEvent(event: any): void {
     }
     case 'notice':
       if (!buffers.pushMessage(event)) break;
-      if (event.friend) useFriendsStore().applyLiveMessage(event);
       notifyForEvent(event);
       break;
     // For events that carry an id AND mutate buffer state (member list,

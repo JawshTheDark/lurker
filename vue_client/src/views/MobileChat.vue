@@ -81,6 +81,7 @@
         </button>
       </header>
       <SystemConsole v-if="isSystemConsole" />
+      <FriendsOverview v-else-if="isFriendsBuffer" @view-activity="onViewActivity" />
       <MessageList v-else :pending-scroll-id="pendingScrollId" />
       <StatusBar compact />
       <div v-if="!isVirtual" class="composer-host" :class="{ 'keyboard-open': keyboardOpen }">
@@ -165,6 +166,7 @@ import type { ContextMenuItem } from '../composables/useContextMenu.js';
 import BufferList from '../components/BufferList.vue';
 import MessageList from '../components/MessageList.vue';
 import SystemConsole from '../components/SystemConsole.vue';
+import FriendsOverview from '../components/FriendsOverview.vue';
 import MessageInput from '../components/MessageInput.vue';
 import MemberList from '../components/MemberList.vue';
 import StatusBar from '../components/StatusBar.vue';
@@ -181,6 +183,7 @@ import UserProfileModal from '../components/UserProfileModal.vue';
 import ImageViewerModal from '../components/ImageViewerModal.vue';
 import { useNickNotesStore } from '../stores/nickNotes.js';
 import { useFriendsStore } from '../stores/friends.js';
+import { useSearchStore } from '../stores/search.js';
 import { useWhoisStore } from '../stores/whois.js';
 import { useChannelListModal } from '../composables/useChannelListModal.js';
 import { useImageModal } from '../composables/useImageModal.js';
@@ -201,6 +204,7 @@ const {
   topic,
   isSystemConsole,
   isVirtual,
+  isFriendsBuffer,
 } = useActiveBuffer();
 const bufferActions = useBufferActions();
 const menu = useContextMenu();
@@ -255,6 +259,16 @@ const bufferScope = computed<string | null>(() => {
 // one modal instance — the scope ref is what differentiates the two entries.
 function openSearch(scoped: boolean) {
   searchScope.value = scoped ? bufferScope.value : null;
+  showSearch.value = true;
+}
+
+// "View activity" from the Friends overview: open Search pre-filtered to the
+// friend's nick and run it immediately.
+function onViewActivity(nick: string) {
+  const search = useSearchStore();
+  search.setQuery(`from:${nick}`);
+  search.runSearch();
+  searchScope.value = null;
   showSearch.value = true;
 }
 function openHighlights(scoped: boolean) {
