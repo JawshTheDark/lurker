@@ -32,13 +32,25 @@
           <li
             v-for="c in friends.contacts"
             :key="c.id"
-            :class="{ active: isFriendDmActive(c), 'peer-offline': !friends.isOnline(c.id) }"
+            :class="friendRowClasses(c)"
             :title="`Open DM with ${c.displayName}`"
             @click="openFriendDm(c)"
             @contextmenu.prevent="editFriend(c)"
           >
             <span class="label">{{ c.displayName }}</span>
-            <span v-if="!friends.isOnline(c.id)" class="peer-mark" aria-hidden="true">*</span>
+            <span
+              v-if="friends.presenceState(c.id) === 'offline'"
+              class="peer-mark"
+              aria-hidden="true"
+              >*</span
+            >
+            <span
+              v-if="friendHighlights(c) > 0 && showHighlightBadge"
+              class="badge highlight"
+              title="unread highlight"
+              >●</span
+            >
+            <span v-if="friendUnread(c) > 0" class="badge">{{ unreadLabel(friendUnread(c)) }}</span>
           </li>
         </ul>
       </div>
@@ -363,7 +375,10 @@ function unpinnedBufs(networkId: number): Buffer[] {
   const pinnedSet = new Set(pins.forNetwork(networkId));
   return buffers
     .forNetwork(networkId)
-    .filter((b) => !isServerBuffer(b) && !pinnedSet.has(b.target))
+    .filter(
+      (b) =>
+        !isServerBuffer(b) && !pinnedSet.has(b.target) && !isFriendPrimaryDm(b.networkId, b.target),
+    )
     .toSorted((a, b) => {
       const oa = bufferOrder(a);
       const ob = bufferOrder(b);
@@ -381,7 +396,9 @@ function syncPinned(): void {
     const targets = pins.forNetwork(net.id);
     const bufByTarget = new Map<string, Buffer>();
     for (const b of buffers.forNetwork(net.id)) bufByTarget.set(b.target, b);
-    const list = targets.map((t) => bufByTarget.get(t)).filter((b): b is Buffer => !!b);
+    const list = targets
+      .map((t) => bufByTarget.get(t))
+      .filter((b): b is Buffer => !!b && !isFriendPrimaryDm(b.networkId, b.target));
     if (!pinnedBufsByNet[net.id]) {
       pinnedBufsByNet[net.id] = list;
     } else {
@@ -459,17 +476,56 @@ function selectFriends(): void {
 // Clicking a friend opens their DM on the primary network — the FRIENDS group
 // is a cross-network launcher/pin list for DMs. A target-less contact (none
 // watched) falls back to opening its editor.
+//
+// Resolve to an EXISTING DM buffer case-insensitively so we never fork a second
+// buffer that differs from the open one only by nick case.
+function friendDmBuffer(c: Contact): Buffer | null {
+  const t = primaryTargetOf(c);
+  if (!t) return null;
+  const lower = t.nick.toLowerCase();
+  return (
+    buffers
+      .forNetwork(t.networkId)
+      .find((b) => isDmBuffer(b) && b.target.toLowerCase() === lower) ?? null
+  );
+}
 function openFriendDm(c: Contact): void {
   const t = primaryTargetOf(c);
-  if (t) select(t.networkId, t.nick);
-  else friends.openEditorForContact(c);
+  if (!t) {
+    friends.openEditorForContact(c);
+    return;
+  }
+  const existing = friendDmBuffer(c);
+  select(t.networkId, existing ? existing.target : t.nick);
 }
 function isFriendDmActive(c: Contact): boolean {
   const t = primaryTargetOf(c);
-  return !!t && networks.activeKey === `${t.networkId}::${t.nick}`;
+  if (!t) return false;
+  const existing = friendDmBuffer(c);
+  return networks.activeKey === `${t.networkId}::${existing ? existing.target : t.nick}`;
+}
+function friendRowClasses(c: Contact): Record<string, boolean> {
+  const state = friends.presenceState(c.id);
+  return {
+    active: isFriendDmActive(c),
+    'peer-offline': state === 'offline',
+    'peer-away': state === 'away',
+  };
+}
+function friendUnread(c: Contact): number {
+  const buf = friendDmBuffer(c);
+  return buf ? countFor(buf.unread, buf.highlighted) : 0;
+}
+function friendHighlights(c: Contact): number {
+  return friendDmBuffer(c)?.highlighted ?? 0;
 }
 function editFriend(c: Contact): void {
   friends.openEditorForContact(c);
+}
+// A friend's primary DM is shown under FRIENDS, so hide it from its real
+// network's buffer list (dedupe).
+function isFriendPrimaryDm(networkId: number, target: string): boolean {
+  return friends.primaryDmKeys.has(`${networkId}::${target.toLowerCase()}`);
 }
 
 function stateClass(networkId: number): string {

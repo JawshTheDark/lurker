@@ -7,6 +7,7 @@ import { socketSend } from '../composables/useSocket.js';
 import { useNetworksStore } from './networks.js';
 import { useBuffersStore } from './buffers.js';
 import type { BufferMessage } from './buffers.js';
+import { isPeerOnline, isPeerAway, isPeerOffline } from '../utils/peerPresence.js';
 
 // Friends / contacts. The server is the source of truth: contacts ship in the
 // `contacts-snapshot` on connect and `contact-updated`/`contact-deleted` echoes
@@ -43,10 +44,15 @@ export interface FriendEditorState {
   prefill: { networkId: number; nick: string } | null; // set when adding from a nick
 }
 
-// A friend is "online" if ANY of their watched targets reports online/back.
-function targetOnline(networks: ReturnType<typeof useNetworksStore>, t: ContactTarget): boolean {
-  const state = (networks.states as any)[t.networkId]?.peerPresence?.[t.nick.toLowerCase()]?.state;
-  return state === 'online' || state === 'back';
+export type FriendPresence = 'online' | 'away' | 'offline' | 'unknown';
+
+// The presence row (online/away/offline/back) for one target, or null when
+// unknown (network without MONITOR + no shared channel).
+function targetPresence(
+  networks: ReturnType<typeof useNetworksStore>,
+  t: ContactTarget,
+): { state: string | null } | null {
+  return (networks.states as any)[t.networkId]?.peerPresence?.[t.nick.toLowerCase()] ?? null;
 }
 
 export const useFriendsStore = defineStore('friends', {
@@ -60,14 +66,39 @@ export const useFriendsStore = defineStore('friends', {
     error: '',
   }),
   getters: {
-    // A friend's "online anywhere" status, by contact id — drives nicklist tint.
+    // Best presence across a friend's targets: online wins, then away, then a
+    // definitive offline; all-unknown stays 'unknown' (renders un-muted, like a
+    // DM row with no presence). Drives the FRIENDS row tint.
+    presenceState:
+      (state) =>
+      (contactId: number): FriendPresence => {
+        const networks = useNetworksStore();
+        const c = state.contacts.find((x) => x.id === contactId);
+        if (!c) return 'unknown';
+        const rows = c.targets.map((t) => targetPresence(networks, t));
+        if (rows.some(isPeerOnline)) return 'online';
+        if (rows.some(isPeerAway)) return 'away';
+        if (rows.some(isPeerOffline)) return 'offline';
+        return 'unknown';
+      },
+    // Definitively online on at least one target — used for the header count.
     isOnline:
       (state) =>
       (contactId: number): boolean => {
         const networks = useNetworksStore();
         const c = state.contacts.find((x) => x.id === contactId);
-        return !!c && c.targets.some((t) => targetOnline(networks, t));
+        return !!c && c.targets.map((t) => targetPresence(networks, t)).some(isPeerOnline);
       },
+    // `${networkId}::${nickLower}` for every contact's PRIMARY target — the DMs
+    // surfaced under FRIENDS, so BufferList hides them from their real network.
+    primaryDmKeys: (state): Set<string> => {
+      const set = new Set<string>();
+      for (const c of state.contacts) {
+        const t = primaryTargetOf(c);
+        if (t) set.add(`${t.networkId}::${t.nick.toLowerCase()}`);
+      }
+      return set;
+    },
     // The contact (if any) watching (networkId, nick) — drives the nick menu's
     // Add/Edit Friend label.
     contactForTarget:
