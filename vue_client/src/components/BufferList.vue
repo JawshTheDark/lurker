@@ -504,13 +504,7 @@ function friendDmBuffer(c: Contact): Buffer | null {
   );
 }
 function openFriendDm(c: Contact): void {
-  const t = primaryTargetOf(c);
-  if (!t) {
-    friends.openEditorForContact(c);
-    return;
-  }
-  const existing = friendDmBuffer(c);
-  select(t.networkId, existing ? existing.target : t.nick);
+  friends.openDm(c);
 }
 function isFriendDmActive(c: Contact): boolean {
   const t = primaryTargetOf(c);

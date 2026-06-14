@@ -42,31 +42,46 @@
             <span class="nick">{{ t.nick }}</span>
             <span v-if="t.isPrimary" class="primary" title="Primary — opens on click">★</span>
             <span class="tstate">{{ friends.presenceForTarget(t.networkId, t.nick) }}</span>
+            <span class="row-actions">
+              <button
+                v-if="friends.presenceForTarget(t.networkId, t.nick) !== 'offline'"
+                type="button"
+                class="icon-btn"
+                title="Open DM"
+                aria-label="Open DM"
+                @click="friends.openDmTarget(t.networkId, t.nick)"
+              >
+                <i class="fa-solid fa-envelope"></i>
+              </button>
+              <button
+                type="button"
+                class="icon-btn"
+                title="View activity"
+                aria-label="View activity"
+                @click="emit('view-activity', searchQueryFor(t))"
+              >
+                <i class="fa-solid fa-magnifying-glass"></i>
+              </button>
+            </span>
           </li>
         </ul>
-
-        <div class="card-actions">
-          <button type="button" class="btn-secondary" @click="friends.openDm(c)">
-            <i class="fa-solid fa-envelope"></i> Open DM
-          </button>
-          <button
-            type="button"
-            class="btn-secondary"
-            @click="emit('view-activity', primaryNick(c))"
-          >
-            <i class="fa-solid fa-magnifying-glass"></i> View activity
-          </button>
-        </div>
       </li>
     </ul>
   </div>
 </template>
 
 <script setup lang="ts">
-import { useFriendsStore, primaryTargetOf, type Contact } from '../stores/friends.js';
+import {
+  useFriendsStore,
+  primaryTargetOf,
+  type Contact,
+  type ContactTarget,
+} from '../stores/friends.js';
 import { useNetworksStore } from '../stores/networks.js';
 
-const emit = defineEmits<{ 'view-activity': [nick: string] }>();
+// Emits the raw search query string for "view activity" — the parent opens the
+// search modal with it.
+const emit = defineEmits<{ 'view-activity': [query: string] }>();
 
 const friends = useFriendsStore();
 const networks = useNetworksStore();
@@ -75,8 +90,12 @@ function networkName(networkId: number): string {
   return networks.networkById(networkId)?.name ?? `net:${networkId}`;
 }
 
-function primaryNick(c: Contact): string {
-  return primaryTargetOf(c)?.nick ?? c.displayName;
+// Scope activity search to this nick on this network. `on:` only round-trips
+// for whitespace-free names, so fall back to nick-only otherwise.
+function searchQueryFor(t: ContactTarget): string {
+  const name = networkName(t.networkId);
+  const onTok = name && !/\s/.test(name) ? ` on:${name}` : '';
+  return `from:${t.nick}${onTok}`;
 }
 
 // One-line summary under the name, describing the PRIMARY target (the DM Open DM
@@ -189,10 +208,20 @@ function summary(c: Contact): string {
   margin-left: auto;
   color: var(--fg-muted);
 }
-.card-actions {
-  display: flex;
-  gap: var(--space-4);
-  flex-wrap: wrap;
+.target .row-actions {
+  display: inline-flex;
+  gap: var(--space-2);
+}
+.icon-btn {
+  background: none;
+  border: none;
+  color: var(--fg-muted);
+  cursor: pointer;
+  font: inherit;
+  padding: 0 var(--space-1);
+}
+.icon-btn:hover {
+  color: var(--fg);
 }
 .link {
   background: none;
@@ -204,19 +233,5 @@ function summary(c: Contact): string {
 }
 .link:hover {
   color: var(--fg);
-}
-.btn-secondary {
-  background: none;
-  border: 1px solid var(--border);
-  color: var(--fg);
-  padding: var(--space-2) var(--space-5);
-  cursor: pointer;
-  font: inherit;
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-3);
-}
-.btn-secondary:hover {
-  background: var(--bg-soft);
 }
 </style>

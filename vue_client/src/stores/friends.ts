@@ -213,26 +213,29 @@ export const useFriendsStore = defineStore('friends', {
     open() {
       useNetworksStore().activateVirtual(FRIENDS_KEY);
     },
-    // Open the friend's primary DM, resolving to an existing buffer's case so we
-    // don't fork a second buffer that differs only by nick case. A target-less
-    // contact falls back to its editor.
-    openDm(contact: Contact) {
-      const t = primaryTargetOf(contact);
-      if (!t) {
-        this.openEditorForContact(contact);
-        return;
-      }
+    // Open a specific (network, nick) DM, resolving to an existing buffer's case
+    // so we don't fork a second buffer that differs only by nick case.
+    openDmTarget(networkId: number, nick: string) {
       const buffers = useBuffersStore();
-      const lower = t.nick.toLowerCase();
+      const lower = nick.toLowerCase();
       const existing = buffers
-        .forNetwork(t.networkId)
+        .forNetwork(networkId)
         .find(
           (b) =>
             b.target.toLowerCase() === lower &&
             !b.target.startsWith('#') &&
             !b.target.startsWith(':'),
         );
-      buffers.activate(t.networkId, existing ? existing.target : t.nick);
+      buffers.activate(networkId, existing ? existing.target : nick);
+    },
+    // Open the friend's primary DM. A target-less contact falls back to its editor.
+    openDm(contact: Contact) {
+      const t = primaryTargetOf(contact);
+      if (!t) {
+        this.openEditorForContact(contact);
+        return;
+      }
+      this.openDmTarget(t.networkId, t.nick);
     },
   },
 });

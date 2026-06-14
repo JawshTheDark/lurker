@@ -284,11 +284,11 @@ function openSearch(scoped: boolean) {
   showSearch.value = true;
 }
 
-// "View activity" from the Friends overview: open Search pre-filtered to the
-// friend's nick and run it immediately.
-function onViewActivity(nick: string) {
+// "View activity" from the Friends overview: open Search with the scoped query
+// (from:<nick> on:<network>) and run it immediately.
+function onViewActivity(query: string) {
   const search = useSearchStore();
-  search.setQuery(`from:${nick}`);
+  search.setQuery(query);
   search.runSearch();
   searchScope.value = null;
   showSearch.value = true;
