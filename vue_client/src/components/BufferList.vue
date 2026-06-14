@@ -40,12 +40,6 @@
           >
             <span class="label">{{ c.displayName }}</span>
             <span
-              v-if="friends.presenceState(c.id) === 'offline'"
-              class="peer-mark"
-              aria-hidden="true"
-              >*</span
-            >
-            <span
               v-if="friendHighlights(c) > 0 && showHighlightBadge"
               class="badge highlight"
               title="unread highlight"
@@ -140,7 +134,6 @@
               @contextmenu.prevent="onBufferContextMenu($event, buf)"
             >
               <span class="label">{{ labelFor(buf) }}</span>
-              <span v-if="isPeerOffline(buf)" class="peer-mark" aria-hidden="true">*</span>
               <span
                 v-if="hasDraft(buf)"
                 class="badge draft"
@@ -188,7 +181,6 @@
             @contextmenu.prevent="onBufferContextMenu($event, buf)"
           >
             <span class="label">{{ labelFor(buf) }}</span>
-            <span v-if="isPeerOffline(buf)" class="peer-mark" aria-hidden="true">*</span>
             <span
               v-if="hasDraft(buf)"
               class="badge draft"
@@ -995,17 +987,15 @@ onBeforeUnmount(() => {
 .channels li.not-joined {
   opacity: 0.5;
 }
-/* DM peer state. Away nicks render in the muted gray used by away members in
-   the channel nicklist; offline nicks also pick up the asterisk marker
-   (`.peer-mark`). */
+/* DM/friend peer state. Both away and offline render in muted gray (matching
+   away members in the channel nicklist); offline is additionally italicized,
+   which is the offline tell. */
 .channels li.peer-away .label,
 .channels li.peer-offline .label {
   color: var(--fg-muted);
 }
-.peer-mark {
-  color: var(--fg-muted);
-  font-weight: 600;
-  margin-left: var(--space-1);
+.channels li.peer-offline .label {
+  font-style: italic;
 }
 .label {
   flex: 1;
