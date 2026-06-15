@@ -72,10 +72,11 @@ const selfModes = computed<string[]>(() => {
 });
 
 watch(
-  () => `${buffer.value?.networkId ?? ''}::${buffer.value?.target ?? ''}`,
+  () => networks.activeKey,
   () => {
     if (listEl.value) listEl.value.scrollTop = 0;
   },
+  { flush: 'post' },
 );
 
 function isSelf(m: BufferMember): boolean {
