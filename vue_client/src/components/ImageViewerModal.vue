@@ -48,7 +48,7 @@
       </div>
     </div>
 
-    <div class="stage" @click.self="$emit('close')">
+    <div ref="stageEl" class="stage" @click.self="$emit('close')">
       <div v-if="failed" class="failed-card">
         <p class="empty">
           Failed to load image.
@@ -80,7 +80,6 @@
         @pointermove="onImagePointerMove"
         @pointerup="onImagePointerEnd"
         @pointercancel="onImagePointerEnd"
-        @pointerleave="onImagePointerEnd"
         @lostpointercapture="onImagePointerEnd"
       />
     </div>
@@ -106,6 +105,7 @@ const failed = ref(false);
 const displayUrl = ref(props.url);
 const overlayEl = ref<HTMLElement | null>(null);
 const imageEl = ref<HTMLImageElement | null>(null);
+const stageEl = ref<HTMLElement | null>(null);
 const loadTimer = ref<number | null>(null);
 const scale = ref(MIN_ZOOM);
 const panX = ref(0);
@@ -157,6 +157,16 @@ watch(
   () => props.url,
   (nextUrl) => startLoading(nextUrl),
 );
+
+// Entering/leaving the zoomed state is the only thing that changes the stage and
+// image layout (a transform never reflows), so re-clamp the pan exactly once the
+// new layout has settled instead of on every pointer move.
+watch(isZoomed, async () => {
+  await nextTick();
+  const reclamped = clampPan(panX.value, panY.value, scale.value);
+  panX.value = reclamped.x;
+  panY.value = reclamped.y;
+});
 
 function onLoad(): void {
   clearLoadTimer();
@@ -232,16 +242,18 @@ function toggleZoom(point: Point): void {
 }
 
 function zoomAt(point: Point, nextScale: number): void {
-  const stageCenter = stageCenterPoint();
-  if (stageCenter == null) return;
+  // A tap/button zoom is the same anchored transform as a pinch with both
+  // fingers at the same point, so reuse anchoredPan rather than duplicating it.
+  const nextPan = anchoredPan({
+    fromCenter: point,
+    toCenter: point,
+    fromPanX: panX.value,
+    fromPanY: panY.value,
+    fromScale: scale.value,
+    toScale: nextScale,
+  });
 
-  const clampedScale = clamp(nextScale, MIN_ZOOM, MAX_ZOOM);
-  const localX = (point.x - stageCenter.x - panX.value) / scale.value;
-  const localY = (point.y - stageCenter.y - panY.value) / scale.value;
-  const nextPanX = point.x - stageCenter.x - localX * clampedScale;
-  const nextPanY = point.y - stageCenter.y - localY * clampedScale;
-
-  applyTransform(clampedScale, nextPanX, nextPanY);
+  applyTransform(nextScale, nextPan.x, nextPan.y);
 }
 
 function applyTransform(nextScale: number, nextPanX: number, nextPanY: number): void {
@@ -251,11 +263,6 @@ function applyTransform(nextScale: number, nextPanX: number, nextPanY: number): 
   scale.value = clampedScale;
   panX.value = clampedPan.x;
   panY.value = clampedPan.y;
-  void nextTick(() => {
-    const reclampedPan = clampPan(panX.value, panY.value, scale.value);
-    panX.value = reclampedPan.x;
-    panY.value = reclampedPan.y;
-  });
 }
 
 function resetZoom(): void {
@@ -268,6 +275,15 @@ function resetZoom(): void {
   scale.value = MIN_ZOOM;
   panX.value = 0;
   panY.value = 0;
+}
+
+function beginDrag(clientX: number, clientY: number): void {
+  dragStart = {
+    point: { x: clientX, y: clientY },
+    panX: panX.value,
+    panY: panY.value,
+  };
+  isDragging.value = true;
 }
 
 function onImagePointerDown(event: PointerEvent): void {
@@ -294,14 +310,7 @@ function onImagePointerDown(event: PointerEvent): void {
     return;
   }
 
-  if (isZoomed.value) {
-    dragStart = {
-      point: { x: event.clientX, y: event.clientY },
-      panX: panX.value,
-      panY: panY.value,
-    };
-    isDragging.value = true;
-  }
+  if (isZoomed.value) beginDrag(event.clientX, event.clientY);
 }
 
 function onImagePointerMove(event: PointerEvent): void {
@@ -318,7 +327,10 @@ function onImagePointerMove(event: PointerEvent): void {
     return;
   }
 
-  if (dragStart != null && isZoomed.value) {
+  // Only pan once the pointer clears the slop threshold. Below it the gesture is
+  // a click (toggle zoom), so panning here would nudge the image and then snap
+  // it back when the trailing click resets the zoom.
+  if (dragStart != null && isZoomed.value && pointerMoved(activePointer)) {
     const nextPanX = dragStart.panX + event.clientX - dragStart.point.x;
     const nextPanY = dragStart.panY + event.clientY - dragStart.point.y;
     applyTransform(scale.value, nextPanX, nextPanY);
@@ -342,12 +354,7 @@ function onImagePointerEnd(event: PointerEvent): void {
 
   if (activePointers.size === 1 && isZoomed.value) {
     const remainingPointer = Array.from(activePointers.values())[0];
-    dragStart = {
-      point: { x: remainingPointer.x, y: remainingPointer.y },
-      panX: panX.value,
-      panY: panY.value,
-    };
-    isDragging.value = true;
+    beginDrag(remainingPointer.x, remainingPointer.y);
     return;
   }
 
@@ -391,6 +398,19 @@ function updatePinch(): void {
   });
 
   applyTransform(nextScale, nextPan.x, nextPan.y);
+
+  // When the pinch runs past the scale limits, re-anchor it to the clamped state
+  // so reversing direction responds immediately instead of having to retrace the
+  // out-of-range spread first.
+  if (nextScale > MAX_ZOOM || nextScale < MIN_ZOOM) {
+    pinchStart = {
+      center: nextCenter,
+      distance: nextDistance,
+      panX: panX.value,
+      panY: panY.value,
+      scale: scale.value,
+    };
+  }
 }
 
 function anchoredPan(args: {
@@ -415,7 +435,7 @@ function anchoredPan(args: {
 }
 
 function clampPan(nextPanX: number, nextPanY: number, nextScale: number): Point {
-  const stage = stageEl();
+  const stage = stageEl.value;
   const image = imageEl.value;
   if (stage == null || image == null || nextScale <= MIN_ZOOM) return { x: 0, y: 0 };
 
@@ -429,7 +449,7 @@ function clampPan(nextPanX: number, nextPanY: number, nextScale: number): Point 
 }
 
 function pointFromClient(clientX: number, clientY: number): Point | null {
-  const stage = stageEl();
+  const stage = stageEl.value;
   if (stage == null) return null;
 
   const rect = stage.getBoundingClientRect();
@@ -445,17 +465,13 @@ function pointFromClientPairCenter(first: Point, second: Point): Point {
 }
 
 function stageCenterPoint(): Point | null {
-  const stage = stageEl();
+  const stage = stageEl.value;
   if (stage == null) return null;
 
   return {
     x: stage.clientWidth / 2,
     y: stage.clientHeight / 2,
   };
-}
-
-function stageEl(): HTMLElement | null {
-  return imageEl.value?.parentElement ?? null;
 }
 
 function distanceBetween(first: Point, second: Point): number {
@@ -486,14 +502,17 @@ function clamp(value: number, min: number, max: number): number {
 
 onMounted(() => {
   overlayEl.value?.focus();
-  imageEl.value?.addEventListener('touchstart', preventNativeTouchGesture, { passive: false });
-  imageEl.value?.addEventListener('touchmove', preventNativeTouchGesture, { passive: false });
+  // Listen on the stage (not just the image) so two-finger gestures that start on
+  // the letterbox padding are also kept from triggering native page zoom; image
+  // touches bubble up to the same handler.
+  stageEl.value?.addEventListener('touchstart', preventNativeTouchGesture, { passive: false });
+  stageEl.value?.addEventListener('touchmove', preventNativeTouchGesture, { passive: false });
   startLoading(props.url);
 });
 
 onBeforeUnmount(() => {
-  imageEl.value?.removeEventListener('touchstart', preventNativeTouchGesture);
-  imageEl.value?.removeEventListener('touchmove', preventNativeTouchGesture);
+  stageEl.value?.removeEventListener('touchstart', preventNativeTouchGesture);
+  stageEl.value?.removeEventListener('touchmove', preventNativeTouchGesture);
   clearLoadTimer();
 });
 </script>
@@ -549,12 +568,13 @@ onBeforeUnmount(() => {
   font-size: var(--icon-lg);
   padding: var(--space-2) var(--space-4);
 }
-.control:hover {
+.control:hover:not(:disabled) {
   color: var(--accent);
 }
+/* Dimming comes from the global button:disabled { opacity } rule; only the
+   cursor needs restating to beat the scoped .control { cursor: pointer }. */
 .control:disabled {
-  color: rgba(255, 255, 255, 0.32);
-  cursor: default;
+  cursor: not-allowed;
 }
 
 .stage {
@@ -584,16 +604,18 @@ onBeforeUnmount(() => {
   user-select: none;
   -webkit-touch-callout: none;
   -webkit-user-drag: none;
-  will-change: transform;
-}
-.lightbox--zoomed .image {
-  max-width: 100vw;
 }
 .image--zoomed {
   cursor: zoom-out;
 }
 .image--dragging {
   cursor: grabbing;
+}
+/* Promote a compositor layer only while a zoom/pan is actually in play, rather
+   than holding one for every lightbox the user never zooms. */
+.image--zoomed,
+.image--pinching {
+  will-change: transform;
 }
 .image--dragging,
 .image--pinching {

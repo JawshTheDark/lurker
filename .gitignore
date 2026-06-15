@@ -16,8 +16,6 @@ data/
 vue_client/dist/
 coverage/
 
-.nvmrc
-
 # Editor
 .DS_Store
 .vscode/
