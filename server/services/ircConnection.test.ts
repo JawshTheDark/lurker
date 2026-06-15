@@ -319,7 +319,7 @@ describe('formatSocketCloseErrorMessage', () => {
         true,
       ),
     ).toBe(
-      `Connection failed (${where}): The server certificate is self-signed or expired. To connect anyway, uncheck "Only allow trusted certificates" in this network's settings and reconnect.`,
+      `Connection failed (${where}): The server certificate could not be verified. To connect anyway, uncheck "Only allow trusted certificates" in this network's settings and reconnect.`,
     );
   });
 
@@ -334,7 +334,37 @@ describe('formatSocketCloseErrorMessage', () => {
         true,
       ),
     ).toBe(
-      `Connection failed (${where}): The server certificate is self-signed or expired. To connect anyway, uncheck "Only allow trusted certificates" in this network's settings and reconnect.`,
+      `Connection failed (${where}): The server certificate could not be verified. To connect anyway, uncheck "Only allow trusted certificates" in this network's settings and reconnect.`,
+    );
+  });
+
+  it('rewrites untrusted chain certificate failures with the same user-friendly hint', () => {
+    expect(
+      formatSocketCloseErrorMessage(
+        {
+          code: 'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
+          message: 'unable to verify the first certificate',
+        },
+        where,
+        true,
+      ),
+    ).toBe(
+      `Connection failed (${where}): The server certificate could not be verified. To connect anyway, uncheck "Only allow trusted certificates" in this network's settings and reconnect.`,
+    );
+  });
+
+  it('rewrites hostname mismatch certificate failures with the same user-friendly hint', () => {
+    expect(
+      formatSocketCloseErrorMessage(
+        {
+          code: 'ERR_TLS_CERT_ALTNAME_INVALID',
+          message: "Hostname/IP does not match certificate's altnames",
+        },
+        where,
+        true,
+      ),
+    ).toBe(
+      `Connection failed (${where}): The server certificate could not be verified. To connect anyway, uncheck "Only allow trusted certificates" in this network's settings and reconnect.`,
     );
   });
 

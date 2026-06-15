@@ -121,7 +121,7 @@ export function createNetwork(userId: number, fields: NetworkFields): Network | 
       host,
       port ?? 6697,
       tls ? 1 : 0,
-      trusted_certificates === false ? 0 : 1,
+      trusted_certificates === undefined ? 1 : trusted_certificates ? 1 : 0,
       nick,
       username || null,
       realname || null,

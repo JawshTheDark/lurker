@@ -2130,19 +2130,25 @@ export function formatWhoisRaw(whois: Record<string, unknown> | null | undefined
   }
 }
 
-const TLS_SELF_SIGNED_OR_EXPIRED_CODES = new Set([
+const TLS_CERTIFICATE_VERIFY_HINT_CODES = new Set([
   'DEPTH_ZERO_SELF_SIGNED_CERT',
   'SELF_SIGNED_CERT_IN_CHAIN',
   'CERT_HAS_EXPIRED',
+  'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
+  'ERR_TLS_CERT_ALTNAME_INVALID',
 ]);
-const TLS_SELF_SIGNED_OR_EXPIRED_PATTERNS = [
+const TLS_CERTIFICATE_VERIFY_HINT_PATTERNS = [
   /self-signed certificate/i,
   /certificate has expired/i,
+  /certificate/i,
+  /unable to verify/i,
+  /hostname\/ip does not match certificate/i,
 ];
 
-function isSelfSignedOrExpiredTlsError(code: string, message: string): boolean {
-  if (TLS_SELF_SIGNED_OR_EXPIRED_CODES.has(code)) return true;
-  return TLS_SELF_SIGNED_OR_EXPIRED_PATTERNS.some((pattern) => pattern.test(message));
+function isCertificateVerificationTlsError(code: string, message: string): boolean {
+  if (TLS_CERTIFICATE_VERIFY_HINT_CODES.has(code)) return true;
+  if (code.includes('CERT') || code.startsWith('ERR_TLS_')) return true;
+  return TLS_CERTIFICATE_VERIFY_HINT_PATTERNS.some((pattern) => pattern.test(message));
 }
 
 export function formatSocketCloseErrorMessage(
@@ -2153,8 +2159,8 @@ export function formatSocketCloseErrorMessage(
   const code = typeof err.code === 'string' ? err.code : '';
   const message =
     typeof err.message === 'string' && err.message.length > 0 ? err.message : 'unknown error';
-  if (onlyTrustedCertificates && isSelfSignedOrExpiredTlsError(code, message)) {
-    return `Connection failed (${where}): The server certificate is self-signed or expired. To connect anyway, uncheck "Only allow trusted certificates" in this network's settings and reconnect.`;
+  if (onlyTrustedCertificates && isCertificateVerificationTlsError(code, message)) {
+    return `Connection failed (${where}): The server certificate could not be verified. To connect anyway, uncheck "Only allow trusted certificates" in this network's settings and reconnect.`;
   }
   const codePrefix = code ? `${code}: ` : '';
   return `Connection failed (${where}): ${codePrefix}${message}`;

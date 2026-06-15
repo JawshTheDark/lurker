@@ -205,5 +205,18 @@ describe('network secrets without an encryption key (self-host)', () => {
       const updated = updateNetwork(net.id, user.id, { trusted_certificates: true });
       expect(updated!.trusted_certificates).toBe(1);
     });
+
+    it('treats numeric 0 as disabled when creating', () => {
+      const user = createUser('trusted-num-zero');
+      const net = createNetwork(user.id, {
+        name: 'libera',
+        host: 'irc.libera.chat',
+        port: 6697,
+        tls: true,
+        trusted_certificates: 0,
+        nick: 'zero',
+      })!;
+      expect(net.trusted_certificates).toBe(0);
+    });
   });
 });

@@ -194,6 +194,9 @@ function insertTable(
     // Export carries network secrets as plaintext; re-encrypt them at rest when
     // importing onto a keyed (hosted) cell. No-op without a key.
     if (table === 'networks') {
+      // Pre-trust-toggle exports don't carry this NOT NULL column; default to
+      // secure behavior during import.
+      if (row.trusted_certificates === undefined) row.trusted_certificates = 1;
       for (const col of ENCRYPTED_NETWORK_COLUMNS) {
         if (typeof row[col] === 'string') row[col] = encryptSecret(row[col] as string);
       }

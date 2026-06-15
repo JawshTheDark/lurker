@@ -158,9 +158,7 @@ const form = reactive({
   host: props.network?.host ?? '',
   port: props.network?.port ?? 6697,
   tls: props.network ? !!props.network.tls : true,
-  trusted_certificates: netRaw
-    ? netRaw.trusted_certificates !== false && netRaw.trusted_certificates !== 0
-    : true,
+  trusted_certificates: netRaw ? netRaw.trusted_certificates !== false : true,
   nick: props.network?.nick ?? '',
   realname: (netRaw?.realname as string | undefined) ?? '',
   server_password: '',
@@ -177,11 +175,10 @@ const form = reactive({
 // forces the section open.
 const showAdvanced = ref(
   !!props.network &&
-    (!!netRaw?.has_password ||
-      !!netRaw?.connect_commands ||
-      netRaw?.autoconnect === false ||
-      netRaw?.trusted_certificates === false ||
-      netRaw?.trusted_certificates === 0),
+    (    !!netRaw?.has_password ||
+    !!netRaw?.connect_commands ||
+    netRaw?.autoconnect === false ||
+    netRaw?.trusted_certificates === false),
 );
 
 // Add-flow opens on the network picker (#169); editing jumps straight to the
