@@ -54,6 +54,7 @@ function migrate() {
       host TEXT NOT NULL,
       port INTEGER NOT NULL DEFAULT 6697,
       tls INTEGER NOT NULL DEFAULT 1,
+      trusted_certificates INTEGER NOT NULL DEFAULT 1,
       nick TEXT NOT NULL,
       username TEXT,
       realname TEXT,
@@ -567,6 +568,7 @@ ensureColumn('messages', 'extra', 'TEXT');
 ensureColumn('messages', 'userhost', 'TEXT');
 ensureColumn('networks', 'sasl_account', 'TEXT');
 ensureColumn('networks', 'sasl_password', 'TEXT');
+ensureColumn('networks', 'trusted_certificates', 'INTEGER NOT NULL DEFAULT 1');
 // Newline-delimited raw IRC commands fired after RPL_WELCOME, IRCCloud-style.
 // Supports `WAIT <seconds>` lines that pause before the next command.
 ensureColumn('networks', 'connect_commands', 'TEXT');

@@ -152,6 +152,12 @@ describe('POST /api/networks', () => {
       created.body.network.channels.find((c: { name: string }) => c.name === '#dev'),
     ).toBeTruthy();
   });
+
+  it('allows disabling trusted-cert verification on create', async () => {
+    const res = await makeNet(aliceAgent, { name: 'self-signed-ok', trusted_certificates: false });
+    expect(res.status).toBe(201);
+    expect(res.body.network.trusted_certificates).toBe(false);
+  });
 });
 
 describe('paused accounts are read-only', () => {
@@ -200,9 +206,10 @@ describe('PATCH /api/networks/:id', () => {
     const net = await makeNet(aliceAgent, { name: 'patchable' });
     const res = await aliceAgent
       .patch(`/api/networks/${net.body.network.id}`)
-      .send({ nick: 'newnick' });
+      .send({ nick: 'newnick', trusted_certificates: false });
     expect(res.status).toBe(200);
     expect(res.body.network.nick).toBe('newnick');
+    expect(res.body.network.trusted_certificates).toBe(false);
   });
 });
 

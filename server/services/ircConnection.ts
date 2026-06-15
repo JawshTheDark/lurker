@@ -751,9 +751,12 @@ export class IrcConnection {
       unregisterIdent(this.identdLocalPort);
       this.identdLocalPort = null;
       if (err && (err.message || err.code)) {
-        const code = err.code ? `${err.code}: ` : '';
         const where = `${this.network.host}:${this.network.port}`;
-        const text = `Connection failed (${where}): ${code}${err.message || 'unknown error'}`;
+        const text = formatSocketCloseErrorMessage(
+          err,
+          where,
+          this.network.trusted_certificates !== 0,
+        );
         this.publish({
           type: 'error',
           target: this.serverTarget(),
@@ -1895,6 +1898,7 @@ export class IrcConnection {
       host: this.network.host,
       port: this.network.port,
       tls: !!this.network.tls,
+      rejectUnauthorized: this.network.trusted_certificates !== 0,
       nick,
       username: this.network.username || nick,
       gecos: this.network.realname || nick,
@@ -2124,6 +2128,42 @@ export function formatWhoisRaw(whois: Record<string, unknown> | null | undefined
   } catch (_) {
     return `WHOIS ${nick}`;
   }
+}
+
+const TLS_CERTIFICATE_VERIFY_HINT_CODES = new Set([
+  'DEPTH_ZERO_SELF_SIGNED_CERT',
+  'SELF_SIGNED_CERT_IN_CHAIN',
+  'CERT_HAS_EXPIRED',
+  'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
+  'ERR_TLS_CERT_ALTNAME_INVALID',
+]);
+const TLS_CERTIFICATE_VERIFY_HINT_PATTERNS = [
+  /self-signed certificate/i,
+  /certificate has expired/i,
+  /certificate/i,
+  /unable to verify/i,
+  /hostname\/ip does not match certificate/i,
+];
+
+function isCertificateVerificationTlsError(code: string, message: string): boolean {
+  if (TLS_CERTIFICATE_VERIFY_HINT_CODES.has(code)) return true;
+  if (code.includes('CERT') || code.startsWith('ERR_TLS_')) return true;
+  return TLS_CERTIFICATE_VERIFY_HINT_PATTERNS.some((pattern) => pattern.test(message));
+}
+
+export function formatSocketCloseErrorMessage(
+  err: Record<string, unknown>,
+  where: string,
+  onlyTrustedCertificates: boolean,
+): string {
+  const code = typeof err.code === 'string' ? err.code : '';
+  const message =
+    typeof err.message === 'string' && err.message.length > 0 ? err.message : 'unknown error';
+  if (onlyTrustedCertificates && isCertificateVerificationTlsError(code, message)) {
+    return `Connection failed (${where}): The server certificate could not be verified. To connect anyway, uncheck "Only allow trusted certificates" in this network's settings and reconnect.`;
+  }
+  const codePrefix = code ? `${code}: ` : '';
+  return `Connection failed (${where}): ${codePrefix}${message}`;
 }
 
 // Convert a server-sourced numeric reply (parsed IrcMessage) into a single

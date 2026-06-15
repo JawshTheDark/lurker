@@ -31,6 +31,7 @@ function networkPayload(network: Network | undefined | null): Record<string, unk
   return {
     ...safe,
     tls: !!network.tls,
+    trusted_certificates: !!network.trusted_certificates,
     autoconnect: !!network.autoconnect,
     has_password: !!server_password,
     has_sasl_password: !!sasl_password,
@@ -49,6 +50,7 @@ router.post('/', (req: Request, res: Response) => {
     host,
     port,
     tls,
+    trusted_certificates,
     nick,
     username,
     realname,
@@ -69,6 +71,7 @@ router.post('/', (req: Request, res: Response) => {
     host,
     port,
     tls,
+    trusted_certificates,
     nick,
     username,
     realname,

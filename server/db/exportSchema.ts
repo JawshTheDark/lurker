@@ -96,6 +96,7 @@ export const EXPORT_TABLES = Object.freeze({
       'host',
       'port',
       'tls',
+      'trusted_certificates',
       'nick',
       'username',
       'realname',
