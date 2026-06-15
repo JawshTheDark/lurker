@@ -17,7 +17,9 @@
         <template v-else>
           <div v-for="(row, i) in rows" :key="row.key" class="target-row">
             <select v-model.number="row.networkId" class="net-select" aria-label="Network">
-              <option v-for="n in networks.networks" :key="n.id" :value="n.id">{{ n.name }}</option>
+              <option v-for="n in networks.networks" :key="n.id" :value="n.id">
+                {{ n.name }}
+              </option>
             </select>
             <input v-model="row.nick" type="text" class="nick-input" placeholder="nick" />
             <label class="primary-toggle" title="Open this DM when the friend is clicked">
@@ -126,7 +128,11 @@ const canSave = computed(
 );
 
 function addRow() {
-  const row = { key: nextKey(), networkId: networks.networks[0]?.id ?? 0, nick: '' };
+  const row = {
+    key: nextKey(),
+    networkId: networks.networks[0]?.id ?? 0,
+    nick: '',
+  };
   rows.push(row);
   if (!rows.some((r) => r.key === primaryKey.value)) primaryKey.value = row.key;
 }
@@ -140,7 +146,11 @@ function confirm() {
   const primaryRow = rows.find((r) => r.key === primaryKey.value);
   const tgts = rows
     .filter((r) => r.networkId && r.nick.trim())
-    .map((r) => ({ networkId: r.networkId, nick: r.nick.trim(), isPrimary: r === primaryRow }));
+    .map((r) => ({
+      networkId: r.networkId,
+      nick: r.nick.trim(),
+      isPrimary: r === primaryRow,
+    }));
   // If the chosen primary row was left blank it's filtered out above, so no
   // target carries the flag — the server then promotes the first to primary
   // (setContact's `wanted ?? cleaned[0]`), so we don't re-assert it here.
@@ -168,6 +178,12 @@ function onClose() {
   display: flex;
   flex-direction: column;
   gap: var(--space-6);
+  /* A friend can have many watch nicks; on the full-height mobile sheet (and a
+     short desktop window) let the form scroll inside the card instead of
+     overflowing it and pushing Save out of reach. */
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
 }
 .field {
   display: flex;
@@ -261,6 +277,7 @@ input[type='text']:disabled {
 }
 .actions {
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
   gap: var(--space-4);
   margin-top: var(--space-2);
@@ -299,5 +316,37 @@ input[type='text']:disabled {
 }
 .btn-secondary.danger:hover {
   background: color-mix(in srgb, var(--bad) 15%, transparent);
+}
+
+/* The four target controls don't fit one line on a phone (the network select's
+   8em min + the "primary" label + the nick input + the remove button overflow
+   the sheet). Lay them out as a 2x2 grid: network + nick on top, the primary
+   selector and remove button beneath. min-width:0 lets the select shrink into
+   its track instead of forcing a wider-than-screen row. */
+@media (max-width: 768px) {
+  .target-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-template-areas:
+      'net  nick'
+      'prim remove';
+    align-items: center;
+    column-gap: var(--space-4);
+    row-gap: var(--space-3);
+  }
+  .net-select {
+    grid-area: net;
+    min-width: 0;
+  }
+  .nick-input {
+    grid-area: nick;
+  }
+  .primary-toggle {
+    grid-area: prim;
+  }
+  .row-remove {
+    grid-area: remove;
+    justify-self: end;
+  }
 }
 </style>
