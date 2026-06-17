@@ -61,6 +61,11 @@ export interface BufferMember {
 }
 
 export interface TypingEntry {
+  // Display nick as it arrived on the wire. The map that holds these entries is
+  // keyed by the *lowercased* nick (so a peer who sends case-variant tags, or
+  // runs a case-only /nick, occupies one entry instead of stranding a ghost),
+  // so the original case has to ride along here for rendering.
+  nick: string;
   state: string;
   expiresAt: number;
   userhost: string | null;
@@ -276,9 +281,10 @@ export const useBuffersStore = defineStore('buffers', {
           }
         }
       }
-      if (event.nick && buf.typing[event.nick]) {
-        clearTypingTimer(event.networkId, event.target, event.nick);
-        delete buf.typing[event.nick];
+      const speakerKey = event.nick?.toLowerCase();
+      if (speakerKey && buf.typing[speakerKey]) {
+        clearTypingTimer(event.networkId, event.target, event.nick!);
+        delete buf.typing[speakerKey];
       }
       return true;
     },
@@ -623,6 +629,16 @@ export const useBuffersStore = defineStore('buffers', {
       buf.speakers = next;
     },
     drop(networkId: number | string, target: string) {
+      // Cancel any pending typing-expiry timers for this buffer before it (and
+      // its typing entries) vanishes — otherwise a timer armed while a peer was
+      // typing sits in the module-level map until it fires on its own.
+      const prefix = `${networkId}::${target}::`;
+      for (const [k, id] of typingTimers) {
+        if (k.startsWith(prefix)) {
+          clearTimeout(id);
+          typingTimers.delete(k);
+        }
+      }
       delete this.buffers[key(networkId, target)];
     },
     // Called from useSessionReset before $reset(). The state reset will wipe
@@ -831,8 +847,8 @@ export const useBuffersStore = defineStore('buffers', {
         // First-load fetch. The buffer shell exists but has no messages —
         // either it's brand new (profile-modal "Send DM" to a nick we've
         // never DM'd before) or it was pre-created by a side channel
-        // (presence/MONITOR events touch ensureBuffer without
-        // seeding history) and the initial backlog snapshot only covers
+        // (the channel-joined handler calls ensure() before any backlog
+        // arrives) and the initial backlog snapshot only covers
         // buffers that were already open at socket-connect. Push-notification
         // deep-links land here too, since isOpen() is satisfied by any shell
         // in the store regardless of message contents. Kick a latest fetch
@@ -888,19 +904,25 @@ export const useBuffersStore = defineStore('buffers', {
       clearTypingTimer(networkId, tkTarget, nick);
       if (!buf) return;
 
-      if (state === 'done') {
-        delete buf.typing[nick];
+      // Canonical (lowercased) map key so case-variant tags from one peer share
+      // a single entry; the display nick rides along in the value (see
+      // TypingEntry). Matches the lowercasing typingKey() already applies.
+      const canon = nick.toLowerCase();
+      const duration = TYPING_DURATIONS[state];
+      if (!duration) {
+        // 'done', or any unrecognized +typing value a client might send: stop
+        // showing this peer as typing. Returning without this delete (the old
+        // behavior for unknown states) stranded the prior entry with no live
+        // timer to expire it — a permanently stuck indicator.
+        delete buf.typing[canon];
         return;
       }
-
-      const duration = TYPING_DURATIONS[state];
-      if (!duration) return;
-      buf.typing[nick] = { state, expiresAt: Date.now() + duration, userhost };
+      buf.typing[canon] = { nick, state, expiresAt: Date.now() + duration, userhost };
 
       const timer = setTimeout(() => {
         const b = this.buffers[key(networkId, tkTarget)];
-        if (b && b.typing[nick]) {
-          delete b.typing[nick];
+        if (b && b.typing[canon]) {
+          delete b.typing[canon];
         }
         typingTimers.delete(typingKey(networkId, tkTarget, nick));
       }, duration);
