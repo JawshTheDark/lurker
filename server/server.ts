@@ -23,6 +23,7 @@ import {
   startExportSweeper,
   shutdownExportJobs,
 } from './services/exportJobs.js';
+import { startIgnoreSweeper, stopIgnoreSweeper } from './services/ignoreSweeper.js';
 
 const PORT = Number(process.env.PORT || 8010);
 const EDITION = getEdition();
@@ -79,6 +80,9 @@ ircManager.initAll();
 recoverInterruptedExports();
 startExportSweeper();
 
+// Prune expired -time ignore rules on an interval (#301).
+startIgnoreSweeper();
+
 // In node edition, start reporting to the orchestrator (register on boot +
 // heartbeat on an interval). No-op in standalone or when unconfigured.
 startOrchestratorClient();
@@ -99,6 +103,7 @@ function shutdown(signal: string): void {
   stopModerationReporter();
   stopIdentd();
   shutdownExportJobs();
+  stopIgnoreSweeper();
   ircManager.shutdown();
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(1), 5000).unref();

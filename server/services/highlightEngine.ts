@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Brad Root
 // SPDX-License-Identifier: MPL-2.0
 
-import { createUrlRegex } from '../../shared/urlPattern.js';
+import { buildTextTest, stripUrls, type TextKind } from './textMatch.js';
 
 const ELIGIBLE_TYPES = new Set(['message', 'action']);
 
@@ -21,39 +21,14 @@ export interface CompiledRule {
 interface MatchableEvent {
   type: string;
   self?: boolean;
-  text?: string;
+  text?: string | null;
 }
 
-function escapeRegex(str: string): string {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-function globToRegexSource(pattern: string): string {
-  let out = '';
-  for (const ch of pattern) {
-    if (ch === '*') out += '.*';
-    else if (ch === '?') out += '.';
-    else out += escapeRegex(ch);
-  }
-  return out;
-}
-
+// Highlight rules use the 'plain' | 'glob' | 'regex' kinds (no 'substr'); an
+// unknown kind falls through to whole-word 'plain', matching prior behavior.
 function buildTest(rule: HighlightRule): ((text: string) => boolean) | null {
-  const flags = rule.case_sensitive ? '' : 'i';
-  let source: string;
-  if (rule.kind === 'regex') {
-    source = rule.pattern;
-  } else if (rule.kind === 'glob') {
-    source = `(?:^|\\W)(?:${globToRegexSource(rule.pattern)})(?=\\W|$)`;
-  } else {
-    source = `(?:^|\\W)(?:${escapeRegex(rule.pattern)})(?=\\W|$)`;
-  }
-  try {
-    const re = new RegExp(source, flags);
-    return (text: string) => re.test(text);
-  } catch {
-    return null;
-  }
+  const kind: TextKind = rule.kind === 'regex' || rule.kind === 'glob' ? rule.kind : 'plain';
+  return buildTextTest(rule.pattern, kind, rule.case_sensitive);
 }
 
 export function compileRules(rules: HighlightRule[]): CompiledRule[] {
@@ -66,16 +41,6 @@ export function compileRules(rules: HighlightRule[]): CompiledRule[] {
     compiled.push({ id: rule.id, test });
   }
   return compiled;
-}
-
-// Blank out URLs before matching so a highlight word inside a link — e.g. a
-// nick that happens to appear in `https://example.com/nick` — doesn't trigger
-// a highlight. The URL is replaced with a space (not removed) so the words on
-// either side can't fuse into a false match. Uses the same URL definition the
-// client uses to auto-link, so "renders as a link" and "ignored for
-// highlights" stay in lockstep.
-function stripUrls(text: string): string {
-  return text.replace(createUrlRegex(), ' ');
 }
 
 export function matchEvent(

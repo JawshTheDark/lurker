@@ -16,8 +16,9 @@ import highlightRulesService from './highlightRulesService.js';
 import draftsService from './draftsService.js';
 import * as systemLog from './systemLog.js';
 import * as pushService from './pushService.js';
-import { matchesAny as matchesIgnoreMask } from './maskMatch.js';
-import { listMasks as listIgnoredMasks } from '../db/ignoredMasks.js';
+import { evaluateIgnores } from './ignoreMatch.js';
+import ignoreRulesService from './ignoreRulesService.js';
+import { parseIgnoreInput, maskToRuleInput } from './ignoreRuleInput.js';
 import { findSession } from '../db/sessions.js';
 import { findUserById, touchUserLastSeen } from '../db/users.js';
 import {
@@ -712,21 +713,34 @@ export function attachWsHub(httpServer: HttpServer, sessionSecret: string) {
     return false;
   }
 
+  // True when the user's ignore rules would hide this event (a hide-level match,
+  // not a NOHIGHLIGHT-only one). Shared by the push gate and the closed-DM reopen
+  // guard. Runs off the cached compiled rule set — no DB scan per event.
+  function senderHidden(userId: number, decorated: DecoratedEvent): boolean {
+    if (!decorated.nick) return false;
+    const compiled = ignoreRulesService.getCompiled(userId, decorated.networkId);
+    if (!compiled.length) return false;
+    return evaluateIgnores(compiled, {
+      nick: decorated.nick,
+      userhost: decorated.userhost ?? null,
+      target: decorated.target,
+      text: decorated.text ?? '',
+      type: decorated.type,
+      isDm: !!decorated.dm,
+    }).hide;
+  }
+
   function maybePush(userId: number, decorated: DecoratedEvent): void {
     if (!decorated || !decorated.notify) return;
     if (decorated.self) return;
     if (userHasVisibleClient(userId)) return;
-    // Suppress push for senders the user has ignored. This is the one piece
-    // of the ignore feature that has to live server-side: push fires while
-    // no client is open, so a client-side filter can't possibly intercept.
-    // The unread badge and the render filter remain reactive client-side,
-    // so /unignore still reveals; only push delivery is frozen here.
-    if (decorated.nick) {
-      const masks = listIgnoredMasks({ userId, networkId: decorated.networkId });
-      if (masks.length && matchesIgnoreMask(masks, decorated.nick, decorated.userhost)) {
-        return;
-      }
-    }
+    // Suppress push for events the user's ignore rules would hide. This is the
+    // one piece of the ignore feature that has to live server-side: push fires
+    // while no client is open, so a client-side filter can't intercept. The
+    // unread badge and render filter stay reactive client-side, so /unignore
+    // still reveals; only push delivery is frozen here. A NOHIGHLIGHT rule does
+    // NOT freeze push — the message is still visible, it just doesn't highlight.
+    if (senderHidden(userId, decorated)) return;
     // Signal kind in priority order: DM beats matched beats always_notify.
     // The `kind` doubles as the settings-key namespace, so picking a single
     // priority winner here means a DM that also matched a rule still
@@ -797,16 +811,7 @@ export function attachWsHub(httpServer: HttpServer, sessionSecret: string) {
       // ignored user can force the buffer back into the sidebar simply by
       // sending — a soft harassment vector the client-side render filter
       // doesn't close, since the reopen happens server-side.
-      let senderIgnored = false;
-      if (reopens && decorated.nick) {
-        const masks = listIgnoredMasks({
-          userId: eventUserId,
-          networkId: decorated.networkId,
-        });
-        if (masks.length && matchesIgnoreMask(masks, decorated.nick, decorated.userhost)) {
-          senderIgnored = true;
-        }
-      }
+      const senderIgnored = reopens && senderHidden(eventUserId, decorated);
       if (!reopens || senderIgnored) return;
       reopenBuffer(eventUserId, decorated.networkId, target);
       fanOut(eventUserId, {
@@ -1661,9 +1666,21 @@ export function attachWsHub(httpServer: HttpServer, sessionSecret: string) {
       }
       case 'add-ignore': {
         const networkId = Number(msg.networkId);
-        const mask = typeof msg.mask === 'string' ? msg.mask.trim() : '';
-        if (!networkId || !mask) break;
-        ircManager.addIgnore(userId, networkId, mask);
+        if (!networkId) break;
+        // New clients send a full `rule` object; the quick-ignore modal and
+        // older clients send a bare `mask` string (an ALL-level rule).
+        const input =
+          msg.rule !== undefined
+            ? parseIgnoreInput(msg.rule)
+            : typeof msg.mask === 'string'
+              ? maskToRuleInput(msg.mask)
+              : null;
+        if (!input) break;
+        // The client parser pre-validates; a server-side rejection (bad regex /
+        // levels) just doesn't add and skips the fan-out. add() invalidates the
+        // compiled cache so the insert path sees the new rule immediately.
+        const result = ircManager.addIgnore(userId, networkId, input);
+        if (!result.ok) break;
         fanOut(userId, {
           kind: 'ignore-list-updated',
           networkId,
@@ -1673,9 +1690,11 @@ export function attachWsHub(httpServer: HttpServer, sessionSecret: string) {
       }
       case 'remove-ignore': {
         const networkId = Number(msg.networkId);
-        const mask = typeof msg.mask === 'string' ? msg.mask.trim() : '';
-        if (!networkId || !mask) break;
-        ircManager.removeIgnore(userId, networkId, mask);
+        if (!networkId) break;
+        const id = typeof msg.id === 'number' ? msg.id : undefined;
+        const mask = typeof msg.mask === 'string' && msg.mask.trim() ? msg.mask.trim() : undefined;
+        if (id === undefined && mask === undefined) break;
+        ircManager.removeIgnore(userId, networkId, { id, mask });
         fanOut(userId, {
           kind: 'ignore-list-updated',
           networkId,

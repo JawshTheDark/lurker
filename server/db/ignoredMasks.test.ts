@@ -5,6 +5,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import type { IgnoreRuleInput } from './ignoredMasks.js';
 
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lurker-test-ignored-'));
 process.env.DATABASE_PATH = path.join(tmpDir, 'test.db');
@@ -15,6 +16,19 @@ let mod: typeof import('./ignoredMasks.js');
 let user: ReturnType<typeof import('./users.js').createUser>;
 let net1: ReturnType<typeof import('./networks.js').createNetwork>;
 let net2: ReturnType<typeof import('./networks.js').createNetwork>;
+
+function rule(overrides: Partial<IgnoreRuleInput> = {}): IgnoreRuleInput {
+  return {
+    mask: 'bozo',
+    channels: null,
+    pattern: null,
+    patternKind: 'substr',
+    levels: ['ALL'],
+    isExcept: false,
+    expiresAt: null,
+    ...overrides,
+  };
+}
 
 beforeAll(async () => {
   ({ createUser } = await import('./users.js'));
@@ -27,30 +41,157 @@ beforeAll(async () => {
 
 afterAll(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
 
-describe('addMask / removeMask / listMasks', () => {
-  it('add → list round-trips, idempotent (case-insensitive uniqueness)', () => {
-    expect(mod.addMask({ userId: user.id, networkId: net1!.id, mask: 'bozo' })).toBe(true);
-    // Case-insensitive uniqueness — second add is a no-op.
-    expect(mod.addMask({ userId: user.id, networkId: net1!.id, mask: 'Bozo' })).toBe(false);
-    const list = mod.listMasks({ userId: user.id, networkId: net1!.id });
-    expect(list.map((r) => r.mask)).toEqual(['bozo']);
+describe('addRule / listRules', () => {
+  it('round-trips every field, parsing levels/channels CSV back to arrays', () => {
+    const { id, created } = mod.addRule({
+      userId: user.id,
+      networkId: net1!.id,
+      rule: rule({
+        mask: null,
+        channels: ['#chan', '#other'],
+        pattern: '(word1|word2)',
+        patternKind: 'regex',
+        levels: ['PUBLIC', 'NOHIGHLIGHT'],
+        isExcept: true,
+        expiresAt: '2099-01-01T00:00:00.000Z',
+      }),
+    });
+    expect(created).toBe(true);
+    const list = mod.listRules({ userId: user.id, networkId: net1!.id });
+    const got = list.find((r) => r.id === id)!;
+    expect(got).toMatchObject({
+      mask: null,
+      channels: ['#chan', '#other'],
+      pattern: '(word1|word2)',
+      patternKind: 'regex',
+      levels: ['PUBLIC', 'NOHIGHLIGHT'],
+      isExcept: true,
+      expiresAt: '2099-01-01T00:00:00.000Z',
+    });
   });
 
-  it('removeMask is case-insensitive too', () => {
-    expect(mod.removeMask({ userId: user.id, networkId: net1!.id, mask: 'BOZO' })).toBe(true);
-    expect(mod.listMasks({ userId: user.id, networkId: net1!.id })).toEqual([]);
+  it('dedupes an identical rule (returns the existing id, created:false)', () => {
+    const first = mod.addRule({
+      userId: user.id,
+      networkId: net2!.id,
+      rule: rule({ mask: 'dup' }),
+    });
+    expect(first.created).toBe(true);
+    const second = mod.addRule({
+      userId: user.id,
+      networkId: net2!.id,
+      rule: rule({ mask: 'dup' }),
+    });
+    expect(second.created).toBe(false);
+    expect(second.id).toBe(first.id);
   });
 
-  it('removeMask returns false when nothing matched', () => {
-    expect(mod.removeMask({ userId: user.id, networkId: net1!.id, mask: 'ghost' })).toBe(false);
+  it('lets the same mask coexist with different levels (no UNIQUE constraint)', () => {
+    const a = mod.addRule({
+      userId: user.id,
+      networkId: net2!.id,
+      rule: rule({ mask: 'coex', levels: ['JOINS'] }),
+    });
+    const b = mod.addRule({
+      userId: user.id,
+      networkId: net2!.id,
+      rule: rule({ mask: 'coex', levels: ['NOHIGHLIGHT'] }),
+    });
+    expect(a.created && b.created).toBe(true);
+    expect(a.id).not.toBe(b.id);
+    const coex = mod
+      .listRules({ userId: user.id, networkId: net2!.id })
+      .filter((r) => r.mask === 'coex');
+    expect(coex).toHaveLength(2);
   });
 });
 
-describe('listAllForUser', () => {
-  it('returns masks across networks for one user', () => {
-    mod.addMask({ userId: user.id, networkId: net1!.id, mask: '*!*@spam.example' });
-    mod.addMask({ userId: user.id, networkId: net2!.id, mask: 'trolla' });
-    const all = mod.listAllForUser(user.id);
+describe('removeRuleById / removeRuleByMask', () => {
+  it('removes a single rule by id', () => {
+    const { id } = mod.addRule({
+      userId: user.id,
+      networkId: net1!.id,
+      rule: rule({ mask: 'byid' }),
+    });
+    expect(mod.removeRuleById({ userId: user.id, networkId: net1!.id, id })).toBe(true);
+    expect(mod.removeRuleById({ userId: user.id, networkId: net1!.id, id })).toBe(false);
+  });
+
+  it('removes every rule matching a mask (case-insensitive, possibly multiple)', () => {
+    mod.addRule({
+      userId: user.id,
+      networkId: net1!.id,
+      rule: rule({ mask: 'multi', levels: ['JOINS'] }),
+    });
+    mod.addRule({
+      userId: user.id,
+      networkId: net1!.id,
+      rule: rule({ mask: 'multi', levels: ['PARTS'] }),
+    });
+    const removed = mod.removeRuleByMask({ userId: user.id, networkId: net1!.id, mask: 'MULTI' });
+    expect(removed).toBe(2);
+  });
+});
+
+describe('listAllRulesForUser', () => {
+  it('groups rules across networks with networkId attached', () => {
+    const u = createUser('ig-bob');
+    const n1 = createNetwork(u.id, { name: 'a', host: 'h', port: 6697, tls: true, nick: 'b' })!;
+    const n2 = createNetwork(u.id, { name: 'b', host: 'h2', port: 6697, tls: true, nick: 'b' })!;
+    mod.addRule({ userId: u.id, networkId: n1.id, rule: rule({ mask: '*!*@spam.example' }) });
+    mod.addRule({ userId: u.id, networkId: n2.id, rule: rule({ mask: 'trolla' }) });
+    const all = mod.listAllRulesForUser(u.id);
     expect(all.map((r) => r.mask).toSorted()).toEqual(['*!*@spam.example', 'trolla']);
+    expect(new Set(all.map((r) => r.networkId))).toEqual(new Set([n1.id, n2.id]));
+  });
+});
+
+describe('addRule expiry refresh', () => {
+  it('re-adding an otherwise-identical rule refreshes its expiry in place', () => {
+    const first = mod.addRule({
+      userId: user.id,
+      networkId: net1!.id,
+      rule: rule({ mask: 'timed', expiresAt: '2099-01-01T00:00:00.000Z' }),
+    });
+    expect(first.created).toBe(true);
+    const second = mod.addRule({
+      userId: user.id,
+      networkId: net1!.id,
+      rule: rule({ mask: 'timed', expiresAt: '2100-06-01T00:00:00.000Z' }),
+    });
+    expect(second).toEqual({ id: first.id, created: false });
+    const got = mod
+      .listRules({ userId: user.id, networkId: net1!.id })
+      .find((r) => r.id === first.id)!;
+    expect(got.expiresAt).toBe('2100-06-01T00:00:00.000Z');
+  });
+});
+
+describe('sweepExpired', () => {
+  it('sweeps an ISO expiry that has just passed (same-day format), keeps future + unexpiring', () => {
+    const u = createUser('ig-carol');
+    const n = createNetwork(u.id, { name: 'a', host: 'h', port: 6697, tls: true, nick: 'c' })!;
+    // A few seconds ago, today, in ISO form — this is the case the old
+    // lexicographic `expires_at <= datetime('now')` compare got wrong.
+    const justExpired = new Date(Date.now() - 60_000).toISOString();
+    const future = new Date(Date.now() + 3_600_000).toISOString();
+    mod.addRule({
+      userId: u.id,
+      networkId: n.id,
+      rule: rule({ mask: 'gone', expiresAt: justExpired }),
+    });
+    mod.addRule({
+      userId: u.id,
+      networkId: n.id,
+      rule: rule({ mask: 'timed', expiresAt: future }),
+    });
+    mod.addRule({ userId: u.id, networkId: n.id, rule: rule({ mask: 'stays' }) });
+    const affected = mod.sweepExpired();
+    expect(affected).toContainEqual({ userId: u.id, networkId: n.id });
+    const remaining = mod
+      .listRules({ userId: u.id, networkId: n.id })
+      .map((r) => r.mask)
+      .toSorted();
+    expect(remaining).toEqual(['stays', 'timed']);
   });
 });

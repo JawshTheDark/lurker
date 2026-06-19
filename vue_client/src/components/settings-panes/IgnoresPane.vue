@@ -7,10 +7,10 @@
   <section id="ignores" class="settings-pane">
     <h2>ignores</h2>
     <p class="section-desc">
-      Plain nicks match the sender's nick on that network. Hostmasks (<code>nick!user@host</code>,
-      with <code>*</code> wildcards) match against the IRC user@host so they survive nick changes.
-      Messages, joins, parts, and quits from any matching identity are hidden in every client;
-      remove an entry to reveal the history again.
+      Ignore rules match by nick/hostmask (<code>nick!user@host</code> with
+      <code>*</code> wildcards), and can be scoped to channels, message text, and event types
+      (joins, public, notices, …). The full options live in the <code>/ignore</code> command; this
+      list shows what's active and lets you remove entries to reveal the history again.
     </p>
     <p v-if="!ignoreGroups.length" class="muted small">
       No ignores yet. Right-click a nick in the member list, or type
@@ -19,9 +19,10 @@
     <template v-for="group in ignoreGroups" :key="group.networkId">
       <h3 class="subhead">{{ group.networkName }}</h3>
       <ul class="device-list">
-        <li v-for="entry in group.masks" :key="entry.mask" class="device">
-          <span class="ua">{{ entry.mask }}</span>
-          <button class="link danger" @click="onIgnoreRemove(group.networkId, entry.mask)">
+        <li v-for="entry in group.masks" :key="entry.id" class="device">
+          <span class="ua">{{ entry.mask ?? '*' }}</span>
+          <span class="muted small ignore-detail">{{ describe(entry) }}</span>
+          <button class="link danger" @click="onIgnoreRemove(group.networkId, entry.id)">
             remove
           </button>
         </li>
@@ -58,17 +59,25 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue';
 import { useNetworksStore } from '../../stores/networks.js';
-import { useIgnoresStore } from '../../stores/ignores.js';
-
-interface IgnoreMask {
-  mask: string;
-  createdAt: string;
-}
+import { useIgnoresStore, type IgnoreEntryWithNetwork } from '../../stores/ignores.js';
 
 interface IgnoreGroup {
   networkId: number;
   networkName: string;
-  masks: IgnoreMask[];
+  masks: IgnoreEntryWithNetwork[];
+}
+
+// One-line summary of a rule's non-mask dimensions for the settings list.
+function describe(entry: IgnoreEntryWithNetwork): string {
+  const parts: string[] = [];
+  if (entry.levels?.length) parts.push(entry.levels.join(','));
+  if (entry.channels?.length) parts.push(entry.channels.join(','));
+  if (entry.pattern) {
+    parts.push(entry.patternKind === 'regex' ? `/${entry.pattern}/` : `"${entry.pattern}"`);
+  }
+  if (entry.isExcept) parts.push('except');
+  if (entry.expiresAt) parts.push(`expires ${entry.expiresAt}`);
+  return parts.join('  ');
 }
 
 interface NetworkOption {
@@ -84,11 +93,11 @@ const ignoresStore = useIgnoresStore();
 // only networks that actually have entries (no empty groups); the add form
 // lets users pick any network they own.
 const ignoreGroups = computed<IgnoreGroup[]>(() => {
-  const byNet = new Map<number, IgnoreMask[]>();
+  const byNet = new Map<number, IgnoreEntryWithNetwork[]>();
   for (const entry of ignoresStore.allEntries) {
     const list = byNet.get(entry.networkId);
-    if (list) list.push({ mask: entry.mask, createdAt: entry.createdAt });
-    else byNet.set(entry.networkId, [{ mask: entry.mask, createdAt: entry.createdAt }]);
+    if (list) list.push(entry);
+    else byNet.set(entry.networkId, [entry]);
   }
   const groups: IgnoreGroup[] = [];
   for (const [networkId, masks] of byNet) {
@@ -130,8 +139,8 @@ function onIgnoreAdd() {
   newIgnoreMask.value = '';
 }
 
-function onIgnoreRemove(networkId: number, mask: string) {
-  ignoresStore.removeMask(networkId, mask);
+function onIgnoreRemove(networkId: number, id: number) {
+  ignoresStore.removeRule(networkId, { id });
 }
 </script>
 
@@ -146,5 +155,8 @@ function onIgnoreRemove(networkId: number, mask: string) {
 .rule-add input[type='text'] {
   flex: 1;
   min-width: 200px;
+}
+.ignore-detail {
+  margin-left: var(--space-3);
 }
 </style>

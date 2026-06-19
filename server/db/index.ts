@@ -357,18 +357,27 @@ function migrate() {
     );
     CREATE INDEX IF NOT EXISTS idx_user_drafts_user ON user_drafts(user_id);
 
-    -- Per-(user, network) ignore list. A mask is either a plain nick (no '!'
-    -- or '@', matched case-insensitively as nick equality) or a hostmask of
-    -- the form nick!user@host with '*' wildcards. The unique constraint
-    -- prevents adding the same mask twice on the same network; collation is
-    -- NOCASE so /ignore Bozo and /ignore bozo are the same entry.
+    -- Per-(user, network) ignore list, irssi-style (issue #301). A rule AND-s
+    -- optional dimensions: mask (NULL/'*' = anyone; a bare nick globs the nick,
+    -- a nick!user@host form globs the hostmask), channels (NULL = all buffers;
+    -- else CSV of channel globs), pattern (NULL = any text; matched per
+    -- pattern_kind 'substr'|'full'|'regex'), and levels (CSV of event-type
+    -- tokens, e.g. 'ALL' or 'JOINS,PARTS,QUITS' or 'PUBLIC,NOHIGHLIGHT'). is_except
+    -- makes a longest-mask-wins whitelist rule; expires_at auto-removes it.
+    -- mask collates NOCASE so /ignore Bozo and /ignore bozo fold together. No
+    -- UNIQUE constraint: the same mask may carry different levels/channels.
     CREATE TABLE IF NOT EXISTS ignored_masks (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       user_id INTEGER NOT NULL,
       network_id INTEGER NOT NULL,
-      mask TEXT NOT NULL COLLATE NOCASE,
+      mask TEXT COLLATE NOCASE,
+      channels TEXT,
+      pattern TEXT,
+      pattern_kind TEXT NOT NULL DEFAULT 'substr',
+      levels TEXT NOT NULL DEFAULT 'ALL',
+      is_except INTEGER NOT NULL DEFAULT 0,
+      expires_at TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      UNIQUE (user_id, network_id, mask),
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
       FOREIGN KEY (network_id) REFERENCES networks(id) ON DELETE CASCADE
     );
@@ -647,7 +656,7 @@ ensureColumn('upload_history', 'removed', 'INTEGER NOT NULL DEFAULT 0');
 // Schema versioning lets us retire one-shot recovery blocks once every
 // production DB has run through them. Bump SCHEMA_VERSION when adding a new
 // recovery block, and delete blocks for versions far enough in the past.
-const SCHEMA_VERSION = 9;
+const SCHEMA_VERSION = 10;
 const schemaVersionRow = db
   .prepare(`SELECT value FROM app_meta WHERE key = 'schema_version'`)
   .get() as { value: string } | undefined;
@@ -957,6 +966,60 @@ if (schemaVersion < 9) {
   foldBufferCase(db, { scope: 'all', report: false });
 }
 
+if (schemaVersion < 10) {
+  // Issue #301: overhaul the ignore system to irssi's model. The old
+  // ignored_masks held a single NOT NULL `mask` under a
+  // UNIQUE(user_id,network_id,mask) constraint. The new shape adds optional
+  // channels/pattern/pattern_kind/levels/is_except/expires_at, makes mask
+  // nullable (NULL = anyone), and drops the UNIQUE so one mask can carry
+  // different levels/channels. Changing a constraint requires a table rebuild.
+  // Every legacy row becomes an ALL-level, no-pattern, all-channel rule — i.e.
+  // "hide everything from this mask", exactly what it meant before. FKs are
+  // toggled off during the swap so the cascade doesn't fire on DROP; id and
+  // created_at are preserved. Fresh installs already have the new shape (the
+  // CREATE TABLE in migrate() ran first) and this copies zero rows.
+  const hasLegacyShape =
+    columnExists('ignored_masks', 'mask') && !columnExists('ignored_masks', 'levels');
+  if (hasLegacyShape) {
+    const rebuild = db.transaction(() => {
+      db.exec(`DROP INDEX IF EXISTS idx_ignored_masks_user_net`);
+      db.exec(`
+        CREATE TABLE ignored_masks_new (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id INTEGER NOT NULL,
+          network_id INTEGER NOT NULL,
+          mask TEXT COLLATE NOCASE,
+          channels TEXT,
+          pattern TEXT,
+          pattern_kind TEXT NOT NULL DEFAULT 'substr',
+          levels TEXT NOT NULL DEFAULT 'ALL',
+          is_except INTEGER NOT NULL DEFAULT 0,
+          expires_at TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+          FOREIGN KEY (network_id) REFERENCES networks(id) ON DELETE CASCADE
+        )
+      `);
+      db.exec(`
+        INSERT INTO ignored_masks_new
+          (id, user_id, network_id, mask, channels, pattern, pattern_kind, levels, is_except, expires_at, created_at)
+        SELECT
+          id, user_id, network_id, mask, NULL, NULL, 'substr', 'ALL', 0, NULL, created_at
+        FROM ignored_masks
+      `);
+      db.exec(`DROP TABLE ignored_masks`);
+      db.exec(`ALTER TABLE ignored_masks_new RENAME TO ignored_masks`);
+    });
+    const prevFk = db.pragma('foreign_keys', { simple: true });
+    db.pragma('foreign_keys = OFF');
+    try {
+      rebuild();
+    } finally {
+      db.pragma(`foreign_keys = ${prevFk ? 'ON' : 'OFF'}`);
+    }
+  }
+}
+
 if (schemaVersion < SCHEMA_VERSION) {
   db.prepare(
     `INSERT INTO app_meta (key, value) VALUES ('schema_version', ?)
@@ -970,5 +1033,9 @@ db.exec(`CREATE INDEX IF NOT EXISTS idx_highlight_rules_user ON highlight_rules(
 db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_auto_rule_unique
          ON highlight_rules(user_id, pattern, case_sensitive)
          WHERE auto_managed = 1`);
+// The schemaVersion < 10 rebuild drops this; recreate for both fresh and
+// rebuilt paths (migrate() ran before the rebuild, so its CREATE is stale here).
+db.exec(`CREATE INDEX IF NOT EXISTS idx_ignored_masks_user_net
+         ON ignored_masks(user_id, network_id)`);
 
 export default db;

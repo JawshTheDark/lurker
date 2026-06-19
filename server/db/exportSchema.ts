@@ -333,7 +333,19 @@ export const EXPORT_TABLES = Object.freeze({
     section: 'data',
     pk: 'id',
     fkRekey: { user_id: 'users', network_id: 'networks' },
-    columns: ['id', 'user_id', 'network_id', 'mask', 'created_at'],
+    columns: [
+      'id',
+      'user_id',
+      'network_id',
+      'mask',
+      'channels',
+      'pattern',
+      'pattern_kind',
+      'levels',
+      'is_except',
+      'expires_at',
+      'created_at',
+    ],
   },
 
   user_nick_notes: {

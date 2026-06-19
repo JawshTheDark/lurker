@@ -119,7 +119,8 @@ import { useDraftStore } from '../stores/drafts.js';
 import { useSettingsStore } from '../stores/settings.js';
 import { useUploadsStore, onInsertUrl } from '../stores/uploads.js';
 import { useToastsStore } from '../stores/toasts.js';
-import { useIgnoresStore } from '../stores/ignores.js';
+import { useIgnoresStore, type IgnoreEntry } from '../stores/ignores.js';
+import { parseIgnoreArgs } from '../../../shared/parseIgnore.js';
 import { useWhoisStore } from '../stores/whois.js';
 import { socketSend, socketSendWithAck } from '../composables/useSocket.js';
 import { requestScrollToBottom } from '../composables/useScrollState.js';
@@ -1656,6 +1657,25 @@ function localInfo(networkId: number, target: string, lineText: string): void {
   });
 }
 
+// One indexed line for the /ignore listing: "  2. *zzz*  NICKS  #chan  [except]".
+// "*zzz*  NICKS  #chan  [except]" — the rule's dimensions, no index.
+function summarizeIgnoreEntry(entry: IgnoreEntry): string {
+  const parts: string[] = [entry.mask ?? '*'];
+  if (entry.levels?.length) parts.push(entry.levels.join(','));
+  if (entry.channels?.length) parts.push(entry.channels.join(','));
+  if (entry.pattern) {
+    parts.push(entry.patternKind === 'regex' ? `/${entry.pattern}/` : `"${entry.pattern}"`);
+  }
+  if (entry.isExcept) parts.push('[except]');
+  if (entry.expiresAt) parts.push(`(expires ${entry.expiresAt})`);
+  return parts.join('  ');
+}
+
+// One indexed line for the /ignore listing: "  2. *zzz*  NICKS  #chan".
+function formatIgnoreEntry(entry: IgnoreEntry, idx: number): string {
+  return `  ${idx}. ${summarizeIgnoreEntry(entry)}`;
+}
+
 const COMMANDS_LINES = [
   'commands:',
   '  /me <text>             — emote in the current buffer',
@@ -1685,8 +1705,11 @@ const COMMANDS_LINES = [
   '  /who [mask]            — find users (also /whowas /userhost /ison /names)',
   '  /motd /version /time   — server info (also /admin /info /lusers /links /map /stats /help)',
   '  /jitsi                 — start a video call (alias: /talk)',
-  '  /ignore [mask]         — list current ignores, or add (nick or nick!user@host)',
-  '  /unignore <mask>       — remove an ignore entry',
+  '  /ignore [opts] [mask|#chan] [LEVELS] — list, or add an ignore rule',
+  '      opts: -regexp -full -pattern <text> -except -time <dur>',
+  '      LEVELS: ALL PUBLIC MSGS NOTICES ACTIONS JOINS PARTS QUITS NICKS KICKS MODES TOPICS NOHIGHLIGHT',
+  '      e.g. /ignore bob NOHIGHLIGHT   ·   /ignore -regexp -pattern (foo|bar) #chan',
+  '  /unignore <index|mask> — remove an ignore (index from /ignore list)',
   '  /raw <line>            — send a raw IRC line (alias: /quote)',
   '  /commands              — this list',
   '  //text                 — send literal "/text" as a message (escape)',
@@ -1952,30 +1975,64 @@ function handleCommand(line: string, networkId: number, target: string): boolean
       );
     case 'ignore': {
       // No-arg form: dump the current network's ignore list into the active
-      // buffer as system messages. The store already has the list (seeded
-      // from the snapshot, kept fresh by ignore-list-updated), so this is a
-      // purely client-side read — no server roundtrip.
-      const mask = argLine.trim();
-      if (!mask) {
+      // buffer as system messages, with an index for /unignore. The store
+      // already has the list (snapshot + ignore-list-updated), so it's a purely
+      // client-side read — no server roundtrip.
+      const args = argLine.trim();
+      if (!args) {
         const list = ignores.masksFor(networkId);
         if (!list.length) {
           localInfo(networkId, target, 'ignore list is empty on this network.');
         } else {
           localInfo(networkId, target, `ignore list (${list.length}):`);
-          for (const entry of list) localInfo(networkId, target, `  ${entry.mask}`);
+          list.forEach((entry, i) => localInfo(networkId, target, formatIgnoreEntry(entry, i + 1)));
         }
         return true;
       }
-      ignores.addMask(networkId, mask);
+      const parsed = parseIgnoreArgs(args);
+      if (parsed.error) {
+        localInfo(networkId, target, `/ignore: ${parsed.error}`);
+        return true;
+      }
+      ignores.addRule(networkId, parsed);
       return true;
     }
     case 'unignore': {
-      const mask = argLine.trim();
-      if (!mask) {
-        localInfo(networkId, target, 'usage: /unignore <mask>');
+      const arg = argLine.trim();
+      if (!arg) {
+        localInfo(networkId, target, 'usage: /unignore <index|mask>  (index from /ignore)');
         return true;
       }
-      ignores.removeMask(networkId, mask);
+      if (/^\d+$/.test(arg)) {
+        const entry = ignores.masksFor(networkId)[Number(arg) - 1];
+        if (!entry) {
+          localInfo(
+            networkId,
+            target,
+            `/unignore: no ignore #${arg} on this network (see /ignore)`,
+          );
+          return true;
+        }
+        ignores.removeRule(networkId, { id: entry.id });
+        localInfo(networkId, target, `removed ignore #${arg}: ${summarizeIgnoreEntry(entry)}`);
+        return true;
+      }
+      // Remove-by-mask matches the stored mask exactly (case-insensitive), the
+      // same rule the server applies — count local matches so we can confirm or
+      // report nothing-removed instead of failing silently.
+      const matches = ignores
+        .masksFor(networkId)
+        .filter((e) => (e.mask ?? '').toLowerCase() === arg.toLowerCase());
+      if (!matches.length) {
+        localInfo(networkId, target, `/unignore: no ignore with mask "${arg}" (see /ignore)`);
+        return true;
+      }
+      ignores.removeRule(networkId, { mask: arg });
+      localInfo(
+        networkId,
+        target,
+        `removed ${matches.length} ignore${matches.length > 1 ? 's' : ''} matching "${arg}".`,
+      );
       return true;
     }
     case 'jitsi':

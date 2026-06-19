@@ -18,12 +18,9 @@ import { getUserAwayState, writeAwayMarker, writeBackMarker } from '../db/userAw
 import { listPinnedForUser } from '../db/pinnedBuffers.js';
 import { listCollapsedForUser } from '../db/nicklistCollapsed.js';
 import { listChannelNotifyForUser } from '../db/channelNotify.js';
-import {
-  addMask as addIgnoreRow,
-  removeMask as removeIgnoreRow,
-  listMasks as listIgnoreRows,
-  listAllForUser as listAllIgnoreRows,
-} from '../db/ignoredMasks.js';
+import { listAllRulesForUser } from '../db/ignoredMasks.js';
+import type { IgnoreRuleRow, IgnoreRuleInput } from '../db/ignoredMasks.js';
+import ignoreRulesService from './ignoreRulesService.js';
 import {
   listForUserGrouped as listNickNotesGrouped,
   setNote as setNickNoteRow,
@@ -523,16 +520,26 @@ class IrcManager extends EventEmitter {
     return out;
   }
 
-  addIgnore(userId: number, networkId: number, mask: string): unknown {
-    return addIgnoreRow({ userId, networkId, mask });
+  addIgnore(
+    userId: number,
+    networkId: number,
+    rule: IgnoreRuleInput,
+  ): { ok: false; error: string } | { ok: true; id: number; created: boolean } {
+    return ignoreRulesService.add(userId, networkId, rule);
   }
 
-  removeIgnore(userId: number, networkId: number, mask: string): unknown {
-    return removeIgnoreRow({ userId, networkId, mask });
+  removeIgnore(
+    userId: number,
+    networkId: number,
+    by: { id?: number; mask?: string },
+  ): boolean | number {
+    if (typeof by.id === 'number') return ignoreRulesService.removeById(userId, networkId, by.id);
+    if (by.mask) return ignoreRulesService.removeByMask(userId, networkId, by.mask);
+    return false;
   }
 
-  listIgnoredFor(userId: number, networkId: number): unknown {
-    return listIgnoreRows({ userId, networkId });
+  listIgnoredFor(userId: number, networkId: number): IgnoreRuleRow[] {
+    return ignoreRulesService.list(userId, networkId);
   }
 
   setNickNote(userId: number, networkId: number, nick: string, note: string): NoteResult | null {
@@ -639,13 +646,13 @@ class IrcManager extends EventEmitter {
 // Group every ignore row for a user by network so snapshotForUser can attach
 // them to the matching per-network blob in one pass (mirrors the listPinned /
 // listCollapsed shape).
-function ignoresGrouped(userId: number): Map<number, { mask: string; createdAt: string }[]> {
-  const out = new Map<number, { mask: string; createdAt: string }[]>();
-  for (const row of listAllIgnoreRows(userId)) {
-    const list = out.get(row.networkId);
-    const entry = { mask: row.mask, createdAt: row.createdAt };
-    if (list) list.push(entry);
-    else out.set(row.networkId, [entry]);
+function ignoresGrouped(userId: number): Map<number, IgnoreRuleRow[]> {
+  const out = new Map<number, IgnoreRuleRow[]>();
+  for (const row of listAllRulesForUser(userId)) {
+    const { networkId, ...rule } = row;
+    const list = out.get(networkId);
+    if (list) list.push(rule);
+    else out.set(networkId, [rule]);
   }
   return out;
 }

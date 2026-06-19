@@ -267,6 +267,8 @@ interface RenderRow {
   // Display-collapsing tags (mutated by collapseDisplay)
   continuationAuthor?: boolean;
   continuationTime?: boolean;
+  // A NOHIGHLIGHT ignore rule matched — suppress the highlight tint (#301).
+  nohilight?: boolean;
 }
 
 // Ignore-confirm modal target
@@ -444,7 +446,7 @@ function rowClass(row: RenderRow) {
     [`type-${m?.type}`]: true,
     self: m?.self,
     alt: row.alt,
-    highlight: !!m?.matched,
+    highlight: !!m?.matched && !row.nohilight,
     'cont-author': !!row.continuationAuthor,
     'cont-time': !!row.continuationTime,
   };
@@ -655,6 +657,8 @@ const renderRows = computed((): RenderRow[] => {
   };
 
   const networkId = buf?.networkId;
+  const bufTarget = buf?.target ?? '';
+  const bufIsDm = !bufTarget.startsWith('#') && !bufTarget.startsWith(':server:');
 
   for (let i = 0; i < list.length; i++) {
     // Cast to ChatMessage so template-used properties are typed; BufferMessage
@@ -667,13 +671,24 @@ const renderRows = computed((): RenderRow[] => {
     // below, lands above every other filter's surviving rows.
     if (clearedBeforeId > 0 && m.id != null && Number(m.id) <= clearedBeforeId) continue;
 
-    // Render-time ignore filter. Self-authored events are never hidden (the
-    // user always sees their own activity), and the matcher is fed both the
-    // bare nick and the full nick!user@host so hostmask entries can fire.
-    // Removing a mask re-runs this computed and previously-hidden rows
-    // reappear without a backlog reload.
-    if (!m.self && m.nick && networkId && ignores.isIgnored(networkId, m.nick, m.userhost ?? '')) {
-      continue;
+    // Render-time ignore filter (issue #301). Self-authored events are never
+    // hidden. The matcher gets full event context so level/channel/pattern
+    // rules apply. A NOHIGHLIGHT rule doesn't hide — it suppresses the row's
+    // highlight tint (rowNohilight → rowClass), which also retro-applies to
+    // backlog rows the server stamped before the rule existed. Removing a rule
+    // re-runs this computed and hidden rows reappear without a backlog reload.
+    let rowNohilight = false;
+    if (!m.self && m.nick && networkId) {
+      const verdict = ignores.evaluate(networkId, {
+        nick: m.nick,
+        userhost: m.userhost ?? null,
+        target: bufTarget,
+        text: m.text ?? '',
+        type: m.type,
+        isDm: bufIsDm,
+      });
+      if (verdict.hide) continue;
+      rowNohilight = verdict.nohilight;
     }
 
     if (filterOn && m.nick && !m.self) {
@@ -728,7 +743,7 @@ const renderRows = computed((): RenderRow[] => {
       out.push({ divider: 'unread', key: 'unread-divider' });
       dividerInserted = true;
     }
-    out.push({ m, alt: STRIPED_TYPES.has(m.type) && !!m.alt, key });
+    out.push({ m, alt: STRIPED_TYPES.has(m.type) && !!m.alt, key, nohilight: rowNohilight });
   }
 
   // Both presence timestamps newer than every loaded message → markers land
@@ -1122,7 +1137,14 @@ watch(
           !tail.self &&
           tail.nick &&
           nid &&
-          ignores.isIgnored(nid, tail.nick, tail.userhost ?? '');
+          ignores.isHidden(nid, {
+            nick: tail.nick,
+            userhost: tail.userhost ?? null,
+            target: tail.target,
+            text: tail.text ?? '',
+            type: tail.type,
+            isDm: !tail.target.startsWith('#') && !tail.target.startsWith(':server:'),
+          });
         if (!tailIgnored) bumpNewBelow();
       }
     }

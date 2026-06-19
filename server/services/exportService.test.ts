@@ -22,8 +22,24 @@ let setUserSetting: typeof import('../db/settings.js').setUserSetting;
 let createRule: typeof import('../db/highlightRules.js').createRule;
 let setNote: typeof import('../db/nickNotes.js').setNote;
 let pinBuffer: typeof import('../db/pinnedBuffers.js').pinBuffer;
-let addMask: typeof import('../db/ignoredMasks.js').addMask;
+let addRule: typeof import('../db/ignoredMasks.js').addRule;
 let addBookmark: typeof import('../db/bookmarks.js').addBookmark;
+// Seed an ALL-level ignore the way the pre-#301 addMask helper did.
+function addMask(args: { userId: number; networkId: number; mask: string }) {
+  return addRule({
+    userId: args.userId,
+    networkId: args.networkId,
+    rule: {
+      mask: args.mask,
+      channels: null,
+      pattern: null,
+      patternKind: 'substr',
+      levels: ['ALL'],
+      isExcept: false,
+      expiresAt: null,
+    },
+  });
+}
 let insertUpload: typeof import('../db/uploadHistory.js').insertUpload;
 let buildExportZip: typeof import('./exportService.js').buildExportZip;
 let buildExportFilename: typeof import('./exportService.js').buildExportFilename;
@@ -40,7 +56,7 @@ beforeAll(async () => {
   ({ createRule } = await import('../db/highlightRules.js'));
   ({ setNote } = await import('../db/nickNotes.js'));
   ({ pinBuffer } = await import('../db/pinnedBuffers.js'));
-  ({ addMask } = await import('../db/ignoredMasks.js'));
+  ({ addRule } = await import('../db/ignoredMasks.js'));
   ({ addBookmark } = await import('../db/bookmarks.js'));
   ({ buildExportZip, buildExportFilename, computeExportPreview } =
     await import('./exportService.js'));

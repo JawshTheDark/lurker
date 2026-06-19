@@ -3,12 +3,7 @@
 
 import IRC, { ircLineParser } from 'irc-framework';
 import type { Client as IrcClient } from 'irc-framework';
-import {
-  insertMessage,
-  hasMessageForTarget,
-  listBufferTargets,
-  COUNTABLE_TYPES,
-} from '../db/messages.js';
+import { insertMessage, hasMessageForTarget, listBufferTargets } from '../db/messages.js';
 import type { Network } from '../db/networks.js';
 import { upsertChannel } from '../db/networks.js';
 import { isClosed as isBufferClosed } from '../db/closedBuffers.js';
@@ -22,9 +17,8 @@ import {
   deletePeerPresence,
 } from '../db/peerPresence.js';
 import highlightRulesService from './highlightRulesService.js';
-import { matchEvent } from './highlightEngine.js';
-import { matchesAny as matchesIgnoreMask } from './maskMatch.js';
-import { listMasks as listIgnoredMasks } from '../db/ignoredMasks.js';
+import ignoreRulesService from './ignoreRulesService.js';
+import { decideStamp } from './insertDecisions.js';
 import * as systemLog from './systemLog.js';
 import { IRC_VERSION, APP_VERSION } from '../utils/userAgent.js';
 import { findUserById } from '../db/users.js';
@@ -331,40 +325,33 @@ export class IrcConnection {
     };
 
     if (this.shouldPersist(event)) {
-      // Run the highlight engine before persisting so the match decision is
-      // stored on the row. The cheap path (engine gates on type & self) keeps
-      // this off the hot path for non-highlightable events.
+      // Decide both per-message stamps before persisting, off cached compiled
+      // rule sets (no per-message DB scan): the highlight match (matched_rule_id)
+      // and the ignore verdict. A NOHIGHLIGHT ignore nulls the highlight while
+      // leaving the message visible; a hide-level ignore sets from_ignored so
+      // unread/highlight/search counts skip it. decideStamp gates on self/nick
+      // and runs the level test first, so high-churn JOIN/PART/QUIT with no
+      // matching-level rule stay cheap. See insertDecisions.ts.
       let matchedRuleId: number | null = null;
-      try {
-        const compiled = highlightRulesService.getCompiled(this.network.user_id);
-        const { matched, ruleId } = matchEvent(event, compiled);
-        if (matched) matchedRuleId = ruleId;
-      } catch (e) {
-        console.warn('[highlight] match-on-insert failed:', (e as Error)?.message || e);
-      }
-      // Stamp from_ignored at insert time so unread/highlight counts can
-      // exclude ignored senders without a per-query mask scan. Only the
-      // countable chat types ever read this column — gating to COUNTABLE_TYPES
-      // skips the DB lookup on high-churn JOIN/PART/QUIT/NICK/KICK/etc.
-      // Self messages can't be ignored; nick-less system rows have no sender.
       let fromIgnored = false;
-      const nick = event.nick as string | null | undefined;
-      if (COUNTABLE_TYPES.has(event.type) && nick && !event.self) {
-        try {
-          const masks = listIgnoredMasks({
-            userId: this.network.user_id,
-            networkId: this.network.id,
-          });
-          if (masks.length) {
-            fromIgnored = matchesIgnoreMask(
-              masks,
-              nick,
-              (event.userhost as string | null | undefined) ?? null,
-            );
-          }
-        } catch (e) {
-          console.warn('[ignore] match-on-insert failed:', (e as Error)?.message || e);
-        }
+      try {
+        const decided = decideStamp(
+          {
+            type: event.type,
+            nick: event.nick as string | null | undefined,
+            userhost: event.userhost as string | null | undefined,
+            target: event.target as string,
+            text: event.text as string | null | undefined,
+            self: event.self as boolean | undefined,
+          },
+          highlightRulesService.getCompiled(this.network.user_id),
+          ignoreRulesService.getCompiled(this.network.user_id, this.network.id),
+          isDmTargetName(event.target as string),
+        );
+        matchedRuleId = decided.matchedRuleId;
+        fromIgnored = decided.fromIgnored;
+      } catch (e) {
+        console.warn('[ignore/highlight] match-on-insert failed:', (e as Error)?.message || e);
       }
       const { id, alt } = insertMessage({
         networkId: this.network.id,
