@@ -266,30 +266,31 @@ const text = computed({
   },
 });
 // Firefox (desktop + mobile) doesn't support CSS `field-sizing: content` (#336),
-// so the native content-driven grow leaves the composer stuck at rows="1". Fall
-// back to a JS measure-and-set there; Chrome/Safari keep the native single-pass
-// path untouched (autosize() no-ops when field-sizing is supported).
+// so the native content-driven grow leaves the composer stuck at rows="1". Wire
+// a JS measure-and-set fallback ONLY where it's needed — Chrome/Safari keep the
+// native single-pass path and register nothing, so there's no per-keystroke
+// microtask on the browsers that don't need it.
 const supportsFieldSizing =
   typeof CSS !== 'undefined' &&
   typeof CSS.supports === 'function' &&
   CSS.supports('field-sizing', 'content');
 
-function autosizeInput(): void {
-  if (supportsFieldSizing) return;
-  const el = inputEl.value;
-  if (!el) return;
-  // Reset, then lock to the content height — done synchronously so the browser
-  // never paints the transient one-row state. CSS max-height + overflow-y:auto
-  // cap growth at 16 rows and scroll beyond it.
-  el.style.height = 'auto';
-  el.style.height = `${el.scrollHeight}px`;
+if (!supportsFieldSizing) {
+  const autosizeInput = (): void => {
+    const el = inputEl.value;
+    if (!el) return;
+    // Reset, then lock to the content height — done synchronously so the browser
+    // never paints the transient one-row state. CSS max-height + overflow-y:auto
+    // cap growth at 16 rows and scroll beyond it.
+    el.style.height = 'auto';
+    el.style.height = `${el.scrollHeight}px`;
+  };
+  // Re-measure whenever the visible text changes — typing (the v-model setter),
+  // programmatic edits (history recall, send-clear), and buffer switches that
+  // swap in a different draft (the getter changes without firing the setter).
+  watch(text, () => nextTick(autosizeInput));
+  onMounted(() => nextTick(autosizeInput));
 }
-
-// Re-measure whenever the visible text changes — typing (the v-model setter),
-// programmatic edits (history recall, send-clear), and buffer switches that swap
-// in a different draft (the getter changes without firing the setter).
-watch(text, () => nextTick(autosizeInput));
-onMounted(() => nextTick(autosizeInput));
 
 const buffer = computed(() =>
   active.value ? buffers.byKey(`${active.value.networkId}::${active.value.target}`) : null,
