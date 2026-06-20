@@ -300,6 +300,10 @@ button:disabled {
 .btn-primary.danger:hover:not(:disabled),
 .btn-secondary.danger:hover:not(:disabled) {
   border-color: var(--bad);
+  /* Re-assert the red text: the general button / .btn-secondary :hover rules set
+     color:--fg at higher specificity than the non-hover .danger rule, so without
+     this the destructive label flips to --fg on hover (only border/bg stay red). */
+  color: var(--bad);
   background: color-mix(in srgb, var(--bad) 15%, transparent);
 }
 .btn-primary:disabled,

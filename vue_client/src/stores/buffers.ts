@@ -429,7 +429,20 @@ export const useBuffersStore = defineStore('buffers', {
         // have and append. Keeps live state intact when the server's backlog
         // overlaps with messages we received before the flap.
         const fresh = filtered.filter((e) => e.id == null || e.id > existingMaxId);
-        if (fresh.length > 0) {
+        // The system buffer (networkId null) ships a latest-N slice with no
+        // resume cursor, so a long disconnect can yield a slice whose OLDEST id
+        // is still newer than our tail — meaning rows were missed in between.
+        // Appending would splice a permanent hole (the gap is never refetched:
+        // 'before' paging only goes downward from our stale tail). Detect the
+        // non-overlapping case and replace wholesale instead — land on the live
+        // tail and page up for the rest, honoring the server's hasMoreOlder
+        // (mirrors the opts.reset branch). Network buffers ride a contiguous
+        // since-cursor slice, so this never trips for them (#355).
+        const oldestIncomingId = filtered.find((e) => e.id != null)?.id;
+        if (networkId == null && oldestIncomingId != null && oldestIncomingId > existingMaxId) {
+          buf.messages = filtered.slice(-MAX_PER_BUFFER);
+          buf.hasMoreOlder = opts.hasMoreOlder ?? filtered.length >= 50;
+        } else if (fresh.length > 0) {
           const combined = [...buf.messages, ...fresh];
           buf.messages =
             combined.length > MAX_PER_BUFFER ? combined.slice(-MAX_PER_BUFFER) : combined;

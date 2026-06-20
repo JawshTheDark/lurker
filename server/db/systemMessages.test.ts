@@ -101,15 +101,17 @@ describe('systemMessages', () => {
 });
 
 describe('countNotableNewer (unread classification, #355)', () => {
-  it('counts admin/control-plane + warn/error, not routine info, newer than the pointer', () => {
+  it('counts admin/control-plane + error, not routine info/warn, newer than the pointer', () => {
     const u = createUser('sys-unread');
     const base = line({ userId: u.id, text: 'baseline' }).id; // pointer starts here
     line({ userId: u.id, text: 'routine join', level: 'info', source: 'server' }); // not notable
-    line({ userId: u.id, text: 'a warning', level: 'warn', source: 'server' }); // notable
+    // 'warn' is NOT notable: a routine, auto-reconnecting disconnect logs at
+    // 'warn', and counting it would light the badge on every connectivity blip.
+    line({ userId: u.id, text: 'a warning', level: 'warn', source: 'server' }); // not notable
     line({ text: 'admin notice', level: 'info', source: 'admin' }); // notable, global
     line({ userId: u.id, text: 'an error', level: 'error', source: 'server' }); // notable
 
-    expect(systemMessages.countNotableNewer(u.id, base)).toBe(3);
+    expect(systemMessages.countNotableNewer(u.id, base)).toBe(2);
     // After reading everything, zero.
     const top = systemMessages.recent(u.id).at(-1)!.id;
     expect(systemMessages.countNotableNewer(u.id, top)).toBe(0);

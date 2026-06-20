@@ -280,16 +280,12 @@ export function decorateMessage(userId: number, event: MessageEvent): DecoratedE
 const SYSTEM_TARGET = ':system:';
 
 // Which system-log lines mark the system buffer unread (#355). Mirrors
-// countNotableNewer's WHERE clause — keep the two in sync. Gates the live
-// read-state refresh so routine lifecycle lines don't fan out a no-op
-// read-state to every tab.
+// countNotableNewer's WHERE clause — keep the two in sync. 'warn' is excluded on
+// purpose (a routine, auto-reconnecting disconnect logs at 'warn'), so ambient
+// connectivity noise never marks the buffer unread. Gates the live read-state
+// refresh so routine lifecycle lines don't fan out a no-op read-state to every tab.
 function systemLineNotifies(line: LogLine): boolean {
-  return (
-    line.source === 'admin' ||
-    line.source === 'control-plane' ||
-    line.level === 'warn' ||
-    line.level === 'error'
-  );
+  return line.source === 'admin' || line.source === 'control-plane' || line.level === 'error';
 }
 
 function computeUnreadFor(

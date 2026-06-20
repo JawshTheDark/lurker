@@ -75,15 +75,17 @@ const recentStmt = db.prepare(`
 
 // Count of "notable" system-buffer lines newer than afterId that are visible to
 // this user (global + their own). Notable = admin/control-plane broadcasts or
-// warnings/errors; routine lifecycle log lines (info/server) deliberately don't
-// count, so ambient noise never marks the system buffer unread (#355). This is
-// the classification rule behind the unread badge — keep it in sync with
+// errors; routine lifecycle log lines (info/server) deliberately don't count, so
+// ambient noise never marks the system buffer unread (#355). 'warn' is excluded
+// on purpose: a routine network disconnect logs at 'warn' (it auto-reconnects),
+// and counting it would light the LURKER badge on every connectivity blip. This
+// is the classification rule behind the unread badge — keep it in sync with
 // systemLineNotifies() in wsHub, which gates the live read-state refresh.
 const countNotableNewerStmt = db.prepare(`
   SELECT COUNT(*) AS n FROM system_messages
    WHERE id > ?
      AND (user_id IS NULL OR user_id = ?)
-     AND (source IN ('admin', 'control-plane') OR level IN ('warn', 'error'))
+     AND (source IN ('admin', 'control-plane') OR level = 'error')
 `);
 
 const dropUserStmt = db.prepare(`DELETE FROM system_messages WHERE user_id = ?`);
