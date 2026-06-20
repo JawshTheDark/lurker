@@ -341,6 +341,17 @@ describe('tls certificate trust setting', () => {
       expect.objectContaining({ tls: true, rejectUnauthorized: false }),
     );
   });
+
+  it('logNet writes a system line scoped to the network and stamped with its id (#355)', async () => {
+    const conn = makeConn(1); // network { id: 1, user_id: 1, name: 'n' }
+    conn.logNet('a unique test line', 'warn');
+    const sys = (await import('../db/systemMessages.js')).default;
+    const row = sys.recent(1).find((r) => r.text === 'a unique test line');
+    expect(row).toBeTruthy();
+    expect(row!.scope).toBe('net:n'); // logScope() = net:<current name>
+    expect(row!.level).toBe('warn');
+    expect(row!.fields).toMatchObject({ networkId: 1 }); // stable id for live name resolution
+  });
 });
 
 describe('addPeerWatch live presence seed (#302)', () => {

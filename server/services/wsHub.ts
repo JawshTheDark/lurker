@@ -410,7 +410,7 @@ export function buildResumeSlice(
 // irc/history frames instead of the old system-log path (#355). This is the
 // former client `systemLogToMessage`, relocated server-side so the wire is
 // identical; type 'system' + originNetworkId drive the prefix-column rendering.
-function systemLineToEvent(line: {
+export function systemLineToEvent(line: {
   id: number;
   ts: string;
   level: string;
@@ -443,7 +443,7 @@ function systemLineToEvent(line: {
 // gap-fill (replaceBacklog dedupes against the system buffer's own max id)
 // reconcile on reconnect — exactly what the old system-log snapshot did. No
 // speakers / input history; read & cleared state are null-keyed already (#355).
-function buildSystemBacklog(userId: number): WsPayload {
+export function buildSystemBacklog(userId: number): WsPayload {
   const rows = listSystemMessages(userId, { limit: RESUME_LATEST_LIMIT });
   const oldestId = rows.length ? rows[0].id : 0;
   const lastRead = getReadState(userId, null, SYSTEM_TARGET);
@@ -465,6 +465,84 @@ function buildSystemBacklog(userId: number): WsPayload {
     inputHistory: [],
     reset: false,
     hasMoreOlder: oldestId > 0 && hasOlderSystem(userId, oldestId),
+  };
+}
+
+// Build the `history` reply for a system-buffer page request — the system-side
+// counterpart to the network 'around'/'after'/'latest'/'before' handling, with
+// the same reply shapes so the client's history dispatch is identical. Returns
+// an `{kind:'error'}` payload for a bad anchor/after id. Extracted (and pure
+// over system_messages) so it's unit-testable; the WS handler just sends it (#355).
+export function buildSystemHistoryReply(userId: number, msg: WsPayload): WsPayload {
+  const limit = Math.min(Math.max(Number(msg.limit) || 100, 1), 500);
+  const mode = typeof msg.mode === 'string' ? msg.mode : 'before';
+  const base = {
+    kind: 'history',
+    networkId: null,
+    target: SYSTEM_TARGET,
+    mode,
+    token: msg.token ?? null,
+    speakers: [] as never[],
+  };
+  if (mode === 'around') {
+    const anchorId = Number(msg.anchorId);
+    if (!Number.isInteger(anchorId) || anchorId <= 0) {
+      return { kind: 'error', text: 'invalid anchorId' };
+    }
+    const slice = listSystemMessagesAround(userId, anchorId, limit);
+    return {
+      ...base,
+      anchorId,
+      events: slice.events.map(systemLineToEvent),
+      hasMoreOlder: slice.hasMoreOlder,
+      hasMoreNewer: slice.hasMoreNewer,
+      anchorMissing: 'anchorMissing' in slice ? !!slice.anchorMissing : false,
+      hasMore: slice.hasMoreOlder,
+      before: null,
+    };
+  }
+  if (mode === 'after') {
+    const afterId = Number(msg.afterId);
+    if (!Number.isInteger(afterId) || afterId < 0) {
+      return { kind: 'error', text: 'invalid afterId' };
+    }
+    const rows = listSystemMessages(userId, { afterId, limit });
+    const newestId = rows.length ? rows[rows.length - 1].id : afterId;
+    return {
+      ...base,
+      afterId,
+      events: rows.map(systemLineToEvent),
+      hasMoreNewer: hasNewerSystem(userId, newestId),
+      hasMoreOlder: true,
+      hasMore: true,
+      before: null,
+    };
+  }
+  if (mode === 'latest') {
+    const rows = listSystemMessages(userId, { limit });
+    const oldestId = rows.length ? rows[0].id : 0;
+    const more = oldestId > 0 && hasOlderSystem(userId, oldestId);
+    return {
+      ...base,
+      events: rows.map(systemLineToEvent),
+      hasMoreOlder: more,
+      hasMoreNewer: false,
+      hasMore: more,
+      before: null,
+    };
+  }
+  // 'before' (default): page older.
+  const before = msg.before ? Number(msg.before) : undefined;
+  const rows = listSystemMessages(userId, { before, limit });
+  const oldestId = rows.length ? rows[0].id : 0;
+  const more = oldestId > 0 && hasOlderSystem(userId, oldestId);
+  return {
+    ...base,
+    before: msg.before || null,
+    events: rows.map(systemLineToEvent),
+    hasMoreOlder: more,
+    hasMoreNewer: false,
+    hasMore: more,
   };
 }
 
@@ -1844,81 +1922,7 @@ export function attachWsHub(httpServer: HttpServer, sessionSecret: string) {
         // system_messages keyset access. Reply shapes match the network path
         // below exactly, so the client's history handlers are identical (#355).
         if (msg.networkId == null && histTarget === SYSTEM_TARGET) {
-          const sysLimit = Math.min(Math.max(Number(msg.limit) || 100, 1), 500);
-          const sysMode = typeof msg.mode === 'string' ? msg.mode : 'before';
-          const sysBase = {
-            kind: 'history',
-            networkId: null,
-            target: SYSTEM_TARGET,
-            mode: sysMode,
-            token: msg.token ?? null,
-            speakers: [],
-          };
-          if (sysMode === 'around') {
-            const anchorId = Number(msg.anchorId);
-            if (!Number.isInteger(anchorId) || anchorId <= 0) {
-              send(ws, { kind: 'error', text: 'invalid anchorId' });
-              break;
-            }
-            const slice = listSystemMessagesAround(userId, anchorId, sysLimit);
-            send(ws, {
-              ...sysBase,
-              anchorId,
-              events: slice.events.map(systemLineToEvent),
-              hasMoreOlder: slice.hasMoreOlder,
-              hasMoreNewer: slice.hasMoreNewer,
-              anchorMissing: 'anchorMissing' in slice ? !!slice.anchorMissing : false,
-              hasMore: slice.hasMoreOlder,
-              before: null,
-            });
-            break;
-          }
-          if (sysMode === 'after') {
-            const afterId = Number(msg.afterId);
-            if (!Number.isInteger(afterId) || afterId < 0) {
-              send(ws, { kind: 'error', text: 'invalid afterId' });
-              break;
-            }
-            const rows = listSystemMessages(userId, { afterId, limit: sysLimit });
-            const newestId = rows.length ? rows[rows.length - 1].id : afterId;
-            send(ws, {
-              ...sysBase,
-              afterId,
-              events: rows.map(systemLineToEvent),
-              hasMoreNewer: hasNewerSystem(userId, newestId),
-              hasMoreOlder: true,
-              hasMore: true,
-              before: null,
-            });
-            break;
-          }
-          if (sysMode === 'latest') {
-            const rows = listSystemMessages(userId, { limit: sysLimit });
-            const oldestId = rows.length ? rows[0].id : 0;
-            const more = oldestId > 0 && hasOlderSystem(userId, oldestId);
-            send(ws, {
-              ...sysBase,
-              events: rows.map(systemLineToEvent),
-              hasMoreOlder: more,
-              hasMoreNewer: false,
-              hasMore: more,
-              before: null,
-            });
-            break;
-          }
-          // 'before' (default): page older.
-          const before = msg.before ? Number(msg.before) : undefined;
-          const rows = listSystemMessages(userId, { before, limit: sysLimit });
-          const oldestId = rows.length ? rows[0].id : 0;
-          const more = oldestId > 0 && hasOlderSystem(userId, oldestId);
-          send(ws, {
-            ...sysBase,
-            before: msg.before || null,
-            events: rows.map(systemLineToEvent),
-            hasMoreOlder: more,
-            hasMoreNewer: false,
-            hasMore: more,
-          });
+          send(ws, buildSystemHistoryReply(userId, msg));
           break;
         }
 

@@ -19,6 +19,10 @@ let buildResumeSlice: typeof import('./wsHub.js').buildResumeSlice;
 let buildOfflineBacklogFrames: typeof import('./wsHub.js').buildOfflineBacklogFrames;
 let handleOpenBuffer: typeof import('./wsHub.js').handleOpenBuffer;
 let sweepWsHeartbeat: typeof import('./wsHub.js').sweepWsHeartbeat;
+let buildSystemBacklog: typeof import('./wsHub.js').buildSystemBacklog;
+let systemLineToEvent: typeof import('./wsHub.js').systemLineToEvent;
+let buildSystemHistoryReply: typeof import('./wsHub.js').buildSystemHistoryReply;
+let systemMessages: typeof import('../db/systemMessages.js').default;
 
 let userId: number;
 let networkId: number;
@@ -35,7 +39,11 @@ beforeAll(async () => {
     buildOfflineBacklogFrames,
     handleOpenBuffer,
     sweepWsHeartbeat,
+    buildSystemBacklog,
+    systemLineToEvent,
+    buildSystemHistoryReply,
   } = await import('./wsHub.js'));
+  systemMessages = (await import('../db/systemMessages.js')).default;
 
   userId = createUser('alice').id;
   const net = createNetwork(userId, {
@@ -325,5 +333,86 @@ describe('sweepWsHeartbeat', () => {
     expect(live.calls.ping).toBe(1);
     expect(dead1.calls.terminate).toBe(1);
     expect(dead2.calls.terminate).toBe(1);
+  });
+});
+
+describe('system buffer delivery (#355)', () => {
+  function sysLine(uid: number | null, over: Record<string, unknown> = {}): number {
+    return systemMessages.insert({
+      userId: uid,
+      ts: new Date().toISOString(),
+      level: 'info',
+      scope: 'lurker',
+      source: 'server',
+      text: 'sys',
+      ...over,
+    }).id;
+  }
+
+  it('systemLineToEvent maps a line to the system-buffer event shape', () => {
+    const row = systemMessages.insert({
+      userId: null,
+      ts: '2026-01-01T00:00:00.000Z',
+      level: 'warn',
+      scope: 'net:Libera',
+      source: 'server',
+      text: 'hello',
+      fields: { networkId: 42 },
+    });
+    expect(systemLineToEvent(row)).toMatchObject({
+      id: row.id,
+      networkId: null,
+      target: ':system:',
+      type: 'system',
+      originNetworkId: 42, // pulled from fields, drives the prefix-column name
+      text: 'hello',
+      time: '2026-01-01T00:00:00.000Z',
+      level: 'warn',
+      scope: 'net:Libera',
+      source: 'server',
+    });
+    // A line with no fields.networkId is network-agnostic → originNetworkId null.
+    expect(systemLineToEvent({ ...row, fields: null }).originNetworkId).toBeNull();
+  });
+
+  it('buildSystemBacklog ships a backlog frame (events oldest-first + read-state)', () => {
+    const u = createUser('sys-backlog').id;
+    const ids = [sysLine(u), sysLine(u), sysLine(u)];
+    const frame = buildSystemBacklog(u);
+    expect(frame.kind).toBe('backlog');
+    expect(frame.networkId).toBeNull();
+    expect(frame.target).toBe(':system:');
+    expect(frame.joined).toBe(true);
+    const evIds = (frame.events as Array<{ id: number }>).map((e) => e.id);
+    expect(evIds.slice(-3)).toEqual(ids); // our three, oldest-first
+    expect(frame).toHaveProperty('lastReadId');
+    expect(frame).toHaveProperty('hasMoreOlder');
+  });
+
+  it('buildSystemHistoryReply pages older (before) and around an anchor', () => {
+    const u = createUser('sys-history').id;
+    const ids = Array.from({ length: 5 }, () => sysLine(u));
+    const before = buildSystemHistoryReply(u, { mode: 'before', before: ids[2], limit: 50 });
+    expect(before.mode).toBe('before');
+    expect((before.events as Array<{ id: number }>).map((e) => e.id).slice(-2)).toEqual(
+      ids.slice(0, 2),
+    );
+    const around = buildSystemHistoryReply(u, { mode: 'around', anchorId: ids[2], limit: 1 });
+    expect((around.events as Array<{ id: number }>).map((e) => e.id)).toEqual([
+      ids[1],
+      ids[2],
+      ids[3],
+    ]);
+    expect(around.hasMoreNewer).toBe(true);
+  });
+
+  it('buildSystemHistoryReply rejects a bad anchor/after id with an error frame', () => {
+    const u = createUser('sys-history-bad').id;
+    expect(buildSystemHistoryReply(u, { mode: 'around', anchorId: 0 })).toMatchObject({
+      kind: 'error',
+    });
+    expect(buildSystemHistoryReply(u, { mode: 'after', afterId: -1 })).toMatchObject({
+      kind: 'error',
+    });
   });
 });
