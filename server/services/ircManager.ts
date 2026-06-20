@@ -366,6 +366,14 @@ class IrcManager extends EventEmitter {
       conn.applyAwayState(state);
       n += 1;
     }
+    // Away is user-scoped (every connection), so the system buffer is its home.
+    // Past the no-op guards above, this only fires on a real transition — not on
+    // per-connection reconnect re-asserts (those call applyAwayState directly).
+    systemLog.log({
+      userId,
+      scope: 'away',
+      text: autoSet ? `Auto-away: ${trimmed}` : `You're now marked away: ${trimmed}`,
+    });
     return n;
   }
 
@@ -394,6 +402,11 @@ class IrcManager extends EventEmitter {
       conn.applyAwayState(state);
       n += 1;
     }
+    systemLog.log({
+      userId,
+      scope: 'away',
+      text: autoSet ? 'Auto-away cleared — welcome back' : "You're no longer marked away",
+    });
     return n;
   }
 
