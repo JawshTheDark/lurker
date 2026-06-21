@@ -515,35 +515,23 @@ function setInputAndCaretEnd(value: string): void {
   });
 }
 
-// IRCCloud-style edge detection for history nav: Up at the first logical
-// line / Down at the last logical line walks history. Otherwise the arrow
-// is left alone so it can move the caret between lines within a multi-line
-// draft. "Logical line" = explicit \n in the text; visual wrapping is not
-// counted (a single long wrapped line still triggers history, which matches
-// IRCCloud's behavior).
-function atHistoryEdge(key: string): boolean {
-  const el = inputEl.value;
-  if (!el) return true;
-  const value = text.value;
-  const caret = el.selectionStart ?? value.length;
-  if (key === 'ArrowUp') {
-    return !value.slice(0, caret).includes('\n');
-  }
-  return !value.slice(caret).includes('\n');
-}
-
-function handleHistoryNav(e: KeyboardEvent): void {
+// Walk input history. Called only after the browser's native arrow move left
+// the caret unchanged (nothing above it for Up / below it for Down — see the
+// arrow handling in onKeydown), so within a multi-line OR a soft-wrapped draft
+// the arrows move the caret between rows first and only fall through to history
+// at the true top/bottom (#367). No preventDefault: the native move already ran
+// and didn't move the caret, so we just swap the draft.
+function walkHistory(key: 'ArrowUp' | 'ArrowDown'): void {
   if (!active.value) return;
   const { networkId, target } = active.value;
   const list = inputHistory.forBuffer(networkId, target);
   if (!list.length) return;
-  e.preventDefault();
   resetCompletion();
   closePicker();
   closeStrip();
   closeChannelPicker();
 
-  if (e.key === 'ArrowUp') {
+  if (key === 'ArrowUp') {
     if (historyIndex === null) {
       historyDraft = text.value;
       historyIndex = list.length - 1;
@@ -934,17 +922,26 @@ function onKeydown(e: KeyboardEvent): void {
     return;
   }
   if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
-    // Bare arrows only — Alt+Arrow is buffer navigation (handled globally in
-    // useKeyboardShortcuts), so don't hijack it for input history here.
-    if (e.altKey || e.metaKey || e.ctrlKey) return;
+    // Bare arrows only — Alt+Arrow is buffer navigation (useKeyboardShortcuts),
+    // and Shift+Arrow extends the selection; neither should hijack history.
+    if (e.altKey || e.metaKey || e.ctrlKey || e.shiftKey) return;
     // Leave the arrows to an active IME — they navigate its candidate window.
     if (e.isComposing) return;
-    // Multi-line textarea: only walk history at the logical-line edges, so
-    // arrows still move the caret between newline-separated lines within
-    // the draft. Up = at first logical line (no \n before caret).
-    // Down = at last logical line (no \n after caret).
-    if (!atHistoryEdge(e.key)) return;
-    handleHistoryNav(e);
+    const el = inputEl.value;
+    // Only consider history with a collapsed caret (no selection). Don't
+    // preventDefault — let the browser move the caret natively first. That
+    // handles soft-wrapped rows AND \n lines correctly, with no fragile mirror
+    // measurement. On the next frame, if the caret didn't move (nothing above it
+    // for Up / below it for Down), walk input history (#367).
+    if (el && el.selectionStart === el.selectionEnd) {
+      const before = el.selectionStart ?? 0;
+      const key = e.key;
+      requestAnimationFrame(() => {
+        if (el.isConnected && el.selectionStart === before && el.selectionEnd === before) {
+          walkHistory(key);
+        }
+      });
+    }
     return;
   }
   // Home / End — and the macOS Cmd+←/→ equivalents — jump the caret to the
