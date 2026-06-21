@@ -32,6 +32,10 @@ export function formatColumns(rows: string[][], gap = 2): string[] {
   const sep = ' '.repeat(Math.max(0, gap));
   return rows.map((row) => {
     const last = row.length - 1;
-    return row.map((cell, c) => (c === last ? cell : cell.padEnd(widths[c]))).join(sep);
+    const line = row.map((cell, c) => (c === last ? cell : cell.padEnd(widths[c]))).join(sep);
+    // An empty (or short) final cell still gets a separator in front of it, so
+    // strip any trailing spaces to keep the no-trailing-whitespace promise —
+    // e.g. [['a', '']] would otherwise format to 'a  '.
+    return line.replace(/ +$/, '');
   });
 }

@@ -37,4 +37,14 @@ describe('formatColumns', () => {
   it('does not pad a single-column grid', () => {
     expect(formatColumns([['alpha'], ['b']])).toEqual(['alpha', 'b']);
   });
+
+  it('emits no trailing whitespace when the final cell is empty', () => {
+    expect(formatColumns([['a', '']])).toEqual(['a']);
+    expect(
+      formatColumns([
+        ['key', 'value'],
+        ['empty', ''],
+      ]),
+    ).toEqual(['key    value', 'empty']);
+  });
 });
