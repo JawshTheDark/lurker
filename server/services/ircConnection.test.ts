@@ -863,3 +863,79 @@ describe('disconnect quit message (#324)', () => {
     expect(quit).toHaveBeenCalledWith('see ya');
   });
 });
+
+describe('self nick updates the input bar (#362)', () => {
+  function makeConn(): IrcConnection {
+    return new IrcConnection({
+      network: {
+        id: 1,
+        user_id: 1,
+        name: 'n',
+        host: 'irc.example.test',
+        port: 6697,
+        tls: 1,
+        trusted_certificates: 1,
+        nick: 'amiantos',
+        username: null,
+        realname: null,
+        server_password: null,
+        autoconnect: 1,
+        sasl_account: null,
+        sasl_password: null,
+        connect_commands: null,
+        position: 0,
+        created_at: new Date().toISOString(),
+      },
+      onEvent: () => {},
+    });
+  }
+
+  it('publishes own-nick for a self NICK change (covers /nick, forced, reclaim)', () => {
+    const conn = makeConn();
+    conn.client.user.nick = 'amiantos';
+    const publish = vi.fn<(event: unknown) => void>();
+    conn.publish = publish;
+    conn.client.emit('nick', { nick: 'amiantos', new_nick: 'amiantos_' });
+    expect(publish).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'own-nick', nick: 'amiantos_' }),
+    );
+  });
+
+  it('reports the registered fallback nick on connect, not the requested primary', () => {
+    const conn = makeConn();
+    conn.startLagPinger = () => {}; // don't leave an interval running
+    // irc-framework starts a periodic ping on 'registered'; with an unconnected
+    // test client its interval is NaN (a noisy TimeoutNaNWarning) — stub it out.
+    (conn.client as unknown as { startPeriodicPing: () => void }).startPeriodicPing = () => {};
+    const publish = vi.fn<(event: unknown) => void>();
+    conn.publish = publish;
+    conn.client.changeNick = vi.fn<(nick: string) => void>(); // don't touch a real socket
+    // Configured nick is taken → Lurker's fallback ladder renames us.
+    conn.client.user.nick = 'amiantos';
+    conn.client.emit('nick in use', { nick: 'amiantos' });
+    expect(conn.client.changeNick).toHaveBeenCalledWith('amiantos1');
+
+    // Crucial timing (#362): irc-framework updates c.user.nick from its OWN
+    // 'registered' listener, which runs AFTER the 'all' proxy that drives ours
+    // — so c.user.nick is still the STALE primary here. RPL_WELCOME carries the
+    // real nick as event.nick.
+    conn.client.emit('registered', { nick: 'amiantos1' });
+    conn.stopLagPinger();
+
+    const connectedStates = publish.mock.calls
+      .map((c) => c[0] as { type?: string; state?: string; nick?: string })
+      .filter((e) => e?.type === 'state' && e?.state === 'connected');
+    expect(connectedStates.at(-1)).toMatchObject({ nick: 'amiantos1' });
+    // The snapshot wsHub re-sends on 'connected' must agree — reading the stale
+    // c.user.nick here is what clobbered the input bar back to the primary.
+    expect(conn.snapshot()).toMatchObject({ nick: 'amiantos1' });
+  });
+
+  it('snapshot tracks a self nick change', () => {
+    const conn = makeConn();
+    conn.client.user.nick = 'amiantos1';
+    conn.currentNick = 'amiantos1';
+    conn.client.emit('nick', { nick: 'amiantos1', new_nick: 'amiantos' });
+    expect(conn.snapshot()).toMatchObject({ nick: 'amiantos' });
+  });
+});

@@ -187,6 +187,14 @@ export class IrcConnection {
   lagPendingSentAt: number;
   preRegistered: boolean;
   nickAttempt: number;
+  // Our live nick on this network, tracked independently of irc-framework's
+  // c.user.nick. The framework updates c.user.nick from its OWN 'registered'
+  // listener, which runs AFTER the 'all' proxy that drives our handler — so
+  // during the 'connected' dispatch (and the snapshot it triggers) c.user.nick
+  // is still the stale configured primary. We set this from the reliable
+  // RPL_WELCOME nick / NICK-event new nick so snapshot() can't ship a stale
+  // nick that clobbers the input bar after a taken-nick fallback (#362).
+  currentNick: string;
   regainNick: string | null;
   pendingRegainSetup: boolean;
   // Handle for this connection's entry in the identd map, while identd is
@@ -255,6 +263,9 @@ export class IrcConnection {
     // because a later 'nick in use' is the user's own /nick attempt.
     this.preRegistered = true;
     this.nickAttempt = 0;
+    // Seed with the configured nick; the registration/NICK handlers replace it
+    // with the live value once the server confirms one.
+    this.currentNick = network.nick;
     // Nick-regain state. When set, we're sitting on a fallback nick and have a
     // server-side MONITOR watch on the configured primary. Cleared once we
     // reclaim it, or the user manually picks a different nick, or the socket
@@ -530,6 +541,10 @@ export class IrcConnection {
       // `c.user.nick` is still the configured primary — useless for detecting
       // fallback. Take the confirmed nick straight from the RPL_WELCOME payload.
       const registeredNick = (event?.nick as string | undefined) || c.user.nick;
+      // Record the live nick BEFORE setState below — that publish triggers a
+      // synchronous snapshot (wsHub re-snapshots on 'connected'), and snapshot()
+      // must report the registered nick, not the stale c.user.nick (#362).
+      this.currentNick = registeredNick;
       const fallbackUsed = this.nickAttempt > 0 && registeredNick !== this.network.nick;
       this.startLagPinger();
       // Hydrate the DM-peer tracking set from open DM buffers — the union
@@ -1163,6 +1178,7 @@ export class IrcConnection {
           this.regainNick = null;
           this.pendingRegainSetup = false;
         }
+        this.currentNick = eventNewNick;
         this.publish({ type: 'own-nick', nick: eventNewNick });
       }
       const userhost = buildUserhost(event);
@@ -2226,7 +2242,11 @@ export class IrcConnection {
     return {
       networkId: this.network.id,
       state: this.state,
-      nick: this.client.user?.nick || this.network.nick,
+      // this.currentNick (server-tracked) not c.user.nick — the framework lags
+      // updating c.user.nick during the 'connected' dispatch that triggers this
+      // snapshot, which would otherwise ship a stale nick and clobber the input
+      // bar after a taken-nick fallback (#362).
+      nick: this.currentNick || this.network.nick,
       userModes: [...this.userModes].join(''),
       lagMs: this.lagMs,
       away: a.since
