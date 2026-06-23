@@ -18,7 +18,8 @@ export interface HighlightSummaryRule {
 }
 
 export function highlightKindLabel(kind: string): string {
-  return kind === 'full'
+  // 'plain' is the retired alias for whole-word, still accepted server-side.
+  return kind === 'full' || kind === 'plain'
     ? 'whole word'
     : kind === 'glob'
       ? 'glob'

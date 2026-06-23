@@ -58,6 +58,27 @@ describe('create', () => {
     const csv = highlightRulesService.create(user.id, { pattern: 'b', channels: '#ops, #dev' });
     expect(csv.ok && csv.rule!.channels).toEqual(['#ops', '#dev']);
   });
+
+  it('scopes to an owned network but rejects an unknown/foreign one', () => {
+    const ok = highlightRulesService.create(user.id, { pattern: 'c', networkId: net.id });
+    expect(ok.ok && ok.rule!.networkIds).toEqual([net.id]);
+    // nonexistent id
+    expect(highlightRulesService.create(user.id, { pattern: 'd', networkId: 999999 }).ok).toBe(
+      false,
+    );
+    // another user's network
+    const bob = createUser('hrs-bob');
+    const bobNet = createNetwork(bob.id, {
+      name: 'oftc',
+      host: 'h',
+      port: 6697,
+      tls: true,
+      nick: 'b',
+    }) as Network;
+    expect(highlightRulesService.create(user.id, { pattern: 'e', networkId: bobNet.id }).ok).toBe(
+      false,
+    );
+  });
 });
 
 describe('update', () => {
@@ -84,6 +105,9 @@ describe('update', () => {
     expect(toNet.ok && toNet.rule!.networkIds).toEqual([net.id]);
     const toGlobal = highlightRulesService.update(id, user.id, { networkId: null });
     expect(toGlobal.ok && toGlobal.rule!.networkIds).toEqual([]);
+    // re-scope to an unknown network is rejected (not an FK 500)
+    const bad = highlightRulesService.update(id, user.id, { networkId: 999999 });
+    expect(bad.ok).toBe(false);
   });
 
   it('validates regex on update when kind changes to regex', () => {

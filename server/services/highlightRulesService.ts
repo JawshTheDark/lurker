@@ -15,6 +15,18 @@ import {
 import type { CompiledRule } from './highlightEngine.js';
 import { compileRules } from './highlightEngine.js';
 import { normalizeChannelList, parseChannelList } from '../../shared/channels.js';
+import { ownsNetwork } from '../db/networks.js';
+
+// Resolve a requested scope networkId: null/absent = global; otherwise it must be
+// a positive integer the user actually owns (else a bad id is a SQLite FK 500 and
+// a foreign id would create a cross-tenant junction row). Returns `false` when the
+// id is present but invalid/unowned.
+function resolveNetworkId(userId: number, raw: unknown): number | null | false {
+  if (raw == null) return null;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n <= 0 || !ownsNetwork(userId, n)) return false;
+  return n;
+}
 
 // Unified with ignore's pattern kinds; 'glob' is highlight-only and 'plain' is
 // the retired alias for 'full', both still accepted so old rules keep working.
@@ -99,8 +111,8 @@ class HighlightRulesService extends EventEmitter {
       const regexErr = validateRegex(pattern);
       if (regexErr) return { ok: false, error: regexErr };
     }
-    const networkId =
-      typeof fields.networkId === 'number' && fields.networkId > 0 ? fields.networkId : null;
+    const networkId = resolveNetworkId(userId, fields.networkId);
+    if (networkId === false) return { ok: false, error: 'unknown network' };
     const rule = createRule(userId, {
       pattern: pattern || null,
       mask: mask || null,
@@ -175,8 +187,9 @@ class HighlightRulesService extends EventEmitter {
       // update instead of create-then-delete. null = global.
       const blocked = blockAuto('network scope');
       if (blocked) return blocked;
-      update.networkId =
-        typeof fields.networkId === 'number' && fields.networkId > 0 ? fields.networkId : null;
+      const nid = resolveNetworkId(userId, fields.networkId);
+      if (nid === false) return { ok: false, error: 'unknown network', status: 400 };
+      update.networkId = nid;
     }
 
     const finalKind = update.kind || existing.kind;

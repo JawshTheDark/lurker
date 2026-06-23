@@ -2158,7 +2158,8 @@ function runUnhighlight(argLine: string, networkId: number | null, target: strin
     return true;
   }
   const list = combinedHighlights(networkId);
-  const autoHint = 'auto-managed (your nick) — disable it in the Highlights settings pane instead';
+  const autoHint =
+    'auto-managed (tracks your nick) and read-only — it follows your nick automatically';
   if (/^\d+$/.test(arg)) {
     const item = list[Number(arg) - 1];
     if (!item) {
