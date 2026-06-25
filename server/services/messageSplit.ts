@@ -61,13 +61,15 @@ export interface MultilineWireMessage {
 }
 
 // Split a multi-line body into the sequence of PRIVMSGs that make up a
-// `draft/multiline` batch. Unlike splitSay, we PRESERVE blank lines (an empty
-// PRIVMSG with a trailing `:` round-trips as a blank line) so a pasted
-// paragraph survives intact. Each source line is byte-chunked the same way the
-// wire splitter does; the 2nd+ chunk of an over-long line carries concat so the
-// receiver glues it back without inserting a newline mid-line. max-bytes /
-// max-lines (the whole-batch budget the server advertises) is enforced by the
-// caller — here we only respect the per-message wire limit.
+// `draft/multiline` batch. Unlike splitSay, we PRESERVE interior blank lines (an
+// empty PRIVMSG with a trailing `:` round-trips as a blank line) so a pasted
+// paragraph's breaks survive intact. Leading/trailing blank lines are trimmed,
+// though — they'd otherwise send a spurious empty message that the legacy
+// splitSay path drops, making the two send paths disagree at newline edges
+// (#381 review). Each source line is byte-chunked the same way the wire splitter
+// does; the 2nd+ chunk of an over-long line carries concat so the receiver glues
+// it back without inserting a newline mid-line. The whole-batch max-bytes /
+// max-lines budget is enforced by partitionMultiline, not here.
 export function splitMultiline(text: string | null | undefined): MultilineWireMessage[] {
   if (text == null || text === '') return [];
   const out: MultilineWireMessage[] = [];
@@ -79,6 +81,12 @@ export function splitMultiline(text: string | null | undefined): MultilineWireMe
     chunk(line, MESSAGE_MAX_BYTES).forEach((part, i) => {
       out.push({ content: part, concat: i > 0 });
     });
+  }
+  // Drop blank wire messages at the edges (a concat continuation is never empty,
+  // so the !concat guard is belt-and-suspenders).
+  while (out.length > 0 && out[0].content === '' && !out[0].concat) out.shift();
+  while (out.length > 0 && out[out.length - 1].content === '' && !out[out.length - 1].concat) {
+    out.pop();
   }
   return out;
 }
@@ -95,10 +103,14 @@ export interface MultilineLimits {
 // Partition a multi-line body into one-or-more draft/multiline batches, each
 // within the server's advertised max-lines (count of wire PRIVMSGs) and
 // max-bytes (sum of content bytes). A logical line that had to be byte-split
-// into concat continuations is kept whole inside a single batch so it never
-// tears across a boundary. Returns one WireMessage[] per batch — so a body that
-// fits is a single batch (one logical message), and a larger one becomes N
-// batches instead of degrading to N raw lines. (#381)
+// into concat continuations is kept whole inside a single batch WHEN IT FITS —
+// but a single line bigger than one whole batch is torn across batches at wire
+// boundaries rather than packed into one over-budget batch. Overflowing a batch
+// would make the server reject it (`FAIL BATCH MULTILINE_MAX_BYTES`) and drop
+// the message entirely while we've already echoed it locally — silent data loss
+// (#381 review). Returns one WireMessage[] per batch — a body that fits is a
+// single batch (one logical message), a larger one becomes N batches instead of
+// degrading to N raw lines.
 export function partitionMultiline(
   text: string | null | undefined,
   limits: MultilineLimits,
@@ -114,20 +126,44 @@ export function partitionMultiline(
   const batches: MultilineWireMessage[][] = [];
   let cur: MultilineWireMessage[] = [];
   let curBytes = 0;
-  for (const line of logical) {
-    const lineBytes = line.reduce((n, w) => n + byteLen(w.content), 0);
-    if (
-      cur.length > 0 &&
-      (cur.length + line.length > limits.maxLines || curBytes + lineBytes > limits.maxBytes)
-    ) {
+  const flush = (): void => {
+    if (cur.length > 0) {
       batches.push(cur);
       cur = [];
       curBytes = 0;
     }
-    cur.push(...line);
-    curBytes += lineBytes;
+  };
+  for (const line of logical) {
+    const lineBytes = line.reduce((n, w) => n + byteLen(w.content), 0);
+    // Close the current batch if appending this whole line would overflow it.
+    if (
+      cur.length > 0 &&
+      (cur.length + line.length > limits.maxLines || curBytes + lineBytes > limits.maxBytes)
+    ) {
+      flush();
+    }
+    if (line.length <= limits.maxLines && lineBytes <= limits.maxBytes) {
+      // Fits in one batch — keep the (possibly concat-split) line whole.
+      cur.push(...line);
+      curBytes += lineBytes;
+    } else {
+      // Bigger than a whole batch on its own — tear it across batches at wire
+      // boundaries so no single batch exceeds the server's budget.
+      flush();
+      for (const w of line) {
+        const wBytes = byteLen(w.content);
+        if (
+          cur.length > 0 &&
+          (cur.length + 1 > limits.maxLines || curBytes + wBytes > limits.maxBytes)
+        ) {
+          flush();
+        }
+        cur.push(w);
+        curBytes += wBytes;
+      }
+    }
   }
-  if (cur.length > 0) batches.push(cur);
+  flush();
   return batches;
 }
 

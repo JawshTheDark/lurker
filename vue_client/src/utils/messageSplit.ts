@@ -106,39 +106,55 @@ export interface MultilineLimits {
 
 // How many draft/multiline batches a plain multi-line body will produce on a
 // network that negotiated the cap — i.e. how many logical messages the channel
-// will see. Returns 0 when the send won't be multiline at all (no embedded
+// will see. Returns 0 when the send won't be multiline at all (no interior
 // newline, or the network lacks the cap), so callers treat 0 as "fall back to
 // the wire-chunk estimate". 1 = a single batch (no flood); ≥2 = that many
 // messages, NOT N raw lines.
 //
-// This mirrors the server's partitionMultiline (server/services/messageSplit):
-// pack logical lines into batches under max-lines (count of wire PRIVMSGs) and
-// max-bytes (utf-8 content bytes). The per-line wire count is approximated as
-// ceil(bytes / MESSAGE_MAX_BYTES) rather than the word-greedy split — exact for
-// the common case (lines under the wire limit) and close enough otherwise; the
-// hint is guidance, the wire-level partition still happens server-side.
+// Mirrors the server's partitionMultiline (server/services/messageSplit): pack
+// lines into batches under max-lines (count of wire PRIVMSGs) and max-bytes
+// (utf-8 content bytes), tearing a single line that's bigger than a whole batch
+// across batches. Per-line wire count reuses chunksForLine (the same word-greedy
+// splitter behind chunkCountForSay) so the multiline count and the SPLIT/FLOOD
+// count agree. Edge blank lines are trimmed to match splitMultiline.
 export function multilineMessageCount(
   text: string | null | undefined,
   limits: MultilineLimits | null | undefined,
 ): number {
   if (!text || !limits) return 0;
-  if (!/\r\n|\n|\r/.test(text)) return 0;
-  let batches = 1;
+  const body = text.replace(/^(?:\r\n|\r|\n)+/, '').replace(/(?:\r\n|\r|\n)+$/, '');
+  if (!/\r\n|\n|\r/.test(body)) return 0;
+  let batches = 0;
   let curLines = 0;
   let curBytes = 0;
-  for (const line of text.split(/\r\n|\n|\r/)) {
-    const lineBytes = byteLen(line);
-    const wireLines = Math.max(1, Math.ceil(lineBytes / MESSAGE_MAX_BYTES));
-    if (
-      curLines > 0 &&
-      (curLines + wireLines > limits.maxLines || curBytes + lineBytes > limits.maxBytes)
-    ) {
+  const flush = (): void => {
+    if (curLines > 0) {
       batches += 1;
       curLines = 0;
       curBytes = 0;
     }
+  };
+  for (const line of body.split(/\r\n|\n|\r/)) {
+    const wireLines = Math.max(1, chunksForLine(line, MESSAGE_MAX_BYTES));
+    const lineBytes = byteLen(line);
+    if (
+      curLines > 0 &&
+      (curLines + wireLines > limits.maxLines || curBytes + lineBytes > limits.maxBytes)
+    ) {
+      flush();
+    }
+    if (wireLines > limits.maxLines || lineBytes > limits.maxBytes) {
+      // A single line too big for one batch spans several on its own.
+      flush();
+      batches += Math.max(
+        Math.ceil(wireLines / limits.maxLines),
+        Math.ceil(lineBytes / limits.maxBytes),
+      );
+      continue;
+    }
     curLines += wireLines;
     curBytes += lineBytes;
   }
+  flush();
   return batches;
 }

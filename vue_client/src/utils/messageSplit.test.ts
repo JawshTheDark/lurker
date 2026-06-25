@@ -128,4 +128,18 @@ describe('multilineMessageCount', () => {
     expect(multilineMessageCount(body, { maxBytes: 100, maxLines: 24 })).toBe(2); // 120 > 100
     expect(multilineMessageCount(body, { maxBytes: 200, maxLines: 24 })).toBe(1); // 120 ≤ 200
   });
+
+  it('ignores a trailing newline (matches splitMultiline edge-trim)', () => {
+    // 'hello\n' trims to one line → not a multiline send.
+    expect(multilineMessageCount('hello\n', limits)).toBe(0);
+    expect(multilineMessageCount('\na\nb\n', limits)).toBe(1); // edges trimmed, a/b survive
+  });
+
+  it('counts an oversized single line as the batches it spans', () => {
+    // 'a'*900 is a single word → word-greedy gives 3 wire lines (350+350+200);
+    // with max-lines 2 it can't fit one batch, so it spans 2. The leading short
+    // line opens a batch first → 3 total.
+    const body = `x\n${'a'.repeat(900)}`;
+    expect(multilineMessageCount(body, { maxBytes: 4096, maxLines: 2 })).toBe(3);
+  });
 });

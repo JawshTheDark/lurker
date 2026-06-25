@@ -27,6 +27,7 @@ import { isNodeMode } from '../utils/edition.js';
 import { deriveIdent } from '../utils/ident.js';
 import { registerIdent, unregisterIdent, isIdentdEnabled } from './identd.js';
 import { partitionMultiline, reassembleMultiline } from './messageSplit.js';
+import type { MultilineLimits } from './messageSplit.js';
 import { randomBytes } from 'node:crypto';
 
 // Optional source address for outbound IRC connections (LURKER_OUTGOING_ADDR),
@@ -2137,7 +2138,7 @@ export class IrcConnection {
   // pair isn't negotiated. A dimension the server omits falls back to a
   // conservative default so we never overflow it — worst case a very large
   // paste takes the legacy split path instead of a batch.
-  multilineLimits(): { maxBytes: number; maxLines: number } | null {
+  multilineLimits(): MultilineLimits | null {
     const cap = this.client.network?.cap as
       | { enabled?: string[]; available?: Map<string, string> }
       | undefined;
@@ -2196,12 +2197,10 @@ export class IrcConnection {
   // glue with none. flushMultiline emits the reassembled message on batch end.
   accumulateMultiline(event: Record<string, unknown>): void {
     const id = (event.batch as { id?: string } | undefined)?.id;
-    if (!id) {
-      // No reference to group by — surface it as a standalone message rather
-      // than dropping it. (Shouldn't happen: irc-framework always sets batch.id.)
-      this.client.emit('message', { ...event, batch: undefined });
-      return;
-    }
+    // irc-framework always sets batch.id alongside batch.type, so a multiline
+    // event without an id can't occur; guard rather than re-dispatch (which
+    // would be 'message' re-entrancy) and move on.
+    if (!id) return;
     const line = (event.message as string | undefined) ?? '';
     const existing = this.multilineBatches.get(id);
     if (!existing) {

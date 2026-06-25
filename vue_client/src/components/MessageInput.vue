@@ -155,6 +155,7 @@ import {
   chunkCountForSay,
   chunkCountForAction,
   multilineMessageCount,
+  type MultilineLimits,
 } from '../utils/messageSplit.js';
 import { applySpoilerMarkup } from '../utils/spoilerMarkup.js';
 import { buildNickCandidates } from '../utils/nickCompletion.js';
@@ -478,7 +479,7 @@ function computeChunks(raw: string): { chunks: number; isAction: boolean } {
 
 // Whether the active network advertised draft/multiline limits. Drives the
 // multiline-aware split gating below. (#381)
-function currentMultilineLimits(): { maxBytes: number; maxLines: number } | null {
+function currentMultilineLimits(): MultilineLimits | null {
   const nid = active.value?.networkId;
   if (nid == null) return null;
   return networks.states[nid]?.multilineLimits ?? null;

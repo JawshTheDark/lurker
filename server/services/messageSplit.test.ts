@@ -151,6 +151,18 @@ describe('splitMultiline', () => {
     ]);
   });
 
+  it('trims leading/trailing blank lines (no spurious edge messages)', () => {
+    // 'hello\n' must not send a trailing empty PRIVMSG the legacy path would
+    // drop. Interior blanks still survive; pure-blank input is empty.
+    expect(splitMultiline('hello\n')).toEqual([{ content: 'hello', concat: false }]);
+    expect(splitMultiline('\na\n\nb\n')).toEqual([
+      { content: 'a', concat: false },
+      { content: '', concat: false },
+      { content: 'b', concat: false },
+    ]);
+    expect(splitMultiline('\n\n')).toEqual([]);
+  });
+
   it('byte-splits an over-long line and marks the continuations concat', () => {
     // One logical line over the per-message budget: the 2nd+ chunks carry
     // concat so the receiver rejoins them without inserting a newline.
@@ -209,16 +221,39 @@ describe('partitionMultiline', () => {
     expect(batches).toHaveLength(3);
   });
 
-  it('never tears a byte-split (concat) logical line across batches', () => {
-    // 'a'*400 → [350 + 50(concat)] = 2 wire messages, one logical line. Even at
-    // max-lines 1 it stays together in one batch; the next line opens a new one.
-    const batches = partitionMultiline(`${'a'.repeat(400)}\nb`, { maxBytes: 4096, maxLines: 1 });
-    expect(batches).toHaveLength(2);
+  it('keeps a byte-split (concat) logical line whole when it fits a batch', () => {
+    // 'a'*400 → [350 + 50(concat)] = 2 wire messages, 400 bytes — well within
+    // the budget, so it stays in one batch alongside the next line.
+    const batches = partitionMultiline(`${'a'.repeat(400)}\nb`, big);
+    expect(batches).toHaveLength(1);
     expect(batches[0]).toEqual([
       { content: 'a'.repeat(350), concat: false },
       { content: 'a'.repeat(50), concat: true },
+      { content: 'b', concat: false },
     ]);
-    expect(batches[1]).toEqual([{ content: 'b', concat: false }]);
+  });
+
+  it('tears a single line that is bigger than a whole batch (no overflow, no data loss)', () => {
+    // max-lines 1 can't hold the 2-wire line whole, so it must split across
+    // batches rather than emit one over-budget batch the server would reject.
+    const byLines = partitionMultiline(`${'a'.repeat(400)}\nb`, { maxBytes: 4096, maxLines: 1 });
+    expect(byLines.map((b) => b.map((w) => w.content))).toEqual([
+      ['a'.repeat(350)],
+      ['a'.repeat(50)],
+      ['b'],
+    ]);
+
+    // Same when the byte budget is the binding constraint.
+    const byBytes = partitionMultiline('a'.repeat(400), { maxBytes: 380, maxLines: 24 });
+    expect(byBytes.map((b) => b.map((w) => w.content))).toEqual([
+      ['a'.repeat(350)],
+      ['a'.repeat(50)],
+    ]);
+    // Every batch is within budget — the whole point.
+    for (const batch of byBytes) {
+      const bytes = batch.reduce((n, w) => n + new TextEncoder().encode(w.content).byteLength, 0);
+      expect(bytes).toBeLessThanOrEqual(380);
+    }
   });
 });
 
