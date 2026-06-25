@@ -16,7 +16,10 @@ export class ReplayCache {
   private readonly maxEntries: number;
   private readonly now: () => number;
 
-  constructor(maxEntries = 8192, now: () => number = Date.now) {
+  // Generous default so a busy tenant's within-window traffic doesn't evict
+  // another tenant's still-live entry under realistic load (the cap is a
+  // backstop; window expiry does the real eviction).
+  constructor(maxEntries = 100_000, now: () => number = Date.now) {
     this.maxEntries = maxEntries;
     this.now = now;
   }
@@ -30,16 +33,22 @@ export class ReplayCache {
     const now = this.now();
     const expiry = this.seen.get(key);
     if (expiry !== undefined && expiry > now) return false; // live replay
+    // Delete-then-set so a refreshed (expired) key moves to the end — keeping
+    // Map insertion order aligned with expiry order under a constant ttl.
+    if (expiry !== undefined) this.seen.delete(key);
     this.seen.set(key, now + ttlMs);
-    if (this.seen.size > this.maxEntries) this.evict(now);
+    this.evict(now);
     return true;
   }
 
   private evict(now: number): void {
+    // Insertion order ≈ expiry order, so the expired entries are at the front;
+    // stop at the first live one rather than scanning the whole map.
     for (const [k, exp] of this.seen) {
-      if (exp <= now) this.seen.delete(k);
+      if (exp > now) break;
+      this.seen.delete(k);
     }
-    // Map preserves insertion order — drop oldest until back under the cap.
+    // Backstop cap: drop oldest (soonest-to-expire) until back under the cap.
     while (this.seen.size > this.maxEntries) {
       const oldest = this.seen.keys().next().value;
       if (oldest === undefined) break;

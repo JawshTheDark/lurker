@@ -29,9 +29,22 @@ export class RateLimiter {
   private lastSent = new Map<string, number>();
   private incoming = new Map<string, IncomingBucket>();
   private readonly now: () => number;
+  private readonly maxKeys: number;
 
-  constructor(now: () => number = Date.now) {
+  // `maxKeys` caps each map so an attacker churning nicks can't allocate
+  // unbounded buckets (the incoming bucket is created BEFORE signature
+  // verification). Maps preserve insertion order, so eviction drops the oldest.
+  constructor(now: () => number = Date.now, maxKeys = 50_000) {
     this.now = now;
+    this.maxKeys = maxKeys;
+  }
+
+  private cap(map: Map<string, unknown>): void {
+    while (map.size > this.maxKeys) {
+      const oldest = map.keys().next().value;
+      if (oldest === undefined) break;
+      map.delete(oldest);
+    }
   }
 
   /** True if sending a KEYREQ to `key` is allowed now; records the attempt. */
@@ -40,6 +53,7 @@ export class RateLimiter {
     const ts = this.lastSent.get(key);
     if (ts !== undefined && now - ts < OUTGOING_GAP_MS) return false;
     this.lastSent.set(key, now);
+    this.cap(this.lastSent);
     return true;
   }
 
@@ -50,6 +64,7 @@ export class RateLimiter {
     if (!bucket) {
       bucket = { recent: [], backoffUntil: null };
       this.incoming.set(key, bucket);
+      this.cap(this.incoming);
     }
     if (bucket.backoffUntil !== null) {
       if (now < bucket.backoffUntil) return false;
