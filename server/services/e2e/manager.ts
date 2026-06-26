@@ -1081,13 +1081,18 @@ export class E2eManager {
    *  Returns false if there was nothing to decline. */
   declinePeer(userId: number, networkId: number, handle: string, channel: string): boolean {
     try {
+      // Only act when there's actually a pending inbound handshake to reject —
+      // otherwise `/e2e decline` on an established peer would silently behave like
+      // `/e2e revoke` (Copilot review on #408). No pending → no-op.
       const hadPending = this.pendingInbound.delete(
         this.inboundKey(userId, networkId, handle, channel),
       );
+      if (!hadPending) return false;
+      // Reject it: revoke the peer so a re-sent KEYREQ won't re-prompt.
       const peer = keyring.getPeerByHandle(userId, networkId, handle);
       if (peer) keyring.setPeerStatus(userId, networkId, peer.fingerprint, 'revoked');
       keyring.updateIncomingStatus(userId, networkId, handle, channel, 'revoked');
-      return hadPending || peer !== null;
+      return true;
     } catch (err) {
       console.warn(`e2e decline ${handle}: ${(err as Error).message}`);
       return false;

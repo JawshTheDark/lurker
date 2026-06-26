@@ -484,24 +484,39 @@ describe('/e2e command surface — 1d', () => {
 });
 
 describe('E2eManager 1d management methods', () => {
-  it('decline revokes a peer; unrevoke restores it', () => {
-    const fp = new Uint8Array(16).fill(7);
-    const pub = new Uint8Array(32).fill(9);
-    keyring.upsertPeer(1, 1, {
-      fingerprint: fp,
-      pubkey: pub,
-      lastHandle: '~zed@h',
-      lastNick: 'zed',
-      firstSeen: 1,
-      lastSeen: 1,
-      globalStatus: 'pending',
-    });
+  it('decline rejects a PENDING inbound handshake (not an established peer); unrevoke restores', () => {
+    // A fresh identity (zed = user 3) so its fingerprint isn't already pinned by
+    // another test under a different handle (which would TOFU-block the KEYREQ).
+    const zed = createUser('e2e-zed').id;
+    e2eManager.setChannelConfig(1, 1, '#dz', true, 'normal'); // normal mode → caches a prompt
+    const req = e2eManager.buildKeyReq(zed, zed, '#dz')!;
+    const out = e2eManager.handleHandshakeBody(1, 1, '~zed@h', 'zed', req)!;
+    expect(out.notice?.text).toMatch(/accept/); // the normal-mode prompt was cached
+
+    // Decline the pending handshake → peer revoked so a re-KEYREQ won't re-prompt.
     expect(e2eManager.declinePeer(1, 1, '~zed@h', '#dz')).toBe(true);
     expect(keyring.getPeerByHandle(1, 1, '~zed@h')?.globalStatus).toBe('revoked');
+    // Declining again with nothing pending is a no-op (NOT a second revoke).
+    expect(e2eManager.declinePeer(1, 1, '~zed@h', '#dz')).toBe(false);
+
     expect(e2eManager.unrevokePeer(1, 1, '~zed@h')).toBe(true);
     expect(keyring.getPeerByHandle(1, 1, '~zed@h')?.globalStatus).toBe('trusted');
-    // unrevoke on a non-revoked peer is a no-op
-    expect(e2eManager.unrevokePeer(1, 1, '~zed@h')).toBe(false);
+    expect(e2eManager.unrevokePeer(1, 1, '~zed@h')).toBe(false); // already trusted
+  });
+
+  it('decline with nothing pending does NOT revoke an established peer (review #408)', () => {
+    const fp = new Uint8Array(16).fill(21);
+    keyring.upsertPeer(1, 1, {
+      fingerprint: fp,
+      pubkey: new Uint8Array(32).fill(22),
+      lastHandle: '~steady@h',
+      lastNick: 'steady',
+      firstSeen: 1,
+      lastSeen: 1,
+      globalStatus: 'trusted',
+    });
+    expect(e2eManager.declinePeer(1, 1, '~steady@h', '#nope')).toBe(false);
+    expect(keyring.getPeerByHandle(1, 1, '~steady@h')?.globalStatus).toBe('trusted');
   });
 
   it('channelStatus reports enabled, mode, and peer count', () => {

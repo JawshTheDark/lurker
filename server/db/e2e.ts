@@ -516,12 +516,25 @@ export function listIncomingSessionMeta(
       ? listIncomingMetaStmt.all(userId, networkId)
       : listIncomingMetaForChannelStmt.all(userId, networkId, channel)
   ) as Array<{ handle: string; channel: string; fingerprint: Buffer; status: string }>;
-  return rows.map((r) => ({
-    handle: r.handle,
-    channel: r.channel,
-    fingerprint: fromBlob(r.fingerprint, 16),
-    status: parseTrustStatus(r.status),
-  }));
+  // Skip a single unreadable row (e.g. a truncated fingerprint blob from a bad
+  // restore) rather than aborting the whole listing, so `/e2e list` stays useful
+  // — matching listTrustedSessionsForChannel (Copilot review on #408).
+  const out: SessionMeta[] = [];
+  for (const r of rows) {
+    try {
+      out.push({
+        handle: r.handle,
+        channel: r.channel,
+        fingerprint: fromBlob(r.fingerprint, 16),
+        status: parseTrustStatus(r.status),
+      });
+    } catch (err) {
+      console.warn(
+        `e2e keyring: skipping unreadable session meta ${r.handle}/${r.channel}: ${(err as Error).message}`,
+      );
+    }
+  }
+  return out;
 }
 
 // ─── outgoing sessions (our key, per channel) ────────────────────────────────
