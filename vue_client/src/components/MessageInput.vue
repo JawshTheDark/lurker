@@ -2011,6 +2011,8 @@ const COMMANDS_LINES = [
   '  /away [message]        — set away across every network (no arg clears)',
   '  /back                  — clear away',
   '  /whois <nick>          — query user info (renders in server buffer)',
+  '  /ctcp <nick> <type>    — CTCP query (VERSION/PING/TIME/CLIENTINFO/SOURCE)',
+  '  /ping [nick]           — CTCP ping a user for round-trip latency',
   '  /kick <nick> [reason]  — kick from current channel',
   '  /kickban <nick> [msg]  — kick and ban in one step',
   '  /op <nick…>            — give op (also /deop /voice /devoice /halfop /dehalfop)',
@@ -2554,6 +2556,44 @@ function handleCommand(line: string, networkId: number | null, target: string): 
     }
     case 'me':
       return ackedSend({ type: 'action', networkId, target, text: argLine }, argLine);
+    case 'ctcp': {
+      // /ctcp <nick> <type> [args] — send a CTCP query (#263). The cell frames
+      // and sends it, echoes locally, and routes the reply back to this buffer.
+      const who = rest[0];
+      const type = rest[1];
+      if (!who || !type) {
+        localInfo(networkId, target, 'usage: /ctcp <nick> <type> [args] — e.g. /ctcp bob VERSION');
+        return true;
+      }
+      const ctcpArgs = rest.slice(2).join(' ');
+      return sendOrToast(
+        {
+          type: 'ctcp',
+          networkId,
+          target: who,
+          issuingTarget: target,
+          ctcpType: type,
+          args: ctcpArgs,
+        },
+        line,
+      );
+    }
+    case 'ping': {
+      // /ping [nick] — CTCP PING for round-trip latency (#263). Defaults to the
+      // current DM peer when no nick is given — i.e. the active buffer is not a
+      // channel (any prefix #&!+, matching the server's isChannelContext) and not
+      // a pseudo-buffer (`:server:`/system), so /ping in an `&local` channel
+      // doesn't ping the whole channel.
+      const who = rest[0] || (target && !/^[#&!+:]/.test(target) ? target : '');
+      if (!who) {
+        localInfo(networkId, target, 'usage: /ping <nick> (a nick is only optional inside a DM)');
+        return true;
+      }
+      return sendOrToast(
+        { type: 'ctcp', networkId, target: who, issuingTarget: target, ctcpType: 'PING', args: '' },
+        line,
+      );
+    }
     case 'msg':
     case 'query': {
       const [who, ...msgParts] = rest;

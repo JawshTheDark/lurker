@@ -21,7 +21,7 @@ import ignoreRulesService from './ignoreRulesService.js';
 import { decideStamp } from './insertDecisions.js';
 import * as systemLog from './systemLog.js';
 import { effectiveSetting } from './settingsService.js';
-import { IRC_VERSION, APP_VERSION } from '../utils/userAgent.js';
+import { APP_VERSION } from '../utils/userAgent.js';
 import { findUserById } from '../db/users.js';
 import { isNodeMode } from '../utils/edition.js';
 import { deriveIdent } from '../utils/ident.js';
@@ -33,6 +33,8 @@ import type { UserNotice } from './e2e/manager.js';
 import { contextKey, isChannelContext } from './e2e/context.js';
 import { CTCP_TAG, WIRE_PREFIX } from './e2e/constants.js';
 import { e2eDbg } from './e2e/debug.js';
+import { RateLimiter } from './e2e/rateLimiter.js';
+import { buildCtcpReply, formatCtcpReplyLine, formatCtcpRequestLine, parseCtcp } from './ctcp.js';
 import { getChannelConfig as getE2eChannelConfig } from '../db/e2e.js';
 import type { ChannelMode } from '../db/e2e.js';
 import { randomBytes } from 'node:crypto';
@@ -67,7 +69,16 @@ const NON_PERSISTED_TYPES = new Set([
   // RPE2E status lines are transient echoes (like /help output), surfaced via
   // publishEphemeral — never write them to history (#382).
   'e2e',
+  // CTCP request/reply notices are transient status, surfaced via
+  // publishEphemeral — never persisted (#263).
+  'ctcp',
 ]);
+
+// Forget an outbound CTCP request we never got a reply to after a minute, so the
+// routing map can't grow unbounded.
+const CTCP_OUTSTANDING_TTL_MS = 60_000;
+// Cap distinct outstanding (nick,type) keys; evict the oldest when exceeded.
+const CTCP_OUTSTANDING_MAX_KEYS = 200;
 
 // How recently the user must have sent a real message to a target for a send
 // rejection (404/477/531) to be attributed to that message and surfaced inline.
@@ -284,15 +295,29 @@ export class IrcConnection {
   // so far; flushed as one reassembled message on 'batch end draft/multiline'
   // and cleared on socket close so a never-closed batch can't leak. (#381)
   multilineBatches: Map<string, { event: Record<string, unknown>; text: string }>;
+  // Per-peer rate limiter for inbound CTCP (requests AND replies). Being
+  // per-peer, one flooding peer can't make the cell spew NOTICEs, spam the
+  // buffer, OR suppress CTCP from everyone else — it only exhausts its own
+  // bucket. Reuses the same limiter the E2E handshake path uses for the
+  // identical inbound-flood threat.
+  ctcpLimiter: RateLimiter;
+  // Outstanding outbound CTCP requests we sent, so a reply routes back to the
+  // buffer the /ctcp was issued from. Key = `${nick-lc} ${TYPE}` → a FIFO queue
+  // of issuing buffers, so two concurrent same-type queries to one nick route
+  // their replies back in order. Bounded + TTL-pruned on access.
+  ctcpOutstanding: Map<string, Array<{ issuingTarget: string; sentAt: number }>>;
 
   constructor({ network, onEvent }: { network: Network; onEvent: (event: EnrichedEvent) => void }) {
     this.network = network;
     this.onEvent = onEvent;
-    // `version` is the string irc-framework returns in response to CTCP
-    // VERSION queries — without this, peers see the library's default
-    // "node.js irc-framework". Identifying as Lurker lets server operators
-    // tell our traffic apart from generic library bots.
-    this.client = new IRC.Client({ version: IRC_VERSION });
+    // ALL CTCP handling lives in our 'ctcp request' handler (VERSION/PING/TIME/
+    // SOURCE/CLIENTINFO, rate-limited + surfaced), so irc-framework's built-in
+    // VERSION auto-reply is disabled with `version: false`. That MUST go in the
+    // connect() dict, NOT here: connect() overwrites client.options with its dict
+    // (client.js:202), so a constructor `version` doesn't survive — exactly the
+    // pitfall the enable_chghost note on the connect() call documents. Mirrors
+    // The Lounge, which uses the same library the same way. See services/ctcp.ts.
+    this.client = new IRC.Client();
     this.client.requestCap('message-tags');
     // extended-monitor (IRCv3): asks the server to relay away-notify (and the
     // other notify caps irc-framework already negotiates) for nicks on our
@@ -358,6 +383,8 @@ export class IrcConnection {
     this.lastUserSendAt = new Map();
     this.autoWhoTargets = new Set();
     this.multilineBatches = new Map();
+    this.ctcpLimiter = new RateLimiter();
+    this.ctcpOutstanding = new Map();
     this.bind();
   }
 
@@ -725,6 +752,11 @@ export class IrcConnection {
       this.userModes.clear();
       this.autoWhoTargets.clear();
       this.multilineBatches.clear();
+      // CTCP routing/limit state is per-socket: a stale outstanding entry would
+      // mis-route a same-type reply on the new socket, and a drained limiter
+      // would drop the new socket's first probes. Reset both (#263).
+      this.ctcpOutstanding.clear();
+      this.ctcpLimiter = new RateLimiter();
       this.stopLagPinger();
       this.cancelPendingConnectCommands();
       this.lagMs = null;
@@ -1184,7 +1216,16 @@ export class IrcConnection {
         () =>
           `ctcp-response from ${event.nick}!${event.ident}@${event.hostname} type=${event.type} body=${String(event.message).slice(0, 140)}`,
       );
-      if (event.type !== CTCP_TAG) return;
+      // Response `event.type` is raw-case (the library uppercases request types
+      // but not response types), so compare case-insensitively — otherwise a
+      // lowercase `rpee2e` NOTICE would slip past and surface as a bogus CTCP
+      // reply line instead of routing to the E2E path.
+      if (String(event.type).toUpperCase() !== CTCP_TAG) {
+        // A standard CTCP reply (VERSION/PING/TIME/…) — someone answered a query
+        // we sent. Surface it; RPE2E claims only the RPEE2E tag.
+        this.handleInboundCtcpReply(event);
+        return;
+      }
       const senderNick = (event.nick as string) || null;
       const senderHandle = buildE2eHandle(event);
       const body = event.message as string | undefined;
@@ -1211,17 +1252,19 @@ export class IrcConnection {
       if (outcome.notice) this.surfaceE2eNotice(outcome.notice, outcome.channel);
     });
 
-    // Diagnostic only: some clients send CTCP over PRIVMSG (→ 'ctcp request')
-    // instead of NOTICE. The RPE2E spec uses NOTICE, but if a peer's handshake
-    // arrives here we'd otherwise never see it — log it under LURKER_E2E_DEBUG so
-    // an interop mismatch is visible rather than silent.
+    // Inbound CTCP request (a peer probed us over PRIVMSG, e.g. VERSION/PING).
+    // ACTION never reaches here — irc-framework emits it as an 'action' message.
     c.on('ctcp request', (event: Record<string, unknown>) => {
       if (event.type === CTCP_TAG) {
+        // RPE2E rides NOTICE; an RPEE2E PRIVMSG is a misconfigured peer, not a
+        // real CTCP query. Log it for interop debugging and don't auto-answer.
         e2eDbg(
           () =>
             `ctcp-REQUEST (PRIVMSG, not NOTICE!) from ${event.nick}!${event.ident}@${event.hostname} body=${String(event.message).slice(0, 140)}`,
         );
+        return;
       }
+      this.handleInboundCtcpRequest(event);
     });
 
     c.on('join', (event: Record<string, unknown>) => {
@@ -2254,6 +2297,12 @@ export class IrcConnection {
       account,
       auto_reconnect: true,
       auto_reconnect_max_retries: 0,
+      // Disable irc-framework's built-in CTCP VERSION auto-reply so our own
+      // handler owns VERSION (#263). Like enable_chghost below, this MUST ride
+      // the connect() dict — connect() overwrites client.options, so a
+      // constructor value is lost and `version` falls back to the truthy default
+      // 'node.js irc-framework'. See client.js:202 + _applyDefaultOptions.
+      version: false,
       // Request the `chghost` cap so SASL-cloaked vhost changes (Libera et al.)
       // arrive as CHGHOST events instead of silently. Must go through connect()
       // — irc-framework overwrites client.options with this dict, so passing
@@ -2288,6 +2337,120 @@ export class IrcConnection {
     // service or bot doesn't spin up presence tracking for it.
     this.noteUserSend(target);
     this.client.notice(target, text);
+  }
+
+  // --- CTCP (#263) -----------------------------------------------------------
+
+  // Map key for an outstanding outbound CTCP request, so its reply routes back
+  // to the buffer it was issued from.
+  private ctcpKey(nick: string, type: string): string {
+    return `${nick.toLowerCase()} ${type.toUpperCase()}`;
+  }
+
+  private isSelfNick(nick: string | undefined): boolean {
+    return !!nick && !!this.currentNick && nick.toLowerCase() === this.currentNick.toLowerCase();
+  }
+
+  // A stable per-peer key for rate limiting inbound CTCP: the sender's
+  // ident@host when known, else the nick (lowercased). Mirrors how the E2E path
+  // keys peers, so a nick-churning flooder still maps to bounded state.
+  private ctcpPeerKey(event: Record<string, unknown>): string {
+    const ident = (event.ident as string) || '';
+    const host = (event.hostname as string) || '';
+    const nick = (event.nick as string) || '';
+    return (ident && host ? `${ident}@${host}` : nick).toLowerCase();
+  }
+
+  private pruneCtcpOutstanding(now: number): void {
+    for (const [k, queue] of this.ctcpOutstanding) {
+      const live = queue.filter((e) => now - e.sentAt <= CTCP_OUTSTANDING_TTL_MS);
+      if (live.length === 0) this.ctcpOutstanding.delete(k);
+      else if (live.length !== queue.length) this.ctcpOutstanding.set(k, live);
+    }
+    // Backstop: evict the OLDEST keys (Map preserves insertion order) rather than
+    // flushing everything, so a burst past the cap doesn't lose ALL routing.
+    while (this.ctcpOutstanding.size > CTCP_OUTSTANDING_MAX_KEYS) {
+      const oldest = this.ctcpOutstanding.keys().next().value;
+      if (oldest === undefined) break;
+      this.ctcpOutstanding.delete(oldest);
+    }
+  }
+
+  // A CTCP status line (request probe, reply, or outbound echo). Transient
+  // status like /help output — never persisted (NON_PERSISTED_TYPES).
+  surfaceCtcp(target: string, text: string): void {
+    this.publishEphemeral({ type: 'ctcp', level: 'info', target, text });
+  }
+
+  // Auto-answer an inbound CTCP request (VERSION/PING/TIME/CLIENTINFO/SOURCE)
+  // and show the user they were probed. Self-echoes ignored; rate-limited
+  // per-peer so a flood from one nick can't spew NOTICEs, spam the buffer, or
+  // starve replies to other peers.
+  handleInboundCtcpRequest(event: Record<string, unknown>): void {
+    if (this.disposed) return;
+    const nick = event.nick as string | undefined;
+    // Our own outbound CTCP echoed back by an echo-message server — not a probe.
+    if (!nick || this.isSelfNick(nick)) return;
+    const { type, args } = parseCtcp(String(event.message ?? ''));
+    // Parse + validate BEFORE the rate-limit check so a malformed/empty CTCP
+    // can't burn a peer's budget and suppress its legitimate probes.
+    if (!type) return;
+    if (!this.ctcpLimiter.allowIncoming(this.ctcpPeerKey(event))) return;
+    const reply = buildCtcpReply(type, args, new Date());
+    if (reply !== null) this.client.ctcpResponse(nick, type, reply);
+    this.surfaceCtcp(this.serverTarget(), formatCtcpRequestLine(nick, type, reply !== null));
+  }
+
+  // Surface an inbound CTCP reply (a peer answered a query we sent), routed back
+  // to the buffer the /ctcp was issued from. A SOLICITED reply (matches an
+  // outstanding request) always shows; an UNSOLICITED one is rate-limited
+  // per-peer so a NOTICE flood can't spam the buffer.
+  handleInboundCtcpReply(event: Record<string, unknown>): void {
+    if (this.disposed) return;
+    const nick = event.nick as string | undefined;
+    if (!nick || this.isSelfNick(nick)) return;
+    const { type, args } = parseCtcp(String(event.message ?? ''));
+    if (!type) return;
+    const now = Date.now();
+    this.pruneCtcpOutstanding(now);
+    const key = this.ctcpKey(nick, type);
+    const queue = this.ctcpOutstanding.get(key);
+    const pending = queue?.shift(); // FIFO: the oldest matching query
+    if (queue && queue.length === 0) this.ctcpOutstanding.delete(key);
+    if (!pending && !this.ctcpLimiter.allowIncoming(this.ctcpPeerKey(event))) return;
+    let target = pending?.issuingTarget ?? this.serverTarget();
+    // The issuing buffer may have been closed while the reply was in flight — a
+    // wsHub guard discards ephemeral events to a closed buffer, so don't lose the
+    // answer: fall back to the server buffer.
+    if (
+      target !== this.serverTarget() &&
+      isBufferClosed(this.network.user_id, this.network.id, target)
+    ) {
+      target = this.serverTarget();
+    }
+    this.surfaceCtcp(target, formatCtcpReplyLine(nick, type, args, now));
+  }
+
+  // Send an outbound CTCP request (/ctcp, /ping). `issuingTarget` is the buffer
+  // the command was typed in: the local echo lands there and the reply routes
+  // back to it. A bare PING gets an epoch-ms payload so the reply yields a
+  // round-trip latency.
+  sendCtcpRequest(issuingTarget: string, target: string, type: string, args: string): void {
+    if (this.disposed) return;
+    const issuing = issuingTarget || this.serverTarget();
+    const t = type.toUpperCase();
+    const now = Date.now();
+    let payload = args.trim();
+    if (t === 'PING' && !payload) payload = String(now);
+    this.noteUserSend(target);
+    if (payload) this.client.ctcpRequest(target, t, payload);
+    else this.client.ctcpRequest(target, t);
+    this.pruneCtcpOutstanding(now);
+    const key = this.ctcpKey(target, t);
+    const queue = this.ctcpOutstanding.get(key) ?? [];
+    queue.push({ issuingTarget: issuing, sentAt: now });
+    this.ctcpOutstanding.set(key, queue);
+    this.surfaceCtcp(issuing, `→ CTCP ${t} to ${target}`);
   }
 
   // --- RPE2E (#382) ----------------------------------------------------------

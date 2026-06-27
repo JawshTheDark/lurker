@@ -271,6 +271,7 @@ function applyEvent(event: any): void {
       break;
     }
     case 'e2e': // RPE2E status line (#382) — same routing as a server notice.
+    case 'ctcp': // CTCP request/reply/echo status line (#263) — same routing.
     case 'motd':
     case 'error': {
       const decorated = { ...event, target: event.target || `:server:${event.networkId}` };

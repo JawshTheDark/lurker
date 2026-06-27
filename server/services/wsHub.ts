@@ -127,6 +127,7 @@ const PAUSED_BLOCKED_TYPES = new Set([
   'back',
   'typing',
   'e2e',
+  'ctcp',
 ]);
 
 // Options bag for fanOut.
@@ -269,9 +270,16 @@ export function decorateMessage(userId: number, event: MessageEvent): DecoratedE
   const dm = isDirect(event) && !event.self;
   const target = event.target || '';
   const isChannel = target.startsWith('#');
+  // CTCP request/reply/echo lines are status, not conversation — never notify,
+  // even when routed to a notify-always channel (otherwise running /ctcp from
+  // such a channel would self-notify on your own echo). (#263)
+  const isStatus = event.type === 'ctcp';
   const notifyAlways =
-    isChannel && !event.self && getChannelNotifyAlways(userId, event.networkId, target);
-  const notify = matched || dm || notifyAlways;
+    !isStatus &&
+    isChannel &&
+    !event.self &&
+    getChannelNotifyAlways(userId, event.networkId, target);
+  const notify = !isStatus && (matched || dm || notifyAlways);
   return {
     ...event,
     matched,
@@ -1503,6 +1511,41 @@ export function attachWsHub(httpServer: HttpServer, sessionSecret: string) {
             networkId,
             target,
             text: '/e2e: this network isn’t connected',
+            time: new Date().toISOString(),
+            self: false,
+          } as unknown as MessageEvent;
+          fanOut(userId, { ...decorateMessage(userId, evt), kind: 'irc' });
+        }
+        break;
+      }
+      case 'ctcp': {
+        // Outbound CTCP request (/ctcp <nick> <type> [args], /ping <nick>, #263).
+        // The cell frames + sends it, echoes locally, and routes the reply back
+        // to `issuingTarget`. Like /e2e it needs a live connection, so on a
+        // disconnected network we surface that to the issuing buffer.
+        const networkId = msg.networkId == null ? NaN : Number(msg.networkId);
+        const ctcpTarget = typeof msg.target === 'string' ? msg.target.trim() : '';
+        const ctcpType = typeof msg.ctcpType === 'string' ? msg.ctcpType.trim() : '';
+        const ctcpArgs = typeof msg.args === 'string' ? msg.args : '';
+        const issuingTarget = typeof msg.issuingTarget === 'string' ? msg.issuingTarget : '';
+        if (!Number.isFinite(networkId) || networkId <= 0 || !ctcpTarget || !ctcpType) break;
+        const ok = ircManager.ctcpRequest(
+          userId,
+          networkId,
+          issuingTarget,
+          ctcpTarget,
+          ctcpType,
+          ctcpArgs,
+        );
+        if (!ok) {
+          // Name the command the user actually typed (/ping rides this same path).
+          const cmdName = ctcpType.toUpperCase() === 'PING' ? '/ping' : '/ctcp';
+          const evt = {
+            type: 'ctcp',
+            level: 'warn',
+            networkId,
+            target: issuingTarget,
+            text: `${cmdName}: this network isn’t connected`,
             time: new Date().toISOString(),
             self: false,
           } as unknown as MessageEvent;

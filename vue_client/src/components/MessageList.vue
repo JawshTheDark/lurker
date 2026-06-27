@@ -209,7 +209,10 @@
             ></template>
             <template
               v-else-if="
-                row.m?.type === 'motd' || row.m?.type === 'system' || row.m?.type === 'e2e'
+                row.m?.type === 'motd' ||
+                row.m?.type === 'system' ||
+                row.m?.type === 'e2e' ||
+                row.m?.type === 'ctcp'
               "
               ><LinkedText :text="row.m.text ?? ''"
             /></template>
@@ -1033,6 +1036,9 @@ function prefixText(m: ChatMessage | undefined): string {
       // RPE2E status echoes get their own tag (not the generic "System") so the
       // user can tell encryption lines apart at a glance (#382).
       return 'E2E';
+    case 'ctcp':
+      // CTCP request/reply/echo status lines get their own tag (#263).
+      return 'CTCP';
     case 'error':
       return '!!';
     default:
@@ -1068,6 +1074,9 @@ function prefixClass(m: ChatMessage | undefined) {
     // A warn-level E2E line (TOFU warning, refused send) colors its tag like an
     // error; info-level stays the calm E2E color.
     'e2e-warn': m?.type === 'e2e' && m?.level === 'warn',
+    // A warn-level CTCP line (e.g. "/ctcp: this network isn't connected") reads
+    // as an error too; info-level stays muted (#263).
+    'ctcp-warn': m?.type === 'ctcp' && m?.level === 'warn',
     [`p-${m?.type}`]: true,
   };
 }
@@ -1797,8 +1806,14 @@ watch(
 .prefix.p-motd,
 .prefix.p-away,
 .prefix.p-back,
+/* CTCP request/reply/echo status (#263): informational, so muted like motd. */
+.prefix.p-ctcp,
 .prefix.p-cons {
   color: var(--fg-muted);
+}
+/* …except a warn-level CTCP line (failed send) colors its tag like an error. */
+.prefix.p-ctcp.ctcp-warn {
+  color: var(--bad);
 }
 /* "System" lines (#355) read as the full-strength foreground, not muted — the
    app speaking in its own voice. A network-tied system line overrides this with
