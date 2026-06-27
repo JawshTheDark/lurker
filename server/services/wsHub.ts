@@ -1531,12 +1531,14 @@ export function attachWsHub(httpServer: HttpServer, sessionSecret: string) {
           ctcpArgs,
         );
         if (!ok) {
+          // Name the command the user actually typed (/ping rides this same path).
+          const cmdName = ctcpType.toUpperCase() === 'PING' ? '/ping' : '/ctcp';
           const evt = {
             type: 'ctcp',
             level: 'warn',
             networkId,
             target: issuingTarget,
-            text: '/ctcp: this network isn’t connected',
+            text: `${cmdName}: this network isn’t connected`,
             time: new Date().toISOString(),
             self: false,
           } as unknown as MessageEvent;

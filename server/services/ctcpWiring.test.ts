@@ -122,6 +122,19 @@ describe('inbound CTCP request (auto-reply + surface)', () => {
     // CTCP_REPLY_BURST = 5; all fire within the same ms so no token refills.
     expect(ctcpResponse).toHaveBeenCalledTimes(5);
   });
+
+  it('a malformed (empty) CTCP does not drain the reply budget', () => {
+    const { conn, ctcpResponse } = harness();
+    // Empty-body CTCPs (\x01\x01) parse to no type — they must be rejected
+    // BEFORE a token is taken, or a peer could starve real replies.
+    for (let i = 0; i < 20; i++) {
+      conn.client.emit('ctcp request', { nick: 'bob', type: '', message: '' });
+    }
+    expect(ctcpResponse).not.toHaveBeenCalled();
+    // A real VERSION afterward is still answered — the budget is intact.
+    conn.client.emit('ctcp request', { nick: 'bob', type: 'VERSION', message: 'VERSION' });
+    expect(ctcpResponse).toHaveBeenCalledWith('bob', 'VERSION', IRC_VERSION);
+  });
 });
 
 describe('outbound CTCP request (/ctcp, /ping)', () => {

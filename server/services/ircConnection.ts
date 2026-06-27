@@ -2372,12 +2372,13 @@ export class IrcConnection {
     const nick = event.nick as string | undefined;
     // Our own outbound CTCP echoed back by an echo-message server — not a probe.
     if (!nick || this.isSelfNick(nick)) return;
-    const now = Date.now();
-    // Flood guard gates the whole handler (reply AND display), so a CTCP flood
-    // can neither make us spew NOTICEs nor spam the buffer.
-    if (!this.takeCtcpToken(now)) return;
     const { type, args } = parseCtcp(String(event.message ?? ''));
     if (!type) return;
+    const now = Date.now();
+    // Flood guard gates the whole handler (reply AND display), so a CTCP flood
+    // can neither make us spew NOTICEs nor spam the buffer. Checked AFTER parsing
+    // so a malformed/empty CTCP can't drain the bucket and starve real replies.
+    if (!this.takeCtcpToken(now)) return;
     const reply = buildCtcpReply(type, args, new Date(now));
     if (reply !== null) this.client.ctcpResponse(nick, type, reply);
     this.surfaceCtcp(this.serverTarget(), formatCtcpRequestLine(nick, type, reply !== null));
