@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Brad Root
+// SPDX-License-Identifier: MPL-2.0
+
 import { defineConfig } from 'vitepress';
 
 // Lurker documentation site. The VitePress root is the repo's `docs/` folder,

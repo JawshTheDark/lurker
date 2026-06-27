@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 2026 Brad Root
+ * SPDX-License-Identifier: MPL-2.0
+ */
+
+/*
  * Lurker brand overrides for the VitePress default theme.
  * Mirrors the marketing site's palette: restrained purple accent (#5a31c4)
  * and a monospace stack that echoes the app's retro-terminal feel.
