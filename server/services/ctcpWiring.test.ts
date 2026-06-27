@@ -11,11 +11,15 @@
 // MUST be first — redirect DATABASE_PATH before the static imports below open
 // the real data/lurker.db.
 import '../test-utils/isolateDb.js';
-import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { IrcConnection } from './ircConnection.js';
 import { createUser } from '../db/users.js';
 import { createNetwork } from '../db/networks.js';
-import { IRC_VERSION } from '../utils/userAgent.js';
+import { APP_NAME, APP_VERSION } from '../utils/userAgent.js';
+import settingsService from './settingsService.js';
+
+// The default ctcp.version template (`${name} ${version}`) expands to this.
+const DEFAULT_VERSION_REPLY = `${APP_NAME} ${APP_VERSION}`;
 
 beforeAll(() => {
   createUser('ctcp-alice'); // id 1
@@ -76,11 +80,11 @@ describe('inbound CTCP request (auto-reply + surface)', () => {
       message: 'VERSION',
     });
 
-    expect(ctcpResponse).toHaveBeenCalledWith('bob', 'VERSION', IRC_VERSION);
+    expect(ctcpResponse).toHaveBeenCalledWith('bob', 'VERSION', DEFAULT_VERSION_REPLY);
     const lines = ctcpLines();
     expect(lines).toHaveLength(1);
     expect(lines[0].target).toBe(':server:1'); // probes land in the server buffer
-    expect(lines[0].text).toBe('bob requested CTCP VERSION');
+    expect(lines[0].text).toBe(`bob requested CTCP VERSION (replied: ${DEFAULT_VERSION_REPLY})`);
   });
 
   it('echoes a PING payload back verbatim', () => {
@@ -148,7 +152,7 @@ describe('inbound CTCP request (auto-reply + surface)', () => {
       message: 'VERSION',
     });
     // carol's bucket is independent of flood's — she still gets answered.
-    expect(ctcpResponse).toHaveBeenCalledWith('carol', 'VERSION', IRC_VERSION);
+    expect(ctcpResponse).toHaveBeenCalledWith('carol', 'VERSION', DEFAULT_VERSION_REPLY);
   });
 
   it('a malformed (empty) CTCP does not consume a peer rate-limit slot', () => {
@@ -173,7 +177,7 @@ describe('inbound CTCP request (auto-reply + surface)', () => {
       type: 'VERSION',
       message: 'VERSION',
     });
-    expect(ctcpResponse).toHaveBeenCalledWith('bob', 'VERSION', IRC_VERSION);
+    expect(ctcpResponse).toHaveBeenCalledWith('bob', 'VERSION', DEFAULT_VERSION_REPLY);
   });
 });
 
@@ -294,5 +298,128 @@ describe('inbound CTCP reply (route + latency)', () => {
     expect(conn.ctcpOutstanding.size).toBe(1);
     conn.client.emit('close');
     expect(conn.ctcpOutstanding.size).toBe(0);
+  });
+});
+
+describe('inbound CTCP request — settings gating', () => {
+  // Settings persist in the shared isolated DB, so reset every ctcp.* key after
+  // each test or the override leaks into the default-on tests above.
+  afterEach(() => {
+    for (const k of ['replies', 'version', 'time', 'source', 'clientinfo']) {
+      settingsService.reset(1, `ctcp.${k}`);
+    }
+  });
+
+  it('a disabled type (ctcp.version off) suppresses the reply but still shows the probe', () => {
+    settingsService.update(1, { 'ctcp.version': '' });
+    const { conn, ctcpResponse, ctcpLines } = harness();
+    conn.client.emit('ctcp request', {
+      nick: 'bob',
+      ident: 'b',
+      hostname: 'h',
+      type: 'VERSION',
+      message: 'VERSION',
+    });
+    expect(ctcpResponse).not.toHaveBeenCalled();
+    expect(ctcpLines()[0].text).toBe('bob requested CTCP VERSION (no reply)');
+  });
+
+  it('a still-enabled type keeps answering when a sibling is disabled', () => {
+    settingsService.update(1, { 'ctcp.version': '' });
+    const { conn, ctcpResponse } = harness();
+    conn.client.emit('ctcp request', {
+      nick: 'bob',
+      ident: 'b',
+      hostname: 'h',
+      type: 'TIME',
+      message: 'TIME',
+    });
+    expect(ctcpResponse).toHaveBeenCalledTimes(1);
+    expect(ctcpResponse.mock.calls[0][1]).toBe('TIME');
+  });
+
+  it('the master switch (ctcp.replies off) silences all auto-replies', () => {
+    settingsService.update(1, { 'ctcp.replies': false });
+    const { conn, ctcpResponse } = harness();
+    conn.client.emit('ctcp request', {
+      nick: 'bob',
+      ident: 'b',
+      hostname: 'h',
+      type: 'TIME',
+      message: 'TIME',
+    });
+    conn.client.emit('ctcp request', {
+      nick: 'bob',
+      ident: 'b',
+      hostname: 'h',
+      type: 'PING',
+      message: 'PING 1',
+    });
+    expect(ctcpResponse).not.toHaveBeenCalled();
+  });
+});
+
+describe('inbound CTCP request — msgbuffer routing (ctcp.msgbuffer)', () => {
+  afterEach(() => settingsService.reset(1, 'ctcp.msgbuffer'));
+
+  it('defaults to the server buffer', () => {
+    const { conn, ctcpLines } = harness();
+    conn.client.emit('ctcp request', {
+      nick: 'bob',
+      ident: 'b',
+      hostname: 'h',
+      target: 'alice',
+      type: 'VERSION',
+      message: 'VERSION',
+    });
+    expect(ctcpLines()[0].target).toBe(':server:1');
+  });
+
+  it('private: a direct CTCP routes to a DM with the sender', () => {
+    settingsService.update(1, { 'ctcp.msgbuffer': 'private' });
+    const { conn, ctcpLines } = harness();
+    conn.client.emit('ctcp request', {
+      nick: 'bob',
+      ident: 'b',
+      hostname: 'h',
+      target: 'alice', // sent to our nick → private
+      type: 'VERSION',
+      message: 'VERSION',
+    });
+    expect(ctcpLines()[0].target).toBe('bob');
+  });
+
+  it('private: a channel-targeted CTCP routes to that channel', () => {
+    settingsService.update(1, { 'ctcp.msgbuffer': 'private' });
+    const { conn, ctcpLines } = harness();
+    conn.client.emit('ctcp request', {
+      nick: 'bob',
+      ident: 'b',
+      hostname: 'h',
+      target: '#chan',
+      type: 'VERSION',
+      message: 'VERSION',
+    });
+    expect(ctcpLines()[0].target).toBe('#chan');
+  });
+
+  it('system: routes to the durable system buffer, not an ephemeral ctcp line', () => {
+    settingsService.update(1, { 'ctcp.msgbuffer': 'system' });
+    const { conn, publishEphemeral, ctcpLines } = harness();
+    const logNet = vi.spyOn(conn, 'logNet').mockImplementation(() => {});
+    conn.client.emit('ctcp request', {
+      nick: 'bob',
+      ident: 'b',
+      hostname: 'h',
+      target: 'alice',
+      type: 'VERSION',
+      message: 'VERSION',
+    });
+    expect(logNet).toHaveBeenCalledWith(
+      `bob requested CTCP VERSION (replied: ${DEFAULT_VERSION_REPLY})`,
+    );
+    expect(ctcpLines()).toHaveLength(0); // no ephemeral ctcp line in system mode
+    expect(publishEphemeral).not.toHaveBeenCalled();
+    logNet.mockRestore();
   });
 });

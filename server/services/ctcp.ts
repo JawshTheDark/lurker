@@ -13,14 +13,13 @@
 // Lounge (server/plugins/irc-events/ctcp.ts — the same irc-framework
 // `version:false` + manual-reply approach we use).
 
-import { IRC_VERSION } from '../utils/userAgent.js';
-
-/** Where Lurker's source lives — the CTCP SOURCE reply. */
+/** Where Lurker's source lives — the default CTCP SOURCE reply. */
 export const CTCP_SOURCE = 'https://github.com/amiantos/lurker';
 
-// The CTCP request types we auto-answer. CLIENTINFO advertises exactly this set
-// (ACTION included — we send/receive it as messages even though it isn't a
-// query). Keep in sync with buildCtcpReply's switch.
+// The CTCP request types we can answer. CLIENTINFO advertises the currently
+// ENABLED subset (a per-type template that's non-empty); ACTION + PING are
+// always handled (ACTION as a message, PING as a harmless echo) so they're
+// always advertised.
 export const CTCP_SUPPORTED = [
   'ACTION',
   'CLIENTINFO',
@@ -29,6 +28,62 @@ export const CTCP_SUPPORTED = [
   'TIME',
   'VERSION',
 ] as const;
+
+/**
+ * Per-user CTCP auto-reply config (read from the settings registry cell-side).
+ * `enabled` is the master switch — off answers nothing, including PING. The rest
+ * are WeeChat-style reply TEMPLATES: a non-empty string is the reply (with
+ * `${...}` placeholders expanded — see expandCtcpTemplate), an empty string
+ * disables that type.
+ */
+export interface CtcpReplyConfig {
+  enabled: boolean;
+  version: string;
+  time: string;
+  source: string;
+  clientinfo: string;
+}
+
+/** Defaults — the all-on, WeeChat-flavored templates. */
+export const CTCP_DEFAULT_CONFIG: CtcpReplyConfig = {
+  enabled: true,
+  version: '${name} ${version}',
+  time: '${time}',
+  source: '${source}',
+  clientinfo: '${clientinfo}',
+};
+
+/** Placeholders a reply template may use, with what each expands to. The caller
+ *  (ircConnection) supplies the live values; documented here so /set and the
+ *  Settings UI can describe them. */
+export const CTCP_TEMPLATE_VARS: Readonly<Record<string, string>> = Object.freeze({
+  name: 'the client name ("Lurker")',
+  version: 'Lurker version (e.g. 1.0.6)',
+  source: 'Lurker project URL',
+  clientinfo: 'space-separated list of CTCP types currently answered',
+  time: 'current server time',
+  nick: 'your current nick on this network',
+});
+
+/** Expand `${key}` placeholders in a template from `vars`. Unknown keys are left
+ *  literal so a typo is visible rather than silently blank. */
+export function expandCtcpTemplate(template: string, vars: Record<string, string>): string {
+  return template.replace(/\$\{(\w+)\}/g, (m, key) =>
+    Object.prototype.hasOwnProperty.call(vars, key) ? vars[key] : m,
+  );
+}
+
+/** The CTCP types CLIENTINFO advertises given the active config: ACTION + PING
+ *  always, plus each type whose template is non-empty. Sorted for a stable
+ *  wire string. */
+export function enabledCtcpTypes(config: CtcpReplyConfig): string[] {
+  const types = ['ACTION', 'PING'];
+  if (config.version.trim()) types.push('VERSION');
+  if (config.time.trim()) types.push('TIME');
+  if (config.source.trim()) types.push('SOURCE');
+  if (config.clientinfo.trim()) types.push('CLIENTINFO');
+  return types.toSorted();
+}
 
 // irssi parity (ctcp.c): refuse to echo back an oversized PING payload so a peer
 // can't turn our auto-reply into a reflection/flood amplifier.
@@ -39,6 +94,21 @@ const PING_MAX_PAYLOAD = 100;
 // instead of a nonsense latency.
 const PING_MAX_PLAUSIBLE_MS = 3_600_000;
 
+// A CTCP reply is a single IRC line framed by 0x01 — strip anything that would
+// break that: CR/LF/NUL (split the IRC line) and 0x01 itself (an embedded one
+// would split the reply into extra CTCP segments for the peer). A crafted/
+// rebranded template therefore can't smuggle a second wire command. Filtered by
+// char code (no control chars in source, keeping the linter + grep happy) and
+// in one pass (no O(n²) concat on long templates).
+function stripCtcpControlChars(s: string): string {
+  return [...s]
+    .filter((ch) => {
+      const c = ch.charCodeAt(0);
+      return c !== 0x00 && c !== 0x01 && c !== 0x0a && c !== 0x0d;
+    })
+    .join('');
+}
+
 /** Split a CTCP inner body (`"VERSION"` / `"PING 1719500000000"`) into an
  *  upper-cased type and the remaining argument string. */
 export function parseCtcp(message: string): { type: string; args: string } {
@@ -48,29 +118,52 @@ export function parseCtcp(message: string): { type: string; args: string } {
   return { type: trimmed.slice(0, sp).toUpperCase(), args: trimmed.slice(sp + 1) };
 }
 
-/**
- * Build the auto-reply argument string for an inbound CTCP request, or null when
- * we don't answer this type. The returned value is the params AFTER the type;
- * the caller frames it as `ctcpResponse(nick, type, reply)`.
- */
-export function buildCtcpReply(type: string, args: string, now: Date): string | null {
-  switch (type.toUpperCase()) {
+function ctcpTemplateFor(type: string, config: CtcpReplyConfig): string | undefined {
+  switch (type) {
     case 'VERSION':
-      return IRC_VERSION;
-    case 'SOURCE':
-      return CTCP_SOURCE;
-    case 'CLIENTINFO':
-      return CTCP_SUPPORTED.join(' ');
+      return config.version;
     case 'TIME':
-      return formatCtcpTime(now);
-    case 'PING':
-      // Echo the payload verbatim (that's what makes round-trip timing work for
-      // the requester), but drop an abusive one.
-      if (args.length > PING_MAX_PAYLOAD) return null;
-      return args;
+      return config.time;
+    case 'SOURCE':
+      return config.source;
+    case 'CLIENTINFO':
+      return config.clientinfo;
     default:
-      return null;
+      return undefined;
   }
+}
+
+/**
+ * Build the auto-reply for an inbound CTCP request, or null when we don't answer
+ * it (master off, unsupported type, or an empty/disabled template). The returned
+ * value is the params AFTER the type; the caller frames it as
+ * `ctcpResponse(nick, type, reply)`. `config` is the user's reply config and
+ * `vars` supplies the live `${...}` values for template expansion — both
+ * required (the templates are inert without their values; see
+ * CTCP_DEFAULT_CONFIG for the default templates and CTCP_TEMPLATE_VARS for the
+ * placeholder set the caller must populate).
+ */
+export function buildCtcpReply(
+  type: string,
+  args: string,
+  config: CtcpReplyConfig,
+  vars: Record<string, string>,
+): string | null {
+  // Master switch off → publish nothing, not even a PING echo.
+  if (!config.enabled) return null;
+  const t = type.toUpperCase();
+  if (t === 'PING') {
+    // Echo the payload verbatim (that's what makes round-trip timing work for
+    // the requester), but drop an abusive one. PING can't be templated — it has
+    // to mirror the asker's token — but the master switch still silences it.
+    if (args.length > PING_MAX_PAYLOAD) return null;
+    return args;
+  }
+  const template = ctcpTemplateFor(t, config);
+  if (template === undefined) return null; // unsupported type
+  if (!template.trim()) return null; // empty template = disabled
+  const reply = stripCtcpControlChars(expandCtcpTemplate(template, vars)).trim();
+  return reply || null;
 }
 
 /** Locale-free local-ish timestamp for a CTCP TIME reply (RFC-1123 / UTC). */
@@ -116,8 +209,12 @@ export function formatCtcpReplyLine(
   return `CTCP ${t} reply from ${nick}${tail}`;
 }
 
-/** Display line for an inbound CTCP *request* (someone probed us). */
-export function formatCtcpRequestLine(nick: string, type: string, answered: boolean): string {
-  const suffix = answered ? '' : ' (no reply)';
-  return `${nick} requested CTCP ${type.toUpperCase()}${suffix}`;
+/** Display line for an inbound CTCP *request* (someone probed us), showing what
+ *  we disclosed back: `reply` is the answer we sent, or null when we declined
+ *  (unsupported type / disabled). WeeChat shows the sent reply on its own line
+ *  (irc.look.display_ctcp_reply); we fold it into the one probe line to keep the
+ *  buffer quiet while still surfacing exactly what was disclosed. */
+export function formatCtcpRequestLine(nick: string, type: string, reply: string | null): string {
+  const base = `${nick} requested CTCP ${type.toUpperCase()}`;
+  return reply === null ? `${base} (no reply)` : `${base} (replied: ${reply})`;
 }

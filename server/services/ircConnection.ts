@@ -20,8 +20,8 @@ import highlightRulesService from './highlightRulesService.js';
 import ignoreRulesService from './ignoreRulesService.js';
 import { decideStamp } from './insertDecisions.js';
 import * as systemLog from './systemLog.js';
-import { effectiveSetting } from './settingsService.js';
-import { APP_VERSION } from '../utils/userAgent.js';
+import { effectiveSetting, effectiveSettings } from './settingsService.js';
+import { APP_NAME, APP_VERSION } from '../utils/userAgent.js';
 import { findUserById } from '../db/users.js';
 import { isNodeMode } from '../utils/edition.js';
 import { deriveIdent } from '../utils/ident.js';
@@ -34,7 +34,16 @@ import { contextKey, isChannelContext } from './e2e/context.js';
 import { CTCP_TAG, WIRE_PREFIX } from './e2e/constants.js';
 import { e2eDbg } from './e2e/debug.js';
 import { RateLimiter } from './e2e/rateLimiter.js';
-import { buildCtcpReply, formatCtcpReplyLine, formatCtcpRequestLine, parseCtcp } from './ctcp.js';
+import {
+  buildCtcpReply,
+  CTCP_SOURCE,
+  enabledCtcpTypes,
+  formatCtcpReplyLine,
+  formatCtcpRequestLine,
+  formatCtcpTime,
+  parseCtcp,
+  type CtcpReplyConfig,
+} from './ctcp.js';
 import { getChannelConfig as getE2eChannelConfig } from '../db/e2e.js';
 import type { ChannelMode } from '../db/e2e.js';
 import { randomBytes } from 'node:crypto';
@@ -2361,6 +2370,42 @@ export class IrcConnection {
     return (ident && host ? `${ident}@${host}` : nick).toLowerCase();
   }
 
+  // The user's CTCP auto-reply preferences (settings registry, per-user). Read
+  // fresh per inbound request — they're rare + rate-limited, so a /set takes
+  // effect immediately with no cache to invalidate. A missing key resolves to
+  // the registry default (all on), so out of the box behavior is unchanged.
+  private ctcpReplyConfig(): CtcpReplyConfig {
+    // One settings read for the whole cluster (not one per key) — this runs on
+    // every inbound probe.
+    const s = effectiveSettings(this.network.user_id, [
+      'ctcp.replies',
+      'ctcp.version',
+      'ctcp.time',
+      'ctcp.source',
+      'ctcp.clientinfo',
+    ]);
+    const tmpl = (key: string): string => (typeof s[key] === 'string' ? (s[key] as string) : '');
+    return {
+      enabled: s['ctcp.replies'] !== false,
+      version: tmpl('ctcp.version'),
+      time: tmpl('ctcp.time'),
+      source: tmpl('ctcp.source'),
+      clientinfo: tmpl('ctcp.clientinfo'),
+    };
+  }
+
+  // Live values for the `${...}` placeholders a CTCP reply template can use.
+  private ctcpTemplateVars(config: CtcpReplyConfig): Record<string, string> {
+    return {
+      name: APP_NAME,
+      version: APP_VERSION,
+      source: CTCP_SOURCE,
+      clientinfo: enabledCtcpTypes(config).join(' '),
+      time: formatCtcpTime(new Date()),
+      nick: this.currentNick,
+    };
+  }
+
   private pruneCtcpOutstanding(now: number): void {
     for (const [k, queue] of this.ctcpOutstanding) {
       const live = queue.filter((e) => now - e.sentAt <= CTCP_OUTSTANDING_TTL_MS);
@@ -2382,6 +2427,32 @@ export class IrcConnection {
     this.publishEphemeral({ type: 'ctcp', level: 'info', target, text });
   }
 
+  // Route an INCOMING CTCP status line (a probe, or an unsolicited reply) per
+  // the user's ctcp.msgbuffer setting — WeeChat's irc.msgbuffer.ctcp:
+  //   server  → this network's server buffer (default)
+  //   system  → the durable app-wide system buffer (persists, like other logs)
+  //   private → the DM with the sender, or the channel for a channel CTCP
+  // (A reply to a /ctcp the USER sent is routed to its issuing buffer by the
+  // caller, not here — this governs unsolicited CTCP only.)
+  private routeCtcpStatus(event: Record<string, unknown>, text: string): void {
+    const mode = effectiveSetting(this.network.user_id, 'ctcp.msgbuffer');
+    if (mode === 'system') {
+      this.logNet(text);
+      return;
+    }
+    if (mode === 'private') {
+      const evTarget = (event.target as string) || '';
+      if (isChannelContext(evTarget)) {
+        this.surfaceCtcp(evTarget, text);
+        return;
+      }
+      const nick = (event.nick as string) || '';
+      this.surfaceCtcp(nick || this.serverTarget(), text);
+      return;
+    }
+    this.surfaceCtcp(this.serverTarget(), text); // 'server' (default)
+  }
+
   // Auto-answer an inbound CTCP request (VERSION/PING/TIME/CLIENTINFO/SOURCE)
   // and show the user they were probed. Self-echoes ignored; rate-limited
   // per-peer so a flood from one nick can't spew NOTICEs, spam the buffer, or
@@ -2396,9 +2467,10 @@ export class IrcConnection {
     // can't burn a peer's budget and suppress its legitimate probes.
     if (!type) return;
     if (!this.ctcpLimiter.allowIncoming(this.ctcpPeerKey(event))) return;
-    const reply = buildCtcpReply(type, args, new Date());
+    const config = this.ctcpReplyConfig();
+    const reply = buildCtcpReply(type, args, config, this.ctcpTemplateVars(config));
     if (reply !== null) this.client.ctcpResponse(nick, type, reply);
-    this.surfaceCtcp(this.serverTarget(), formatCtcpRequestLine(nick, type, reply !== null));
+    this.routeCtcpStatus(event, formatCtcpRequestLine(nick, type, reply));
   }
 
   // Surface an inbound CTCP reply (a peer answered a query we sent), routed back
@@ -2417,18 +2489,21 @@ export class IrcConnection {
     const queue = this.ctcpOutstanding.get(key);
     const pending = queue?.shift(); // FIFO: the oldest matching query
     if (queue && queue.length === 0) this.ctcpOutstanding.delete(key);
-    if (!pending && !this.ctcpLimiter.allowIncoming(this.ctcpPeerKey(event))) return;
-    let target = pending?.issuingTarget ?? this.serverTarget();
-    // The issuing buffer may have been closed while the reply was in flight — a
-    // wsHub guard discards ephemeral events to a closed buffer, so don't lose the
-    // answer: fall back to the server buffer.
-    if (
-      target !== this.serverTarget() &&
-      isBufferClosed(this.network.user_id, this.network.id, target)
-    ) {
-      target = this.serverTarget();
+    const line = formatCtcpReplyLine(nick, type, args, now);
+    if (pending) {
+      // Solicited: route back to the buffer the /ctcp was issued from (server
+      // buffer if it has since been closed — a wsHub guard would otherwise drop
+      // an ephemeral event to a closed buffer). ctcp.msgbuffer governs only
+      // UNSOLICITED CTCP, never a reply the user explicitly asked for.
+      const target = isBufferClosed(this.network.user_id, this.network.id, pending.issuingTarget)
+        ? this.serverTarget()
+        : pending.issuingTarget;
+      this.surfaceCtcp(target, line);
+      return;
     }
-    this.surfaceCtcp(target, formatCtcpReplyLine(nick, type, args, now));
+    // Unsolicited reply: rate-limit per-peer, then route per ctcp.msgbuffer.
+    if (!this.ctcpLimiter.allowIncoming(this.ctcpPeerKey(event))) return;
+    this.routeCtcpStatus(event, line);
   }
 
   // Send an outbound CTCP request (/ctcp, /ping). `issuingTarget` is the buffer
