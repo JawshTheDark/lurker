@@ -102,22 +102,43 @@ export function unpinBuffer(userId: number, networkId: number, target: string): 
   return listPinnedForUserNetwork(userId, networkId);
 }
 
-// Unpin the buffer matching `target` case-insensitively. IRC targets are
+// Unpin every buffer matching `target` case-insensitively. IRC targets are
 // case-insensitive but a pin row stores one canonical casing, so a caller that
 // only has the server's current casing (e.g. close-buffer, where the buffer may
 // have been re-cased by the server) can still find and remove the stranded pin.
-// Returns the new ordered list when a row was removed, or null when nothing
-// matched — callers use null to skip the pins-changed broadcast. Matches the
-// case-folding the snapshot already applies to closed buffers (issue #405).
+// The schema's PRIMARY KEY is on the raw target (no NOCASE), so two case
+// variants of the same channel can coexist as separate rows — remove ALL of
+// them in one transaction and renumber once, or closing one would leave the
+// other as an invisible orphan. Returns the new ordered list when at least one
+// row was removed, or null when nothing matched — callers use null to skip the
+// pins-changed broadcast. Matches the case-folding the snapshot already applies
+// to closed buffers (issue #405).
 export function unpinBufferCaseInsensitive(
   userId: number,
   networkId: number,
   target: string,
 ): string[] | null {
   const lower = target.toLowerCase();
-  const match = listPinnedForUserNetwork(userId, networkId).find((t) => t.toLowerCase() === lower);
-  if (match === undefined) return null;
-  return unpinBuffer(userId, networkId, match);
+  const matches = listPinnedForUserNetwork(userId, networkId).filter(
+    (t) => t.toLowerCase() === lower,
+  );
+  if (matches.length === 0) return null;
+  const tx = db.transaction(() => {
+    for (const m of matches) deleteStmt.run(userId, networkId, m);
+    const remaining = allForUserNetworkStmt.all(userId, networkId) as Array<{
+      target: string;
+      position: number;
+    }>;
+    let i = 0;
+    for (const row of remaining) {
+      if (row.position !== i) {
+        setPositionStmt.run(i, userId, networkId, row.target);
+      }
+      i += 1;
+    }
+  });
+  tx();
+  return listPinnedForUserNetwork(userId, networkId);
 }
 
 // Rewrite the order for a (user, network). Every supplied target must currently

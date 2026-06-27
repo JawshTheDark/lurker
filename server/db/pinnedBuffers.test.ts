@@ -120,6 +120,30 @@ describe('unpinBufferCaseInsensitive', () => {
     expect(pinned.listPinnedForUserNetwork(dave.id, netD!.id)).toEqual(['#other']);
   });
 
+  it('removes every case-variant in one pass (PRIMARY KEY is case-sensitive)', () => {
+    const frank = createUser('pin-frank');
+    const netF = createNetwork(frank.id, {
+      name: 'f',
+      host: 'h',
+      port: 6697,
+      tls: true,
+      nick: 'f',
+    });
+    // The schema allows both rows since the target column has no NOCASE.
+    pinned.pinBuffer(frank.id, netF!.id, '#Channel');
+    pinned.pinBuffer(frank.id, netF!.id, '#channel');
+    pinned.pinBuffer(frank.id, netF!.id, '#kept');
+
+    const next = pinned.unpinBufferCaseInsensitive(frank.id, netF!.id, '#CHANNEL');
+    expect(next).toEqual(['#kept']);
+    expect(pinned.listPinnedForUserNetwork(frank.id, netF!.id)).toEqual(['#kept']);
+    // Positions stay dense after pulling two rows out of the middle/front.
+    const rows = db
+      .prepare(`SELECT target, position FROM pinned_buffers WHERE user_id = ? AND network_id = ?`)
+      .all(frank.id, netF!.id) as Array<{ target: string; position: number }>;
+    expect(rows).toEqual([{ target: '#kept', position: 0 }]);
+  });
+
   it('returns null when nothing matches so the caller can skip the broadcast', () => {
     const erin = createUser('pin-erin');
     const netE = createNetwork(erin.id, {
