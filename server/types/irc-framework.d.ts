@@ -38,7 +38,9 @@ declare module 'irc-framework' {
 
   /** Options passed to the Client constructor. */
   export interface ClientOptions {
-    version?: string;
+    /** CTCP VERSION auto-reply string, or `false` to disable the built-in
+     *  reply so the host can handle CTCP itself. */
+    version?: string | false;
     nick?: string;
     username?: string;
     gecos?: string;
@@ -114,6 +116,12 @@ declare module 'irc-framework' {
 
     /** Send a CTCP ACTION (/me). */
     action(target: string, message: string): void;
+
+    /** Send a CTCP request (PRIVMSG `\x01TYPE params\x01`); type is uppercased. */
+    ctcpRequest(target: string, type: string, ...params: string[]): void;
+
+    /** Send a CTCP reply (NOTICE `\x01TYPE params\x01`); type is uppercased. */
+    ctcpResponse(target: string, type: string, ...params: string[]): void;
 
     /** Send a NOTICE. */
     notice(target: string, message: string, tags?: Record<string, string>): void;

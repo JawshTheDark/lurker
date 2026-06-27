@@ -209,7 +209,10 @@
             ></template>
             <template
               v-else-if="
-                row.m?.type === 'motd' || row.m?.type === 'system' || row.m?.type === 'e2e'
+                row.m?.type === 'motd' ||
+                row.m?.type === 'system' ||
+                row.m?.type === 'e2e' ||
+                row.m?.type === 'ctcp'
               "
               ><LinkedText :text="row.m.text ?? ''"
             /></template>
@@ -1033,6 +1036,9 @@ function prefixText(m: ChatMessage | undefined): string {
       // RPE2E status echoes get their own tag (not the generic "System") so the
       // user can tell encryption lines apart at a glance (#382).
       return 'E2E';
+    case 'ctcp':
+      // CTCP request/reply/echo status lines get their own tag (#263).
+      return 'CTCP';
     case 'error':
       return '!!';
     default:
@@ -1797,6 +1803,8 @@ watch(
 .prefix.p-motd,
 .prefix.p-away,
 .prefix.p-back,
+/* CTCP request/reply/echo status (#263): informational, so muted like motd. */
+.prefix.p-ctcp,
 .prefix.p-cons {
   color: var(--fg-muted);
 }

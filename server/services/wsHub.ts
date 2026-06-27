@@ -127,6 +127,7 @@ const PAUSED_BLOCKED_TYPES = new Set([
   'back',
   'typing',
   'e2e',
+  'ctcp',
 ]);
 
 // Options bag for fanOut.
@@ -1503,6 +1504,39 @@ export function attachWsHub(httpServer: HttpServer, sessionSecret: string) {
             networkId,
             target,
             text: '/e2e: this network isn’t connected',
+            time: new Date().toISOString(),
+            self: false,
+          } as unknown as MessageEvent;
+          fanOut(userId, { ...decorateMessage(userId, evt), kind: 'irc' });
+        }
+        break;
+      }
+      case 'ctcp': {
+        // Outbound CTCP request (/ctcp <nick> <type> [args], /ping <nick>, #263).
+        // The cell frames + sends it, echoes locally, and routes the reply back
+        // to `issuingTarget`. Like /e2e it needs a live connection, so on a
+        // disconnected network we surface that to the issuing buffer.
+        const networkId = msg.networkId == null ? NaN : Number(msg.networkId);
+        const ctcpTarget = typeof msg.target === 'string' ? msg.target.trim() : '';
+        const ctcpType = typeof msg.ctcpType === 'string' ? msg.ctcpType.trim() : '';
+        const ctcpArgs = typeof msg.args === 'string' ? msg.args : '';
+        const issuingTarget = typeof msg.issuingTarget === 'string' ? msg.issuingTarget : '';
+        if (!Number.isFinite(networkId) || networkId <= 0 || !ctcpTarget || !ctcpType) break;
+        const ok = ircManager.ctcpRequest(
+          userId,
+          networkId,
+          issuingTarget,
+          ctcpTarget,
+          ctcpType,
+          ctcpArgs,
+        );
+        if (!ok) {
+          const evt = {
+            type: 'ctcp',
+            level: 'warn',
+            networkId,
+            target: issuingTarget,
+            text: '/ctcp: this network isn’t connected',
             time: new Date().toISOString(),
             self: false,
           } as unknown as MessageEvent;

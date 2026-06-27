@@ -449,6 +449,23 @@ class IrcManager extends EventEmitter {
     return true;
   }
 
+  // Send an outbound CTCP request (/ctcp, /ping). `issuingTarget` is the buffer
+  // the command came from so the reply routes back there. Returns false when the
+  // network isn't connected (no wire to send on).
+  ctcpRequest(
+    userId: number,
+    networkId: number,
+    issuingTarget: string,
+    target: string,
+    type: string,
+    args: string,
+  ): boolean {
+    const conn = this.getConnection(userId, networkId);
+    if (!conn) return false;
+    conn.sendCtcpRequest(issuingTarget, target, type, args);
+    return true;
+  }
+
   // Canonical /away writer. Persists the user-level state in user_away_state,
   // then fans the new state out to every IrcConnection so each one issues
   // AWAY on its IRC server and publishes an away-state event. Auto-away
