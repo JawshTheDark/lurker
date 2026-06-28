@@ -691,11 +691,14 @@ function nickMenuContext(): MemberContext {
 // the kicked user in a kick line).
 function onNickMenu(e: MouseEvent, nick: string | undefined, m?: ChatMessage): void {
   if (!buffer.value) return;
+  // Nicks open on left-click, so pass the clicked element as the trigger:
+  // re-clicking the same name toggles its menu closed, like the kebab menus.
+  const trigger = (e.currentTarget as Element | null) ?? null;
   // Relay virtual speaker (#277): the displayed author is the embedded speaker,
   // not a real IRC user, so the full member menu (DM, ignore, kick, ban) is
   // meaningless. Give it a trimmed menu aimed at the relayed nick instead.
   if (m?.relayBot && nick && buffer.value.networkId != null) {
-    openRelayNickMenu(nick, m.relayBot, buffer.value.networkId, e.clientX, e.clientY);
+    openRelayNickMenu(nick, m.relayBot, buffer.value.networkId, e.clientX, e.clientY, trigger);
     return;
   }
   if (!nick) return;
@@ -703,7 +706,7 @@ function onNickMenu(e: MouseEvent, nick: string | undefined, m?: ChatMessage): v
   // fall back to the message's own userhost so a departed speaker stays
   // actionable.
   const member: MemberLike = nickMember(nick) ?? { nick, ...parseUserHost(m?.userhost) };
-  memberActions.openMenuFor(member, nickMenuContext(), e.clientX, e.clientY);
+  memberActions.openMenuFor(member, nickMenuContext(), e.clientX, e.clientY, trigger);
 }
 
 // Context menu for a relayed virtual speaker (#277). Only the actions that make
@@ -717,6 +720,7 @@ function openRelayNickMenu(
   networkId: number,
   x: number,
   y: number,
+  triggerEl: Element | null = null,
 ): void {
   const items: ContextMenuItem[] = [
     { label: `Reply to ${nick}`, icon: 'fa-solid fa-reply', onClick: () => addressNick(nick) },
@@ -734,7 +738,7 @@ function openRelayNickMenu(
       onClick: () => whois.openViewer(networkId, bot),
     },
   ];
-  contextMenu.open(items, x, y);
+  contextMenu.open(items, x, y, triggerEl);
 }
 
 // The "via" affordance shown next to a re-attributed relay line (#277): the
