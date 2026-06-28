@@ -105,6 +105,31 @@ describe('parseRelayMessage — custom templates', () => {
   });
 });
 
+describe('parseRelayMessage — reversed layout (nick before source)', () => {
+  // Real ##videogames bot that posts `<nick> [source] message` — the reverse of
+  // our default — plus a stray colour code and fancy unicode/emoji in the body.
+  const raw = '\x0303<EyeSeeYou> [Discord] Present: 𝔅𝔢𝔩𝔦𝔞𝔩 ChatGAYTB 🌈🏳️‍🌈 syrius';
+
+  it('extracts source/nick/message cleanly with a matching custom template', () => {
+    expect(parseRelayMessage(raw, '<{nick}> [{source}] {message}')).toEqual({
+      source: 'Discord',
+      nick: 'EyeSeeYou',
+      text: 'Present: 𝔅𝔢𝔩𝔦𝔞𝔩 ChatGAYTB 🌈🏳️‍🌈 syrius',
+    });
+  });
+
+  it('with defaults, still attributes the nick but leaves [source] inline', () => {
+    // The bare `<nick> message` default catches it, so re-attribution works, but
+    // the reversed [source] tag isn't recognized — it stays in the body. This is
+    // the behavior that motivates the custom template above.
+    expect(parseRelayMessage(raw)).toEqual({
+      source: null,
+      nick: 'EyeSeeYou',
+      text: '[Discord] Present: 𝔅𝔢𝔩𝔦𝔞𝔩 ChatGAYTB 🌈🏳️‍🌈 syrius',
+    });
+  });
+});
+
 describe('parseRelayMessage — mIRC formatting', () => {
   it('strips colour codes AND the +voice prefix off the nick (the ##videogames case)', () => {
     // Bot colours the nick `+FAST` (voiced on efnet) with mIRC colour 13, resets

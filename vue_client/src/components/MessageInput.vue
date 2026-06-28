@@ -2041,6 +2041,8 @@ const COMMANDS_LINES = [
   '  /unhighlight <index|text> — remove a highlight (index from /highlight list; alias: /dehilight)',
   '  /relay [list]          — list, mark, or unmark relay/bridge bots on this network',
   '      e.g. /relay add relaybot   ·   /relay add bridge <{nick}> {message}   ·   /relay remove relaybot',
+  '      custom template mirrors the bot order with {source}/{nick}/{message} placeholders',
+  '      e.g. reversed: /relay add eyebot <{nick}> [{source}] {message}',
   '  /network [list]        — manage networks (alias: /net); runs from the system buffer',
   '      add [-host <addr>] [-port <n>] [-tls|-notls] [-nick <n>] [-user <u>] [-realname <name>]',
   '          [-sasl_username <u>] [-sasl_password <p>] [-password <serverpass>]',
