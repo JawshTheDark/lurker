@@ -13,7 +13,7 @@ import {
   deleteChannel,
 } from '../db/networks.js';
 import { reopenBuffer } from '../db/closedBuffers.js';
-import { getDccTransfer, updateDccTransferState } from '../db/dccTransfers.js';
+import { DCC_ACTIVE_STATES, getDccTransfer, updateDccTransferState } from '../db/dccTransfers.js';
 import { findUserById } from '../db/users.js';
 import { getUserAwayState, writeAwayMarker, writeBackMarker } from '../db/userAwayState.js';
 import { listPinnedForUser } from '../db/pinnedBuffers.js';
@@ -296,8 +296,11 @@ class IrcManager extends EventEmitter {
     const row = getDccTransfer(userId, transferId);
     if (!row) return false;
     const conn = this.getConnection(userId, row.network_id);
+    // The connected path applies its own state guard; the disconnected DB-only
+    // fallback must mirror it so a late reject can't clobber a terminal row.
     if (conn) conn.rejectDcc(transferId);
-    else updateDccTransferState(transferId, 'rejected');
+    else if (row.state === 'pending_approval' || row.state === 'requested')
+      updateDccTransferState(transferId, 'rejected');
     return true;
   }
 
@@ -306,7 +309,7 @@ class IrcManager extends EventEmitter {
     if (!row) return false;
     const conn = this.getConnection(userId, row.network_id);
     if (conn) conn.cancelDcc(transferId);
-    else updateDccTransferState(transferId, 'cancelled');
+    else if (DCC_ACTIVE_STATES.has(row.state)) updateDccTransferState(transferId, 'cancelled');
     return true;
   }
 

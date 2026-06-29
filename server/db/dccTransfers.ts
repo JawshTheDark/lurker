@@ -32,6 +32,19 @@ export type DccTransferState =
   | 'rejected'
   | 'cancelled';
 
+// States a transfer can still leave — i.e. NOT terminal. Used to gate the
+// cancel/reject actions so they never clobber a finished row (completed /
+// failed / rejected / cancelled): a one-shot transfer never legitimately
+// re-enters an active state, so a late action on a terminal row is a no-op.
+export const DCC_ACTIVE_STATES: ReadonlySet<DccTransferState> = new Set([
+  'requested',
+  'pending_approval',
+  'connecting',
+  'receiving',
+  'stalled',
+  'verifying',
+]);
+
 export interface DccTransferRow {
   id: number;
   user_id: number;

@@ -27,7 +27,7 @@
             <!-- Progress bar while bytes can still arrive (or after, if partial). -->
             <div v-if="showProgress(t)" class="progress" :title="progressTitle(t)">
               <div class="bar">
-                <div class="fill" :style="{ width: progressPct(t) + '%' }"></div>
+                <div class="fill" :style="{ width: percentReceived(t) + '%' }"></div>
               </div>
               <span class="progress-text">{{ progressTitle(t) }}</span>
             </div>
@@ -70,7 +70,13 @@
 <script setup lang="ts">
 import { onMounted } from 'vue';
 import AppModal from './AppModal.vue';
-import { useDccStore, isCancellable, type DccTransfer, type DccState } from '../stores/dcc.js';
+import {
+  useDccStore,
+  isCancellable,
+  percentReceived,
+  type DccTransfer,
+  type DccState,
+} from '../stores/dcc.js';
 import { useNetworksStore } from '../stores/networks.js';
 import { formatRelative } from '../utils/timestamp.js';
 
@@ -145,21 +151,19 @@ function subLine(t: DccTransfer): string {
     .join(' · ');
 }
 
+// Only show the progress bar once a download has actually started — a
+// pending_approval offer hasn't, so it must not render a 0% bar that implies
+// one. A stalled/failed transfer with a partial keeps its bar so the user sees
+// how far it got.
 function showProgress(t: DccTransfer): boolean {
-  // While bytes can still arrive, or for a non-completed transfer that already
-  // has partial bytes (stalled/failed mid-stream) so the user sees how far it got.
+  if (t.state === 'pending_approval' || t.state === 'requested') return false;
   return isCancellable(t) || (t.received_bytes > 0 && t.state !== 'completed');
-}
-
-function progressPct(t: DccTransfer): number {
-  if (!t.advertised_size || t.advertised_size <= 0) return 0;
-  return Math.max(0, Math.min(100, Math.round((t.received_bytes / t.advertised_size) * 100)));
 }
 
 function progressTitle(t: DccTransfer): string {
   const got = formatBytes(t.received_bytes);
   if (t.advertised_size > 0) {
-    return `${got} / ${formatBytes(t.advertised_size)} (${progressPct(t)}%)`;
+    return `${got} / ${formatBytes(t.advertised_size)} (${percentReceived(t)}%)`;
   }
   return got;
 }

@@ -60,6 +60,7 @@ import { hasFreeSpaceFor, resolveDccDestination } from './dccPaths.js';
 import { DccReceiver } from './dccReceiver.js';
 import {
   type DccTransferRow,
+  DCC_ACTIVE_STATES,
   findArmedRequest,
   findResumableTransfer,
   getDccTransfer,
@@ -2930,7 +2931,18 @@ export class IrcConnection {
   // stale (the bot stopped listening) — that surfaces as a connect failure.
   acceptPendingDcc(row: DccTransferRow): void {
     if (this.disposed) return;
-    if (row.state !== 'pending_approval' || row.peer_host == null || row.peer_port == null) return;
+    // Only an unsolicited offer still awaiting a decision can be accepted; a row
+    // that already moved on (receiving/terminal) is a no-op.
+    if (row.state !== 'pending_approval') return;
+    // A pending row recorded before the peer_host/peer_port columns existed (or
+    // whose address didn't decode) can't be dialed. Fail it VISIBLY rather than
+    // silently no-op — otherwise the API returns 200 and the UI shows the Accept
+    // doing nothing, with the row stuck pending forever.
+    if (row.peer_host == null || row.peer_port == null) {
+      updateDccTransferState(row.id, 'failed', 'offer is missing its address — cannot reconnect');
+      this.publishDcc(row.id);
+      return;
+    }
     this.acceptDccOffer(row.id, row.peer_nick, {
       kind: 'send',
       filename: row.filename,
@@ -2942,22 +2954,44 @@ export class IrcConnection {
     });
   }
 
-  // Reject a pending offer (no download). The row stays as a tombstone.
+  // Reject a pending offer (no download). Guarded to the offer states so a late
+  // /dcc reject can't clobber a row that already completed/failed/cancelled.
   rejectDcc(transferId: number): void {
+    const row = getDccTransfer(this.network.user_id, transferId);
+    if (!row || (row.state !== 'pending_approval' && row.state !== 'requested')) return;
     updateDccTransferState(transferId, 'rejected');
     this.publishDcc(transferId);
   }
 
   // Cancel a transfer: abort the live receiver if one is running (its onError
-  // marks 'cancelled'), otherwise flip a pending/requested row to 'cancelled'.
+  // marks 'cancelled'), otherwise flip a still-active row to 'cancelled'.
   cancelDcc(transferId: number): void {
     const receiver = this.dccReceivers.get(transferId);
     if (receiver) {
       receiver.cancel();
       return; // onError → 'cancelled' + publishDcc
     }
+    // No live receiver yet — but the transfer may be in the RESUME wait window
+    // (requestDccResume armed a timer and a pending entry, with the receiver only
+    // starting on the bot's DCC ACCEPT). Tear that down, or the timer would fire
+    // markDccFailed over our 'cancelled', or a late ACCEPT would start the
+    // download after the user cancelled it.
+    this.clearPendingResume(transferId);
+    const row = getDccTransfer(this.network.user_id, transferId);
+    if (!row || !DCC_ACTIVE_STATES.has(row.state)) return; // don't clobber a terminal row
     updateDccTransferState(transferId, 'cancelled');
     this.publishDcc(transferId);
+  }
+
+  // Drop any armed DCC RESUME wait for this transfer (clear its timeout + pending
+  // entry). The map is keyed by nick|filename, so find the entry by transferId.
+  private clearPendingResume(transferId: number): void {
+    for (const [key, pending] of this.dccPendingResume) {
+      if (pending.transferId !== transferId) continue;
+      clearTimeout(pending.timer);
+      this.dccPendingResume.delete(key);
+      return;
+    }
   }
 
   // Surface an inbound CTCP reply (a peer answered a query we sent), routed back

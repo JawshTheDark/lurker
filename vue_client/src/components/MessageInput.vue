@@ -149,7 +149,7 @@ import { useInputHistoryStore } from '../stores/inputHistory.js';
 import { useDraftStore } from '../stores/drafts.js';
 import { useSettingsStore } from '../stores/settings.js';
 import { useUploadsStore, onInsertUrl } from '../stores/uploads.js';
-import { useDccStore, type DccTransfer } from '../stores/dcc.js';
+import { useDccStore, percentReceived, type DccTransfer } from '../stores/dcc.js';
 import { useToastsStore } from '../stores/toasts.js';
 import { useIgnoresStore, type IgnoreEntry } from '../stores/ignores.js';
 import { useRelayBotsStore } from '../stores/relayBots.js';
@@ -2206,11 +2206,11 @@ async function runDcc(argLine: string, networkId: number | null, target: string)
     }
     return;
   }
-  // accept / reject / cancel — the parser guarantees a numeric id here.
+  // accept / reject / cancel — the parser guarantees a numeric id here. They all
+  // route through the store's shared act() path.
   const verb = cmd.kind;
-  const run = verb === 'accept' ? dcc.accept : verb === 'reject' ? dcc.reject : dcc.cancel;
   try {
-    const t = await run.call(dcc, cmd.id);
+    const t = await dcc.act(cmd.id, verb);
     localInfo(
       networkId,
       target,
@@ -2223,8 +2223,7 @@ async function runDcc(argLine: string, networkId: number | null, target: string)
 
 // One row for the /dcc list output: "#3  movie.mkv  receiving  alice  42%".
 function dccListRow(t: DccTransfer): string[] {
-  const pct =
-    t.advertised_size > 0 ? `${Math.round((t.received_bytes / t.advertised_size) * 100)}%` : '';
+  const pct = t.advertised_size > 0 ? `${percentReceived(t)}%` : '';
   return [`#${t.id}`, t.filename, t.state, t.peer_nick, pct];
 }
 

@@ -508,4 +508,98 @@ describe('pending-offer actions (phase 2)', () => {
     conn.cancelDcc(id);
     expect(listDccTransfers(1)[0].state).toBe('cancelled');
   });
+
+  it('reject/cancel do not clobber a terminal (completed) transfer', () => {
+    enableDcc();
+    const { conn } = harness();
+    const id = insertDccTransfer(1, {
+      network_id: 1,
+      peer_nick: 'bot',
+      filename: 'done.bin',
+      advertised_size: 100,
+      state: 'requested',
+    });
+    updateDccTransferState(id, 'completed');
+    conn.rejectDcc(id);
+    expect(listDccTransfers(1)[0].state).toBe('completed');
+    conn.cancelDcc(id);
+    expect(listDccTransfers(1)[0].state).toBe('completed');
+  });
+
+  it('accepting a pending offer with no stored address fails it visibly', () => {
+    enableDcc();
+    const { conn } = harness();
+    // A pending row whose peer_host/peer_port were never decoded (e.g. predates
+    // the columns) — can't be dialed, so Accept must fail it, not silently no-op.
+    const id = insertDccTransfer(1, {
+      network_id: 1,
+      peer_nick: 'bot',
+      filename: 'noaddr.bin',
+      advertised_size: 100,
+      state: 'pending_approval',
+    });
+    const row = listDccTransfers(1)[0];
+    expect(row.peer_host).toBeNull();
+    conn.acceptPendingDcc(row);
+    const after = listDccTransfers(1)[0];
+    expect(after.state).toBe('failed');
+    expect(after.error).toMatch(/address/i);
+  });
+
+  it('cancelling during the resume wait clears the timeout (no late failure)', () => {
+    vi.useFakeTimers();
+    try {
+      tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lurker-dcc-cancel-resume-'));
+      process.env.LURKER_DCC_DIR = tmpDir;
+      process.env.LURKER_DCC_ALLOW_PRIVATE_HOSTS = '1';
+      enableDcc();
+
+      const full = makePayload(30_000);
+      const have = 10_000;
+      // Pre-seed a partial + a tracked prior incomplete row so the offer takes the
+      // RESUME branch (which arms a 15s timer and waits for the bot's DCC ACCEPT,
+      // starting NO receiver yet).
+      const userDir = path.join(tmpDir, 'dcc-wire-alice');
+      fs.mkdirSync(userDir, { recursive: true });
+      const partialPath = path.join(userDir, 'show.mkv');
+      fs.writeFileSync(partialPath, full.subarray(0, have));
+      const priorId = insertDccTransfer(1, {
+        network_id: 1,
+        peer_nick: 'bot',
+        filename: 'show.mkv',
+        advertised_size: full.length,
+        state: 'requested',
+      });
+      markDccReceiving(priorId, {
+        filename: 'show.mkv',
+        advertised_size: full.length,
+        destination_path: partialPath,
+        received_bytes: have,
+      });
+      updateDccTransferState(priorId, 'failed', 'interrupted');
+
+      const { conn } = harness();
+      conn.client.say = vi.fn<(target: string, text: string) => void>();
+      conn.client.ctcpRequest = vi.fn<(target: string, type: string, ...p: string[]) => void>();
+
+      conn.say('bot', 'xdcc send #1'); // arm a fresh requested row
+      conn.client.emit('ctcp request', {
+        nick: 'bot',
+        type: 'DCC',
+        message: `DCC SEND show.mkv 16843009 9999 ${full.length}`, // public host, resume branch
+      });
+      const armed = listDccTransfers(1).find((r) => r.id !== priorId)!;
+      expect(armed.state).toBe('receiving'); // RESUME requested, awaiting ACCEPT
+
+      conn.cancelDcc(armed.id);
+      expect(listDccTransfers(1).find((r) => r.id === armed.id)!.state).toBe('cancelled');
+
+      // The 15s resume timeout must have been cleared by the cancel — advancing
+      // past it must NOT overwrite 'cancelled' with 'failed'.
+      vi.advanceTimersByTime(20_000);
+      expect(listDccTransfers(1).find((r) => r.id === armed.id)!.state).toBe('cancelled');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

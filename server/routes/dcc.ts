@@ -10,10 +10,31 @@ import { Router, type Request, type Response } from 'express';
 
 import { requireAuth, blockWritesWhenPaused } from '../middleware/auth.js';
 import ircManager from '../services/ircManager.js';
+import { dccEnabledForUser } from '../services/dccConfig.js';
 import { getDccTransfer, listDccTransfers } from '../db/dccTransfers.js';
 
 const router = Router();
 router.use(requireAuth);
+
+// The two-tier DCC gate (cell master switch AND per-user capability) guards
+// every DCC entry point — the inbound-CTCP path checks it, so the API must too,
+// or a stale pending_approval row could be accepted after a grant is revoked.
+// Gating reads as well as writes keeps the whole surface dark when DCC is off
+// (and gives the /dcc command + Transfers modal a clear "not enabled" error).
+router.use((req: Request, res: Response, next) => {
+  if (!dccEnabledForUser(req.user!.id)) {
+    res.status(403).json({ error: 'DCC is not enabled for this account' });
+    return;
+  }
+  next();
+});
+
+// A transfer id is a positive integer row id; reject anything else up front so a
+// non-numeric :id can't reach better-sqlite3 as NaN (which throws → 500).
+function transferId(req: Request): number | null {
+  const id = Number(req.params.id);
+  return Number.isInteger(id) && id > 0 ? id : null;
+}
 
 /** GET /api/dcc — the user's transfers, newest first. */
 router.get('/', (req: Request, res: Response) => {
@@ -26,7 +47,11 @@ router.use(blockWritesWhenPaused);
 
 /** POST /api/dcc/:id/accept — accept a pending offer and start the download. */
 router.post('/:id/accept', (req: Request, res: Response) => {
-  const id = Number(req.params.id);
+  const id = transferId(req);
+  if (id == null) {
+    res.status(404).json({ error: 'transfer not found' });
+    return;
+  }
   const result = ircManager.acceptDccTransfer(req.user!.id, id);
   if (result === 'not-found') {
     res.status(404).json({ error: 'transfer not found' });
@@ -41,8 +66,8 @@ router.post('/:id/accept', (req: Request, res: Response) => {
 
 /** POST /api/dcc/:id/reject — reject a pending offer (no download). */
 router.post('/:id/reject', (req: Request, res: Response) => {
-  const id = Number(req.params.id);
-  if (!ircManager.rejectDccTransfer(req.user!.id, id)) {
+  const id = transferId(req);
+  if (id == null || !ircManager.rejectDccTransfer(req.user!.id, id)) {
     res.status(404).json({ error: 'transfer not found' });
     return;
   }
@@ -51,8 +76,8 @@ router.post('/:id/reject', (req: Request, res: Response) => {
 
 /** POST /api/dcc/:id/cancel — cancel an in-flight or still-pending transfer. */
 router.post('/:id/cancel', (req: Request, res: Response) => {
-  const id = Number(req.params.id);
-  if (!ircManager.cancelDccTransfer(req.user!.id, id)) {
+  const id = transferId(req);
+  if (id == null || !ircManager.cancelDccTransfer(req.user!.id, id)) {
     res.status(404).json({ error: 'transfer not found' });
     return;
   }

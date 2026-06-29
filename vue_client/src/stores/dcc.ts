@@ -64,16 +64,28 @@ export const ACTIVE_STATES: ReadonlySet<DccState> = new Set([
   'verifying',
 ]);
 
-// A pending_approval offer is awaiting the user's Accept/Reject — the only state
-// /dcc accept|reject act on, and what the affordance badge counts as "needs you".
-export function isPending(t: DccTransfer): boolean {
-  return t.state === 'pending_approval';
-}
+// Terminal states a transfer never legitimately leaves (a row id is one-shot).
+// Used to drop a stale snapshot that would rewind a finished row — see
+// applyTransfer.
+const TERMINAL_STATES: ReadonlySet<DccState> = new Set([
+  'completed',
+  'failed',
+  'rejected',
+  'cancelled',
+]);
 
 // True while bytes can still arrive, so the UI offers Cancel (and renders a
 // progress bar). A pending offer isn't cancellable-in-flight but can be rejected.
 export function isCancellable(t: DccTransfer): boolean {
   return ACTIVE_STATES.has(t.state);
+}
+
+// Download progress as a clamped 0–100 integer. Shared by the modal's progress
+// bar and the /dcc list output so the two never diverge (and a bot that
+// over-sends can't render >100%).
+export function percentReceived(t: DccTransfer): number {
+  if (!t.advertised_size || t.advertised_size <= 0) return 0;
+  return Math.max(0, Math.min(100, Math.round((t.received_bytes / t.advertised_size) * 100)));
 }
 
 type DccAction = 'accept' | 'reject' | 'cancel';
@@ -101,9 +113,8 @@ export const useDccStore = defineStore('dcc', {
   }),
   getters: {
     hasAny: (s): boolean => s.transfers.length > 0,
-    // In-flight transfers — drives the affordance's "active" indicator.
-    activeCount: (s): number => s.transfers.filter((t) => ACTIVE_STATES.has(t.state)).length,
-    // Unsolicited offers awaiting a decision — the urgent, you-must-act count.
+    // Unsolicited offers awaiting a decision — the urgent, you-must-act count
+    // that warn-colors the affordance.
     pendingCount: (s): number => s.transfers.filter((t) => t.state === 'pending_approval').length,
   },
   actions: {
@@ -132,17 +143,25 @@ export const useDccStore = defineStore('dcc', {
 
     // Upsert a single row from a live `dcc-transfer` frame or an action response.
     // The id is immutable, so an existing row is replaced in place; a new one is
-    // inserted and the list re-sorted id-DESC (a fresh offer has the largest id,
-    // so this lands it at the top).
+    // spliced in keeping the list id-DESC (a fresh offer has the largest id, so
+    // this is usually a prepend).
+    //
+    // WS frames and POST action responses are independent, unordered channels, so
+    // a stale snapshot can arrive after a newer one. Guard against the one case
+    // that matters: a terminal row must never rewind to an active state (e.g. a
+    // cancel/accept POST response carrying 'receiving' resolving after the live
+    // 'cancelled'/'completed' frame already landed). Drop such a regression.
     applyTransfer(t: DccTransfer): void {
       if (!t || typeof t.id !== 'number') return;
       const idx = this.transfers.findIndex((x) => x.id === t.id);
       if (idx >= 0) {
+        if (TERMINAL_STATES.has(this.transfers[idx].state) && !TERMINAL_STATES.has(t.state)) return;
         this.transfers[idx] = t;
-      } else {
-        this.transfers.push(t);
-        this.transfers.sort((a, b) => b.id - a.id);
+        return;
       }
+      const at = this.transfers.findIndex((x) => x.id < t.id);
+      if (at === -1) this.transfers.push(t);
+      else this.transfers.splice(at, 0, t);
     },
 
     async accept(id: number): Promise<DccTransfer> {
