@@ -44,9 +44,19 @@ import {
   parseCtcp,
   type CtcpReplyConfig,
 } from './ctcp.js';
-import { formatDccOfferLine, parseDcc } from './dcc.js';
+import { formatBytes, formatDccOfferLine, parseDcc } from './dcc.js';
+import type { DccSend } from './dcc.js';
 import { dccEnabledForUser } from './dccConfig.js';
-import { insertDccTransfer } from '../db/dccTransfers.js';
+import { resolveDccDestination } from './dccPaths.js';
+import { DccReceiver } from './dccReceiver.js';
+import {
+  findArmedRequest,
+  insertDccTransfer,
+  markDccCompleted,
+  markDccReceiving,
+  updateDccReceivedBytes,
+  updateDccTransferState,
+} from '../db/dccTransfers.js';
 import { getChannelConfig as getE2eChannelConfig } from '../db/e2e.js';
 import type { ChannelMode } from '../db/e2e.js';
 import { randomBytes } from 'node:crypto';
@@ -263,6 +273,9 @@ export class IrcConnection {
   // Last time we surfaced an undecryptable-E2E hint per (channel,peer,kind), to
   // collapse a multi-chunk message's per-chunk hints into one (#382). epoch ms.
   private readonly e2eHintAt = new Map<string, number>();
+  // Active DCC downloads (#270), keyed by dcc_transfers.id, so their sockets
+  // aren't GC'd mid-transfer and can be cancelled on dispose.
+  private readonly dccReceivers = new Map<number, DccReceiver>();
   useMonitor: boolean;
   monitorLimit: number;
   pendingMonitorSeed: boolean;
@@ -2393,6 +2406,7 @@ export class IrcConnection {
   say(target: string, text: string): void {
     if (isDmTargetName(target)) this.trackDmPeer(target);
     this.noteUserSend(target);
+    this.maybeArmDcc(target, text);
     this.client.say(target, text);
   }
   action(target: string, text: string): void {
@@ -2541,13 +2555,33 @@ export class IrcConnection {
     this.routeCtcpStatus(event, formatCtcpRequestLine(nick, type, reply));
   }
 
-  // Phase 0 (#270): record a detected inbound DCC SEND offer and surface a status
-  // line. No socket is opened and nothing lands on disk yet — arming/auto-accept
-  // (phase 1) and the Accept/Reject UI (phase 2) build on this row. Every
-  // detected offer is stored as `pending_approval`, the safe default until arming
-  // exists (nothing can auto-land). Non-SEND subtypes (CHAT/ACCEPT/RESUME) and
-  // malformed bodies surface the generic probe line so the user still sees that
-  // something arrived. Rate-limited upstream by the shared CTCP per-peer limiter.
+  // Arm-on-trigger (#270): when the user sends an `XDCC SEND #n` to a bot (a DM
+  // target), record a `requested` row so the bot's eventual DCC SEND offer is
+  // matched + auto-accepted (findArmedRequest). The row survives a slow bot queue
+  // — it just waits. A trigger typed in a channel doesn't arm (you message the
+  // bot directly). Gated like every DCC entry point.
+  private maybeArmDcc(target: string, text: string): void {
+    if (this.disposed || !isDmTargetName(target)) return;
+    const m = /\bxdcc\s+(?:send|get)\s+(#?\d+)/i.exec(text);
+    if (!m) return;
+    if (!dccEnabledForUser(this.network.user_id)) return;
+    const pack = m[1].startsWith('#') ? m[1] : `#${m[1]}`;
+    insertDccTransfer(this.network.user_id, {
+      network_id: this.network.id,
+      peer_nick: target,
+      filename: `XDCC ${pack}`, // placeholder until the real offer arrives
+      advertised_size: 0,
+      state: 'requested',
+      trigger_text: text,
+    });
+  }
+
+  // Route an inbound DCC SEND offer (#270): if it matches a request the user
+  // armed, auto-accept and start the download; otherwise record it as
+  // `pending_approval` for the (phase 2) Accept/Reject UI. Non-SEND subtypes
+  // (CHAT/ACCEPT/RESUME) and malformed bodies surface the generic probe line so
+  // the user still sees something arrived. Rate-limited upstream by the shared
+  // CTCP per-peer limiter.
   private handleInboundDccRequest(
     nick: string,
     args: string,
@@ -2558,6 +2592,12 @@ export class IrcConnection {
       this.routeCtcpStatus(event, formatCtcpRequestLine(nick, 'DCC', null));
       return;
     }
+    const armed = findArmedRequest(this.network.user_id, this.network.id, nick);
+    if (armed) {
+      this.acceptDccOffer(armed.id, nick, offer);
+      return;
+    }
+    // Unsolicited: nothing auto-lands. Record for the Accept/Reject UI (phase 2).
     insertDccTransfer(this.network.user_id, {
       network_id: this.network.id,
       peer_nick: nick,
@@ -2568,6 +2608,77 @@ export class IrcConnection {
       token: offer.token,
     });
     this.routeCtcpStatus(event, formatDccOfferLine(nick, offer));
+  }
+
+  // Accept an armed offer and stream it to disk via the receive engine. Active
+  // DCC only for now (the cell dials the bot); passive/reverse is a follow-up.
+  // DB progress writes + status lines are throttled so neither the single SQLite
+  // connection nor the buffer gets hammered on a fast/large transfer.
+  private acceptDccOffer(transferId: number, nick: string, offer: DccSend): void {
+    if (offer.passive) {
+      updateDccTransferState(transferId, 'failed', 'passive DCC not yet supported');
+      this.surfaceCtcp(nick, `DCC: passive transfer from ${nick} not yet supported`);
+      return;
+    }
+    let destPath: string;
+    try {
+      const username = findUserById(this.network.user_id)?.username || 'user';
+      destPath = resolveDccDestination(username, offer.filename);
+    } catch (e) {
+      const reason = e instanceof Error ? e.message : String(e);
+      updateDccTransferState(transferId, 'failed', reason);
+      this.surfaceCtcp(nick, `DCC: cannot start "${offer.filename}" — ${reason}`);
+      return;
+    }
+    markDccReceiving(transferId, {
+      filename: offer.filename,
+      advertised_size: offer.size,
+      destination_path: destPath,
+      passive: offer.passive,
+      token: offer.token,
+    });
+    this.surfaceCtcp(
+      nick,
+      `DCC: downloading "${offer.filename}" (${formatBytes(offer.size)}) from ${nick}…`,
+    );
+
+    let lastDbAt = 0;
+    let lastLineAt = Date.now();
+    const receiver = new DccReceiver({
+      host: offer.host,
+      port: offer.port,
+      size: offer.size,
+      destPath,
+      onProgress: (received) => {
+        const now = Date.now();
+        if (now - lastDbAt >= 3000) {
+          lastDbAt = now;
+          updateDccReceivedBytes(transferId, received);
+        }
+        if (offer.size > 0 && now - lastLineAt >= 8000) {
+          lastLineAt = now;
+          this.surfaceCtcp(
+            nick,
+            `DCC: "${offer.filename}" ${formatBytes(received)} / ${formatBytes(offer.size)}`,
+          );
+        }
+      },
+      onDone: (received) => {
+        this.dccReceivers.delete(transferId);
+        markDccCompleted(transferId, received);
+        this.surfaceCtcp(
+          nick,
+          `DCC: completed "${offer.filename}" (${formatBytes(received)}) → ${destPath}`,
+        );
+      },
+      onError: (err) => {
+        this.dccReceivers.delete(transferId);
+        updateDccTransferState(transferId, 'failed', err.message);
+        this.surfaceCtcp(nick, `DCC: failed "${offer.filename}" — ${err.message}`);
+      },
+    });
+    this.dccReceivers.set(transferId, receiver);
+    receiver.start();
   }
 
   // Surface an inbound CTCP reply (a peer answered a query we sent), routed back
@@ -3350,6 +3461,10 @@ export class IrcConnection {
     this.disposed = true;
     this.stopLagPinger();
     this.cancelPendingConnectCommands();
+    // Abort any in-flight DCC downloads (their sockets are independent of the IRC
+    // socket, so they'd otherwise outlive this connection).
+    for (const receiver of this.dccReceivers.values()) receiver.cancel();
+    this.dccReceivers.clear();
     try {
       this.client.quit(reason);
     } catch (_) {

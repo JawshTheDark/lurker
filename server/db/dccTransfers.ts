@@ -124,3 +124,66 @@ export function updateDccTransferState(
     `UPDATE dcc_transfers SET state = ?, error = ?, updated_at = datetime('now') WHERE id = ?`,
   ).run(state, error, Number(id));
 }
+
+/** The most recent still-waiting `requested` row for a bot on a network — used to
+ *  match an inbound DCC SEND offer to a trigger the user sent (arm-on-trigger
+ *  auto-accept). peer_nick collates NOCASE, so the bot's nick casing in the offer
+ *  needn't match what the user typed. */
+export function findArmedRequest(
+  userId: number,
+  networkId: number,
+  peerNick: string,
+): DccTransferRow | undefined {
+  return db
+    .prepare(
+      `SELECT * FROM dcc_transfers
+       WHERE user_id = ? AND network_id = ? AND peer_nick = ? AND state = 'requested'
+       ORDER BY id DESC LIMIT 1`,
+    )
+    .get(userId, networkId, peerNick) as DccTransferRow | undefined;
+}
+
+export interface DccReceivingFields {
+  /** The real filename from the offer (the `requested` row held a placeholder). */
+  filename: string;
+  advertised_size: number;
+  destination_path: string;
+  passive?: boolean;
+  token?: number | null;
+}
+
+/** Promote a transfer to `receiving` once an offer is accepted, stamping the
+ *  real filename/size/destination from the offer and clearing any prior error. */
+export function markDccReceiving(id: number, f: DccReceivingFields): void {
+  db.prepare(
+    `UPDATE dcc_transfers
+       SET state = 'receiving', filename = ?, advertised_size = ?, destination_path = ?,
+           passive = ?, token = ?, error = NULL, updated_at = datetime('now')
+     WHERE id = ?`,
+  ).run(
+    f.filename,
+    f.advertised_size,
+    f.destination_path,
+    f.passive ? 1 : 0,
+    f.token ?? null,
+    Number(id),
+  );
+}
+
+/** Checkpoint progress. Called on a throttle by the caller (never per-chunk) so
+ *  the single shared SQLite connection isn't hammered. */
+export function updateDccReceivedBytes(id: number, received: number): void {
+  db.prepare(
+    `UPDATE dcc_transfers SET received_bytes = ?, updated_at = datetime('now') WHERE id = ?`,
+  ).run(received, Number(id));
+}
+
+/** Mark a transfer done, stamping the final byte count and completion time. */
+export function markDccCompleted(id: number, received: number): void {
+  db.prepare(
+    `UPDATE dcc_transfers
+       SET state = 'completed', received_bytes = ?, error = NULL,
+           completed_at = datetime('now'), updated_at = datetime('now')
+     WHERE id = ?`,
+  ).run(received, Number(id));
+}
