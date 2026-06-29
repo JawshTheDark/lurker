@@ -44,14 +44,23 @@ import {
   parseCtcp,
   type CtcpReplyConfig,
 } from './ctcp.js';
+import fs from 'fs';
 import path from 'path';
-import { formatBytes, formatDccOfferLine, isBlockedDccHost, parseDcc } from './dcc.js';
-import type { DccSend } from './dcc.js';
+import {
+  crc32Hex,
+  formatBytes,
+  formatDccOfferLine,
+  isBlockedDccHost,
+  parseCrcFromFilename,
+  parseDcc,
+} from './dcc.js';
+import type { DccAccept, DccSend } from './dcc.js';
 import { dccAllowPrivateHosts, dccEnabledForUser, dccMaxFileBytes } from './dccConfig.js';
 import { hasFreeSpaceFor, resolveDccDestination } from './dccPaths.js';
 import { DccReceiver } from './dccReceiver.js';
 import {
   findArmedRequest,
+  findResumableTransfer,
   insertDccTransfer,
   markDccCompleted,
   markDccFailed,
@@ -278,6 +287,19 @@ export class IrcConnection {
   // Active DCC downloads (#270), keyed by dcc_transfers.id, so their sockets
   // aren't GC'd mid-transfer and can be cancelled on dispose.
   private readonly dccReceivers = new Map<number, DccReceiver>();
+  // Resumes awaiting the sender's DCC ACCEPT, keyed by nick|filename. Each holds
+  // a timeout so a bot that never accepts fails the transfer cleanly.
+  private readonly dccPendingResume = new Map<
+    string,
+    {
+      transferId: number;
+      nick: string;
+      offer: DccSend;
+      destPath: string;
+      startOffset: number;
+      timer: ReturnType<typeof setTimeout>;
+    }
+  >();
   useMonitor: boolean;
   monitorLimit: number;
   pendingMonitorSeed: boolean;
@@ -2603,11 +2625,16 @@ export class IrcConnection {
     args: string,
     event: Record<string, unknown>,
   ): void {
-    const offer = parseDcc(args);
-    if (offer.kind !== 'send') {
+    const parsed = parseDcc(args);
+    if (parsed.kind === 'accept') {
+      this.handleDccAccept(nick, parsed);
+      return;
+    }
+    if (parsed.kind !== 'send') {
       this.routeCtcpStatus(event, formatCtcpRequestLine(nick, 'DCC', null));
       return;
     }
+    const offer = parsed;
     const armed = findArmedRequest(this.network.user_id, this.network.id, nick);
     if (armed) {
       this.acceptDccOffer(armed.id, nick, offer);
@@ -2663,19 +2690,34 @@ export class IrcConnection {
       );
       return;
     }
+    // Resume only continues OUR OWN tracked incomplete transfer of this file (a
+    // prior failed/stalled/orphaned-receiving row whose partial is still on disk
+    // and shorter than the offer) — never an arbitrary same-named leftover, which
+    // could otherwise get this bot's bytes appended onto an unrelated prefix.
     let destPath: string;
-    try {
-      const username = findUserById(this.network.user_id)?.username || 'user';
-      destPath = resolveDccDestination(username, offer.filename);
-    } catch (e) {
-      const reason = e instanceof Error ? e.message : String(e);
-      updateDccTransferState(transferId, 'failed', reason);
-      this.surfaceCtcp(nick, `DCC: cannot start "${offer.filename}" — ${reason}`);
-      return;
+    let startOffset = 0;
+    const prior = findResumableTransfer(this.network.user_id, this.network.id, offer.filename);
+    const partialSize =
+      prior?.destination_path && fs.existsSync(prior.destination_path)
+        ? fs.statSync(prior.destination_path).size
+        : 0;
+    if (prior?.destination_path && partialSize > 0 && partialSize < offer.size) {
+      destPath = prior.destination_path;
+      startOffset = partialSize;
+    } else {
+      try {
+        const username = findUserById(this.network.user_id)?.username || 'user';
+        destPath = resolveDccDestination(username, offer.filename);
+      } catch (e) {
+        const reason = e instanceof Error ? e.message : String(e);
+        updateDccTransferState(transferId, 'failed', reason);
+        this.surfaceCtcp(nick, `DCC: cannot start "${offer.filename}" — ${reason}`);
+        return;
+      }
     }
-    // Refuse a transfer that would fill the disk (the receiver also caps writes at
-    // the advertised size, so this size is the real ceiling).
-    if (!hasFreeSpaceFor(path.dirname(destPath), offer.size)) {
+    // Disk check is on the REMAINING bytes (a resume only fetches size - partial);
+    // the receiver also caps writes at the advertised size, so it's the ceiling.
+    if (!hasFreeSpaceFor(path.dirname(destPath), offer.size - startOffset)) {
       updateDccTransferState(transferId, 'failed', 'insufficient disk space');
       this.surfaceCtcp(
         nick,
@@ -2683,18 +2725,113 @@ export class IrcConnection {
       );
       return;
     }
+    const expectedCrc = parseCrcFromFilename(offer.filename);
     markDccReceiving(transferId, {
       filename: offer.filename,
       advertised_size: offer.size,
       destination_path: destPath,
       passive: offer.passive,
       token: offer.token,
+      crc_expected: expectedCrc,
+      received_bytes: startOffset,
     });
-    this.surfaceCtcp(
-      nick,
-      `DCC: downloading "${offer.filename}" (${formatBytes(offer.size)}) from ${nick}…`,
-    );
+    if (startOffset > 0) {
+      // A partial exists — ask the bot to resume from there and wait for its
+      // DCC ACCEPT before connecting (handleDccAccept starts the receiver).
+      this.surfaceCtcp(
+        nick,
+        `DCC: resuming "${offer.filename}" from ${formatBytes(startOffset)} / ${formatBytes(offer.size)}…`,
+      );
+      this.requestDccResume(transferId, nick, offer, destPath, startOffset);
+    } else {
+      this.surfaceCtcp(
+        nick,
+        `DCC: downloading "${offer.filename}" (${formatBytes(offer.size)}) from ${nick}…`,
+      );
+      this.startDccReceiver(transferId, nick, offer, destPath, 0, expectedCrc);
+    }
+  }
 
+  private dccResumeKey(nick: string, filename: string): string {
+    // Fold case on both halves: a bot may echo the filename in different case in
+    // its DCC ACCEPT than the SEND offer used, and the ACCEPT lookup must match.
+    return `${nick.toLowerCase()}|${filename.toLowerCase()}`;
+  }
+
+  // Send DCC RESUME for a partial and arm a timeout; the receiver isn't started
+  // until the sender's DCC ACCEPT arrives (handleDccAccept).
+  private requestDccResume(
+    transferId: number,
+    nick: string,
+    offer: DccSend,
+    destPath: string,
+    startOffset: number,
+  ): void {
+    const key = this.dccResumeKey(nick, offer.filename);
+    const prior = this.dccPendingResume.get(key);
+    if (prior) {
+      // A newer resume for the same file supersedes the prior one — leave its row
+      // resumable (stalled) rather than orphaning it forever in 'receiving'.
+      clearTimeout(prior.timer);
+      updateDccTransferState(prior.transferId, 'stalled', 'superseded by a newer resume');
+    }
+    const timer = setTimeout(() => {
+      this.dccPendingResume.delete(key);
+      markDccFailed(transferId, startOffset, 'resume not accepted by sender');
+      this.surfaceCtcp(nick, `DCC: "${offer.filename}" — sender did not accept resume`);
+    }, 15_000);
+    this.dccPendingResume.set(key, { transferId, nick, offer, destPath, startOffset, timer });
+    // Mirror the offer's filename quoting so the bot matches it.
+    const fn = offer.filename.includes(' ') ? `"${offer.filename}"` : offer.filename;
+    this.client.ctcpRequest(nick, 'DCC', 'RESUME', fn, String(offer.port), String(startOffset));
+  }
+
+  // The sender accepted our resume: start receiving (appending) from our partial.
+  private handleDccAccept(nick: string, accept: DccAccept): void {
+    const key = this.dccResumeKey(nick, accept.filename);
+    const pending = this.dccPendingResume.get(key);
+    if (!pending) return; // unsolicited / stale ACCEPT
+    // Confirm the ACCEPT is for our pending offer (the port it echoes must match)
+    // BEFORE consuming the pending entry — a stray/mismatched ACCEPT must not clear
+    // the timer or fail a still-valid pending resume.
+    if (accept.port !== pending.offer.port) return;
+    clearTimeout(pending.timer);
+    this.dccPendingResume.delete(key);
+    // We asked to resume from exactly our partial's size; the sender must echo it.
+    // Any other position (a buggy or malicious ACCEPT) would mean appending at the
+    // wrong offset — and the position is attacker-controlled — so refuse it rather
+    // than truncate/extend the file to match.
+    if (accept.position !== pending.startOffset) {
+      markDccFailed(
+        pending.transferId,
+        pending.startOffset,
+        `sender accepted an unexpected resume position (${accept.position})`,
+      );
+      this.surfaceCtcp(nick, `DCC: "${accept.filename}" — sender accepted a bad resume position`);
+      return;
+    }
+    this.startDccReceiver(
+      pending.transferId,
+      pending.nick,
+      pending.offer,
+      pending.destPath,
+      pending.startOffset,
+      parseCrcFromFilename(pending.offer.filename),
+    );
+  }
+
+  // Build + start the receive engine for a transfer (fresh: startOffset 0;
+  // resume: startOffset > 0, appending). Wires throttled progress, completion
+  // (with CRC verdict), and failure back to the row + status buffer.
+  private startDccReceiver(
+    transferId: number,
+    nick: string,
+    offer: DccSend,
+    destPath: string,
+    startOffset: number,
+    expectedCrc: string | null,
+  ): void {
+    const resumed = startOffset > 0;
     let lastDbAt = 0;
     let lastLineAt = Date.now();
     const receiver = new DccReceiver({
@@ -2702,6 +2839,7 @@ export class IrcConnection {
       port: offer.port,
       size: offer.size,
       destPath,
+      startOffset,
       onProgress: (received) => {
         const now = Date.now();
         if (now - lastDbAt >= 3000) {
@@ -2716,12 +2854,31 @@ export class IrcConnection {
           );
         }
       },
-      onDone: (received) => {
+      onDone: (received, crc) => {
         this.dccReceivers.delete(transferId);
-        markDccCompleted(transferId, received);
+        // A resume only re-checksummed the tail, so we don't claim ok/mismatch on
+        // the whole file — completion already verified the size. A fresh transfer
+        // checks the filename CRC.
+        const actual = crc32Hex(crc);
+        const status = resumed
+          ? 'unverified'
+          : expectedCrc == null
+            ? 'absent'
+            : actual === expectedCrc
+              ? 'ok'
+              : 'mismatch';
+        markDccCompleted(transferId, received, resumed ? null : actual, status);
+        const badge =
+          status === 'ok'
+            ? ' ✓ CRC verified'
+            : status === 'mismatch'
+              ? ` ⚠ CRC MISMATCH (got ${actual}, expected ${expectedCrc})`
+              : status === 'unverified'
+                ? ' (resumed — size verified)'
+                : '';
         this.surfaceCtcp(
           nick,
-          `DCC: completed "${offer.filename}" (${formatBytes(received)}) → ${destPath}`,
+          `DCC: completed "${offer.filename}" (${formatBytes(received)}) → ${destPath}${badge}`,
         );
       },
       onError: (err, received) => {
@@ -3515,9 +3672,16 @@ export class IrcConnection {
     this.stopLagPinger();
     this.cancelPendingConnectCommands();
     // Abort any in-flight DCC downloads (their sockets are independent of the IRC
-    // socket, so they'd otherwise outlive this connection).
+    // socket, so they'd otherwise outlive this connection) and drop resume timers.
     for (const receiver of this.dccReceivers.values()) receiver.cancel();
     this.dccReceivers.clear();
+    for (const pending of this.dccPendingResume.values()) {
+      clearTimeout(pending.timer);
+      // The row is mid-resume ('receiving') with no receiver to fail it — mark it
+      // stalled so it isn't orphaned and can be resumed on reconnect.
+      updateDccTransferState(pending.transferId, 'stalled', 'interrupted while awaiting resume');
+    }
+    this.dccPendingResume.clear();
     try {
       this.client.quit(reason);
     } catch (_) {

@@ -17,6 +17,8 @@
 import fs from 'fs';
 import net from 'net';
 
+import { crc32Update } from './dcc.js';
+
 export interface DccReceiveOptions {
   /** Decoded host from the offer (dotted-quad IPv4 or IPv6 literal). */
   host: string;
@@ -31,8 +33,10 @@ export interface DccReceiveOptions {
   idleTimeoutMs?: number;
   /** Per-chunk progress (cumulative bytes). The caller throttles DB/UI writes. */
   onProgress?: (received: number) => void;
-  /** Transfer completed (received >= size, or a clean close when size unknown). */
-  onDone?: (received: number) => void;
+  /** Transfer completed (received >= size, or a clean close when size unknown).
+   *  `crc` is the CRC32 of the bytes written this session (only the appended tail
+   *  on a resume), for filename-CRC verification on fresh transfers. */
+  onDone?: (received: number, crc: number) => void;
   /** Transfer failed (connect/socket error, timeout, or early close). Carries the
    *  byte count reached so the caller can persist it (resume/accuracy). */
   onError?: (err: Error, received: number) => void;
@@ -42,10 +46,12 @@ export class DccReceiver {
   private socket: net.Socket | null = null;
   private out: fs.WriteStream | null = null;
   private received: number;
+  private crc: number;
   private settled = false;
 
   constructor(private readonly opts: DccReceiveOptions) {
     this.received = opts.startOffset ?? 0;
+    this.crc = 0;
   }
 
   get bytesReceived(): number {
@@ -62,9 +68,26 @@ export class DccReceiver {
       // never leaves an empty file behind. 'wx' for a fresh transfer fails safe
       // if the path raced into existence since the caller resolved it (a
       // concurrent-receiver guard); 'a' appends for resume.
-      const flags = (this.opts.startOffset ?? 0) > 0 ? 'a' : 'wx';
-      this.out = fs.createWriteStream(this.opts.destPath, { flags });
+      //
+      // Hold the socket paused until the file is confirmed OPEN: otherwise data
+      // could arrive and reach the advertised size (buffered into a stream whose
+      // open is still pending) before a 'wx' open-failure surfaces, completing a
+      // transfer that never actually wrote to disk.
+      sock.pause();
+      // Resume writes at an EXPLICIT position (startOffset) rather than appending
+      // at EOF, so the write offset can't drift from the byte counter (which is
+      // seeded from startOffset) if the file's length changed since the caller
+      // stat'd it — that drift would corrupt the file and defeat the size cap.
+      // Fresh transfers create exclusively ('wx', concurrent-receiver guard).
+      const startOffset = this.opts.startOffset ?? 0;
+      this.out =
+        startOffset > 0
+          ? fs.createWriteStream(this.opts.destPath, { flags: 'r+', start: startOffset })
+          : fs.createWriteStream(this.opts.destPath, { flags: 'wx' });
       this.out.on('error', (e) => this.settle(e));
+      this.out.on('open', () => {
+        if (!this.settled) sock.resume();
+      });
     });
     // We never setEncoding, so chunk is always a Buffer at runtime; the event
     // type is widened to string|Buffer, so coerce defensively.
@@ -97,6 +120,7 @@ export class DccReceiver {
       if (data.length > remaining) data = data.subarray(0, remaining);
     }
     this.received += data.length;
+    this.crc = crc32Update(this.crc, data);
 
     // Backpressure: pause reads while the disk catches up, and disable the idle
     // timeout meanwhile (a paused socket emits no 'data', so a slow disk would
@@ -134,7 +158,7 @@ export class DccReceiver {
     }
     const finish = () => {
       if (err) this.opts.onError?.(err, this.received);
-      else this.opts.onDone?.(this.received);
+      else this.opts.onDone?.(this.received, this.crc);
     };
     if (err) {
       // The write stream may already have errored (ENOSPC / 'wx' EEXIST); calling

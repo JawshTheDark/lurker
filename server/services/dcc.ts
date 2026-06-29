@@ -20,6 +20,8 @@
 // network byte order (NOT dotted-quad), a port of 0 means passive/reverse DCC and
 // carries a token, and a filename with spaces must be double-quoted.
 
+import zlib from 'zlib';
+
 /** A parsed inbound `DCC SEND` offer. `host` is decoded to a dotted-quad (IPv4)
  *  or kept as an IPv6 literal; `filename` is RAW and unsanitised — path-safety is
  *  the storage layer's job, not the parser's. `passive` (port 0) means the sender
@@ -36,11 +38,22 @@ export interface DccSend {
   passive: boolean;
 }
 
-/** Result of parsing a CTCP DCC body: a `SEND` offer, a recognised-but-unhandled
- *  subtype (CHAT/ACCEPT/RESUME/…), or a structural rejection with a reason for
- *  logging. */
+/** A parsed inbound `DCC ACCEPT` — the sender's reply to a `DCC RESUME` we sent,
+ *  confirming it will resume from `position` bytes. */
+export interface DccAccept {
+  kind: 'accept';
+  filename: string;
+  port: number;
+  position: number;
+  token: number | null;
+}
+
+/** Result of parsing a CTCP DCC body: a `SEND` offer, an `ACCEPT` (resume
+ *  confirmation), a recognised-but-unhandled subtype (CHAT/RESUME/…), or a
+ *  structural rejection with a reason for logging. */
 export type DccParse =
   | DccSend
+  | DccAccept
   | { kind: 'unsupported'; subtype: string }
   | { kind: 'invalid'; reason: string };
 
@@ -93,8 +106,46 @@ export function parseDcc(args: string): DccParse {
   const sp = body.indexOf(' ');
   const subtype = (sp === -1 ? body : body.slice(0, sp)).toUpperCase();
   const rest = sp === -1 ? '' : body.slice(sp + 1).trim();
-  if (subtype !== 'SEND') return { kind: 'unsupported', subtype };
-  return parseDccSend(rest);
+  if (subtype === 'SEND') return parseDccSend(rest);
+  if (subtype === 'ACCEPT') return parseDccAccept(rest);
+  return { kind: 'unsupported', subtype };
+}
+
+// `DCC ACCEPT <filename> <port> <position> [token]` — the sender's go-ahead for a
+// resume. Same filename grammar as SEND (quoted, else first token), then the port
+// the original offer used and the byte position it will resume from.
+function parseDccAccept(rest: string): DccParse {
+  if (rest === '') return { kind: 'invalid', reason: 'missing DCC ACCEPT parameters' };
+  let filename: string;
+  let remainder: string;
+  if (rest.startsWith('"')) {
+    const end = rest.indexOf('"', 1);
+    if (end === -1) return { kind: 'invalid', reason: 'unterminated quoted filename' };
+    filename = rest.slice(1, end);
+    remainder = rest.slice(end + 1).trim();
+  } else {
+    const fsp = rest.indexOf(' ');
+    if (fsp === -1) return { kind: 'invalid', reason: 'missing port/position' };
+    filename = rest.slice(0, fsp);
+    remainder = rest.slice(fsp + 1).trim();
+  }
+  if (filename === '') return { kind: 'invalid', reason: 'empty filename' };
+
+  const fields = remainder.split(/\s+/).filter(Boolean);
+  if (fields.length < 2 || fields.length > 3) {
+    return { kind: 'invalid', reason: 'expected <port> <position> [token]' };
+  }
+  const [portStr, posStr, tokenStr] = fields;
+  const port = parseUint(portStr);
+  if (port === null || port > 65535) return { kind: 'invalid', reason: `bad port: ${portStr}` };
+  const position = parseUint(posStr);
+  if (position === null) return { kind: 'invalid', reason: `bad position: ${posStr}` };
+  let token: number | null = null;
+  if (tokenStr !== undefined) {
+    token = parseUint(tokenStr);
+    if (token === null) return { kind: 'invalid', reason: `bad token: ${tokenStr}` };
+  }
+  return { kind: 'accept', filename, port, position, token };
 }
 
 function parseDccSend(rest: string): DccParse {
@@ -204,4 +255,36 @@ export function isBlockedDccHost(host: string): boolean {
     return false;
   }
   return isBlockedIpv4(h);
+}
+
+// CRC32 (IEEE 802.3, the variant zip/PNG use and the one scene/anime releases
+// embed in their filenames). Node's native zlib.crc32 with its incremental seed,
+// so folding it over a multi-GB transfer's chunks doesn't run a byte-by-byte JS
+// loop on the shared event loop.
+
+/** Fold more bytes into a running CRC32. Seed with 0 for a fresh stream;
+ *  `crc32Update(crc32Update(0, a), b)` equals the CRC32 of `a` concatenated with
+ *  `b`, so it composes across chunks. */
+export function crc32Update(crc: number, buf: Buffer): number {
+  return zlib.crc32(buf, crc) >>> 0;
+}
+
+/** Render a CRC32 value as the conventional 8-char uppercase hex. */
+export function crc32Hex(crc: number): string {
+  return (crc >>> 0).toString(16).toUpperCase().padStart(8, '0');
+}
+
+/**
+ * Extract the CRC32 a release filename embeds, as 8-char uppercase hex, or null
+ * if absent. Scene/anime names carry it bracketed near the end, e.g.
+ * `[HorribleSubs] Show - 01 [1080p][A1B2C3D4].mkv` or `(a1b2c3d4)`. The LAST
+ * 8-hex bracket token wins (the CRC sits after tags like `[1080p]`).
+ */
+export function parseCrcFromFilename(name: string): string | null {
+  // Only treat an 8-hex bracket token as the CRC when it's the LAST token,
+  // optionally right before the extension (`… [1080p][A1B2C3D4].mkv`). Anchoring
+  // to the end avoids mistaking a release-group or resolution tag for a CRC and
+  // flagging a perfectly good file with a bogus mismatch.
+  const m = /[[(]([0-9A-Fa-f]{8})[\])](?:\.[^\])]*)?$/.exec(name);
+  return m ? m[1].toUpperCase() : null;
 }
