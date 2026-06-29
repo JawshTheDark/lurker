@@ -17,6 +17,8 @@
 import fs from 'fs';
 import net from 'net';
 
+import { crc32Update } from './dcc.js';
+
 export interface DccReceiveOptions {
   /** Decoded host from the offer (dotted-quad IPv4 or IPv6 literal). */
   host: string;
@@ -31,8 +33,12 @@ export interface DccReceiveOptions {
   idleTimeoutMs?: number;
   /** Per-chunk progress (cumulative bytes). The caller throttles DB/UI writes. */
   onProgress?: (received: number) => void;
-  /** Transfer completed (received >= size, or a clean close when size unknown). */
-  onDone?: (received: number) => void;
+  /** Transfer completed (received >= size, or a clean close when size unknown).
+   *  `crc` is the CRC32 of the bytes written, for filename-CRC verification. */
+  onDone?: (received: number, crc: number) => void;
+  /** Seed the running CRC32 (the checksum of bytes already on disk, when
+   *  resuming). Defaults to 0 for a fresh transfer. */
+  crcSeed?: number;
   /** Transfer failed (connect/socket error, timeout, or early close). Carries the
    *  byte count reached so the caller can persist it (resume/accuracy). */
   onError?: (err: Error, received: number) => void;
@@ -42,10 +48,12 @@ export class DccReceiver {
   private socket: net.Socket | null = null;
   private out: fs.WriteStream | null = null;
   private received: number;
+  private crc: number;
   private settled = false;
 
   constructor(private readonly opts: DccReceiveOptions) {
     this.received = opts.startOffset ?? 0;
+    this.crc = opts.crcSeed ?? 0;
   }
 
   get bytesReceived(): number {
@@ -97,6 +105,7 @@ export class DccReceiver {
       if (data.length > remaining) data = data.subarray(0, remaining);
     }
     this.received += data.length;
+    this.crc = crc32Update(this.crc, data);
 
     // Backpressure: pause reads while the disk catches up, and disable the idle
     // timeout meanwhile (a paused socket emits no 'data', so a slow disk would
@@ -134,7 +143,7 @@ export class DccReceiver {
     }
     const finish = () => {
       if (err) this.opts.onError?.(err, this.received);
-      else this.opts.onDone?.(this.received);
+      else this.opts.onDone?.(this.received, this.crc);
     };
     if (err) {
       // The write stream may already have errored (ENOSPC / 'wx' EEXIST); calling

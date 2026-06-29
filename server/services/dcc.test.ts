@@ -4,11 +4,14 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  crc32Hex,
+  crc32Update,
   decodeDccAddress,
   type DccSend,
   formatBytes,
   formatDccOfferLine,
   isBlockedDccHost,
+  parseCrcFromFilename,
   parseDcc,
 } from './dcc.js';
 
@@ -235,5 +238,43 @@ describe('isBlockedDccHost', () => {
   it('allows a public IPv6 (and public v4-mapped)', () => {
     expect(isBlockedDccHost('2606:4700:4700::1111')).toBe(false);
     expect(isBlockedDccHost('::ffff:8.8.8.8')).toBe(false);
+  });
+});
+
+describe('crc32', () => {
+  it('matches the standard IEEE test vector', () => {
+    expect(crc32Hex(crc32Update(0, Buffer.from('123456789')))).toBe('CBF43926');
+  });
+
+  it('is 0 for empty input', () => {
+    expect(crc32Update(0, Buffer.alloc(0))).toBe(0);
+  });
+
+  it('composes across chunks (incremental == one-shot)', () => {
+    const a = Buffer.from('hello ');
+    const b = Buffer.from('world');
+    expect(crc32Update(crc32Update(0, a), b)).toBe(crc32Update(0, Buffer.concat([a, b])));
+  });
+
+  it('renders 8-char uppercase hex', () => {
+    expect(crc32Hex(0xdeadbeef)).toBe('DEADBEEF');
+    expect(crc32Hex(0xabc)).toBe('00000ABC');
+  });
+});
+
+describe('parseCrcFromFilename', () => {
+  it('extracts a bracketed CRC32, uppercased', () => {
+    expect(parseCrcFromFilename('[A1b2C3d4].mkv')).toBe('A1B2C3D4');
+    expect(parseCrcFromFilename('show (deadbeef).mkv')).toBe('DEADBEEF');
+  });
+
+  it('takes the LAST 8-hex token (after resolution/group tags)', () => {
+    expect(parseCrcFromFilename('[HorribleSubs] Show - 01 [1080p][CAFEBABE].mkv')).toBe('CAFEBABE');
+    expect(parseCrcFromFilename('[AAAAAAAA] foo [BBBBBBBB].mkv')).toBe('BBBBBBBB');
+  });
+
+  it('is null when there is no CRC token', () => {
+    expect(parseCrcFromFilename('movie.mkv')).toBeNull();
+    expect(parseCrcFromFilename('[1080p][x264].mkv')).toBeNull(); // not 8 hex chars
   });
 });

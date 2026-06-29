@@ -45,7 +45,14 @@ import {
   type CtcpReplyConfig,
 } from './ctcp.js';
 import path from 'path';
-import { formatBytes, formatDccOfferLine, isBlockedDccHost, parseDcc } from './dcc.js';
+import {
+  crc32Hex,
+  formatBytes,
+  formatDccOfferLine,
+  isBlockedDccHost,
+  parseCrcFromFilename,
+  parseDcc,
+} from './dcc.js';
 import type { DccSend } from './dcc.js';
 import { dccAllowPrivateHosts, dccEnabledForUser, dccMaxFileBytes } from './dccConfig.js';
 import { hasFreeSpaceFor, resolveDccDestination } from './dccPaths.js';
@@ -2683,12 +2690,14 @@ export class IrcConnection {
       );
       return;
     }
+    const expectedCrc = parseCrcFromFilename(offer.filename);
     markDccReceiving(transferId, {
       filename: offer.filename,
       advertised_size: offer.size,
       destination_path: destPath,
       passive: offer.passive,
       token: offer.token,
+      crc_expected: expectedCrc,
     });
     this.surfaceCtcp(
       nick,
@@ -2716,12 +2725,20 @@ export class IrcConnection {
           );
         }
       },
-      onDone: (received) => {
+      onDone: (received, crc) => {
         this.dccReceivers.delete(transferId);
-        markDccCompleted(transferId, received);
+        const actual = crc32Hex(crc);
+        const status = expectedCrc == null ? 'absent' : actual === expectedCrc ? 'ok' : 'mismatch';
+        markDccCompleted(transferId, received, actual, status);
+        const badge =
+          status === 'ok'
+            ? ' ✓ CRC verified'
+            : status === 'mismatch'
+              ? ` ⚠ CRC MISMATCH (got ${actual}, expected ${expectedCrc})`
+              : '';
         this.surfaceCtcp(
           nick,
-          `DCC: completed "${offer.filename}" (${formatBytes(received)}) → ${destPath}`,
+          `DCC: completed "${offer.filename}" (${formatBytes(received)}) → ${destPath}${badge}`,
         );
       },
       onError: (err, received) => {

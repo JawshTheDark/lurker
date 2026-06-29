@@ -157,15 +157,18 @@ export interface DccReceivingFields {
   destination_path: string;
   passive?: boolean;
   token?: number | null;
+  /** CRC32 parsed from the offer filename (e.g. `[A1B2C3D4]`), null when absent. */
+  crc_expected?: string | null;
 }
 
 /** Promote a transfer to `receiving` once an offer is accepted, stamping the
- *  real filename/size/destination from the offer and clearing any prior error. */
+ *  real filename/size/destination (and any filename CRC) from the offer and
+ *  clearing any prior error. */
 export function markDccReceiving(id: number, f: DccReceivingFields): void {
   db.prepare(
     `UPDATE dcc_transfers
        SET state = 'receiving', filename = ?, advertised_size = ?, destination_path = ?,
-           passive = ?, token = ?, error = NULL, updated_at = datetime('now')
+           passive = ?, token = ?, crc_expected = ?, error = NULL, updated_at = datetime('now')
      WHERE id = ?`,
   ).run(
     f.filename,
@@ -173,6 +176,7 @@ export function markDccReceiving(id: number, f: DccReceivingFields): void {
     f.destination_path,
     f.passive ? 1 : 0,
     f.token ?? null,
+    f.crc_expected ?? null,
     Number(id),
   );
 }
@@ -195,12 +199,23 @@ export function markDccFailed(id: number, received: number, error: string): void
   ).run(received, error, Number(id));
 }
 
-/** Mark a transfer done, stamping the final byte count and completion time. */
-export function markDccCompleted(id: number, received: number): void {
+/** How a completed transfer's bytes verified against the filename CRC32:
+ *  matched ('ok'), didn't ('mismatch'), or the filename carried no CRC
+ *  ('absent' — size match is then the only integrity signal). */
+export type DccCrcStatus = 'ok' | 'mismatch' | 'absent';
+
+/** Mark a transfer done, stamping the final byte count, completion time, and the
+ *  computed CRC32 + how it verified. */
+export function markDccCompleted(
+  id: number,
+  received: number,
+  crcActual: string | null = null,
+  crcStatus: DccCrcStatus | null = null,
+): void {
   db.prepare(
     `UPDATE dcc_transfers
-       SET state = 'completed', received_bytes = ?, error = NULL,
+       SET state = 'completed', received_bytes = ?, crc_actual = ?, crc_status = ?, error = NULL,
            completed_at = datetime('now'), updated_at = datetime('now')
      WHERE id = ?`,
-  ).run(received, Number(id));
+  ).run(received, crcActual, crcStatus, Number(id));
 }

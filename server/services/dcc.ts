@@ -205,3 +205,48 @@ export function isBlockedDccHost(host: string): boolean {
   }
   return isBlockedIpv4(h);
 }
+
+// CRC32 (IEEE 802.3, the variant zip/PNG use and the one scene/anime releases
+// embed in their filenames). Hand-rolled + incremental so it runs over the
+// transfer's chunks with no second pass and no Node-version dependency. The
+// lookup table is built once, lazily.
+let crcTable: Uint32Array | null = null;
+function crc32Table(): Uint32Array {
+  if (crcTable) return crcTable;
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    t[n] = c >>> 0;
+  }
+  crcTable = t;
+  return t;
+}
+
+/** Fold more bytes into a running CRC32. Seed with 0 for a fresh stream;
+ *  `crc32Update(crc32Update(0, a), b)` equals the CRC32 of `a` concatenated with
+ *  `b`, so it composes across chunks. */
+export function crc32Update(crc: number, buf: Buffer): number {
+  const t = crc32Table();
+  let c = (crc ^ 0xffffffff) >>> 0;
+  for (let i = 0; i < buf.length; i++) c = (t[(c ^ buf[i]) & 0xff] ^ (c >>> 8)) >>> 0;
+  return (c ^ 0xffffffff) >>> 0;
+}
+
+/** Render a CRC32 value as the conventional 8-char uppercase hex. */
+export function crc32Hex(crc: number): string {
+  return (crc >>> 0).toString(16).toUpperCase().padStart(8, '0');
+}
+
+/**
+ * Extract the CRC32 a release filename embeds, as 8-char uppercase hex, or null
+ * if absent. Scene/anime names carry it bracketed near the end, e.g.
+ * `[HorribleSubs] Show - 01 [1080p][A1B2C3D4].mkv` or `(a1b2c3d4)`. The LAST
+ * 8-hex bracket token wins (the CRC sits after tags like `[1080p]`).
+ */
+export function parseCrcFromFilename(name: string): string | null {
+  const matches = name.match(/[[(]([0-9A-Fa-f]{8})[\])]/g);
+  if (!matches) return null;
+  const hex = /([0-9A-Fa-f]{8})/.exec(matches[matches.length - 1])?.[1];
+  return hex ? hex.toUpperCase() : null;
+}

@@ -22,6 +22,7 @@ import { createNetwork } from '../db/networks.js';
 import { createUser } from '../db/users.js';
 import { CAPABILITY_DCC, setUserCapability } from '../db/userCapabilities.js';
 import { listDccTransfers } from '../db/dccTransfers.js';
+import { crc32Hex, crc32Update } from './dcc.js';
 import { IrcConnection } from './ircConnection.js';
 
 beforeAll(() => {
@@ -270,6 +271,7 @@ describe('arm-on-trigger + auto-accept', () => {
     expect(row.received_bytes).toBe(payload.length);
     expect(row.destination_path).toBe(path.join(tmpDir, 'dcc-wire-alice', 'payload.bin'));
     expect(fs.readFileSync(row.destination_path as string).equals(payload)).toBe(true);
+    expect(row.crc_status).toBe('absent'); // filename carried no CRC → size is the integrity signal
   });
 
   it('fails an armed passive offer (not yet supported)', () => {
@@ -323,5 +325,56 @@ describe('arm-on-trigger + auto-accept', () => {
     conn.client.say = vi.fn<(target: string, text: string) => void>();
     conn.say('bot', 'hey did you ever get that xdcc send #5 file?');
     expect(listDccTransfers(1)).toHaveLength(0);
+  });
+
+  it('verifies a matching filename CRC32 as ok', async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lurker-dcc-crc-'));
+    process.env.LURKER_DCC_DIR = tmpDir;
+    process.env.LURKER_DCC_ALLOW_PRIVATE_HOSTS = '1';
+    enableDcc();
+    const payload = makePayload(20_000);
+    const crc = crc32Hex(crc32Update(0, payload));
+    const sender = await startSender(payload);
+    activeSender = sender;
+
+    const { conn } = harness();
+    conn.client.say = vi.fn<(target: string, text: string) => void>();
+    conn.say('bot', 'xdcc send #9');
+    conn.client.emit('ctcp request', {
+      nick: 'bot',
+      type: 'DCC',
+      message: `DCC SEND show_[${crc}].mkv 2130706433 ${sender.port} ${payload.length}`,
+    });
+
+    await waitFor(() => listDccTransfers(1)[0]?.state === 'completed', 5000);
+    const row = listDccTransfers(1)[0];
+    expect(row.crc_expected).toBe(crc);
+    expect(row.crc_actual).toBe(crc);
+    expect(row.crc_status).toBe('ok');
+  });
+
+  it('flags a mismatched filename CRC32', async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lurker-dcc-crc-'));
+    process.env.LURKER_DCC_DIR = tmpDir;
+    process.env.LURKER_DCC_ALLOW_PRIVATE_HOSTS = '1';
+    enableDcc();
+    const payload = makePayload(12_345);
+    const sender = await startSender(payload);
+    activeSender = sender;
+
+    const { conn } = harness();
+    conn.client.say = vi.fn<(target: string, text: string) => void>();
+    conn.say('bot', 'xdcc send #10');
+    conn.client.emit('ctcp request', {
+      nick: 'bot',
+      type: 'DCC',
+      message: `DCC SEND show_[DEADBEEF].mkv 2130706433 ${sender.port} ${payload.length}`,
+    });
+
+    await waitFor(() => listDccTransfers(1)[0]?.state === 'completed', 5000);
+    const row = listDccTransfers(1)[0];
+    expect(row.crc_expected).toBe('DEADBEEF');
+    expect(row.crc_actual).toBe(crc32Hex(crc32Update(0, payload)));
+    expect(row.crc_status).toBe('mismatch');
   });
 });

@@ -11,6 +11,7 @@ import os from 'os';
 import path from 'path';
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { crc32Hex, crc32Update } from './dcc.js';
 import { DccReceiver } from './dccReceiver.js';
 
 // Deterministic payload so we can byte-compare the written file.
@@ -201,5 +202,25 @@ describe('DccReceiver', () => {
     expect(received).toBe(advertised);
     expect(fs.statSync(dest).size).toBe(advertised);
     expect(fs.readFileSync(dest).equals(payload.subarray(0, advertised))).toBe(true);
+  });
+
+  it('reports the CRC32 of the received bytes to onDone', async () => {
+    const payload = makePayload(10_000);
+    const s = await startSender(payload);
+    sender = s;
+    const dest = tmpFile('crc.bin');
+
+    const crc = await new Promise<number>((resolve, reject) => {
+      new DccReceiver({
+        host: '127.0.0.1',
+        port: s.port,
+        size: payload.length,
+        destPath: dest,
+        onDone: (_received, c) => resolve(c),
+        onError: reject,
+      }).start();
+    });
+
+    expect(crc32Hex(crc)).toBe(crc32Hex(crc32Update(0, payload)));
   });
 });
