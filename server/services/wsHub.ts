@@ -344,6 +344,47 @@ function computeUnreadFor(
   };
 }
 
+// App-wide unread-highlight total for a user — the number the PWA app-icon
+// badge shows while no client is open (#451). Must equal the client's
+// `totalHighlights` getter (sum of every store buffer's `highlighted`), so it
+// enumerates the SAME buffer set the snapshot ships: every network the user
+// owns and every target with history under it, plus the app-scoped system
+// buffer. Crucially it keys off buffer history, NOT buffer_reads rows — a
+// buffer the user has never opened has no read pointer, but the client still
+// counts it (the snapshot computes its highlights from lastReadId 0), so this
+// uses getReadState (which defaults to 0) the same way. Closed buffers are
+// excluded to mirror the client dropping them from its store. :server: pseudo-
+// buffers ARE enumerated by listBufferTargets (it doesn't filter them), but
+// isDmTarget excludes them, so they get no DM=unread shortcut — their only
+// highlights are genuine mention-rule matches against server-notice text
+// (normally none), which the client's snapshot counts identically, so the
+// totals still agree. Only called on push delivery (no visible client), so the
+// per-buffer indexed counts are cheap; computeUnreadFor skips the highlight
+// query entirely when a buffer has no unread.
+export function computeTotalHighlights(userId: number): number {
+  const closed = closedKeySetForUser(userId);
+  // System buffer first — app-scoped (networkId null), uncloseable.
+  let total = computeUnreadFor(
+    userId,
+    null,
+    SYSTEM_TARGET,
+    getReadState(userId, null, SYSTEM_TARGET),
+  ).highlights;
+  for (const net of listNetworksForUser(userId)) {
+    for (const target of listBufferTargets(net.id)) {
+      // closedKeySetForUser keys are `${networkId}::${lowercased target}`.
+      if (closed.has(`${net.id}::${target.toLowerCase()}`)) continue;
+      total += computeUnreadFor(
+        userId,
+        net.id,
+        target,
+        getReadState(userId, net.id, target),
+      ).highlights;
+    }
+  }
+  return total;
+}
+
 // Builds a one-off `backlog` frame for a single buffer — used when a closed
 // buffer is reopened (the user clicked its channel name). Unlike the snapshot
 // loop this ignores the resume cursor and always ships the recent slice; the
@@ -965,6 +1006,10 @@ export function attachWsHub(httpServer: HttpServer, sessionSecret: string) {
     if (!decorated || !decorated.notify) return;
     if (decorated.self) return;
     if (userHasVisibleClient(userId)) return;
+    // No push device subscribed → nothing to deliver, and no reason to compute
+    // the badge total below (it's an O(buffers) scan). deliver() would no-op on
+    // an empty subscription set anyway — bail before the work (#451 review).
+    if (!pushService.hasSubscriptions(userId)) return;
     // Suppress push for events the user's ignore rules would hide. This is the
     // one piece of the ignore feature that has to live server-side: push fires
     // while no client is open, so a client-side filter can't intercept. The
@@ -990,6 +1035,10 @@ export function attachWsHub(httpServer: HttpServer, sessionSecret: string) {
         text: decorated.text,
         time: decorated.time,
         messageId: decorated.id,
+        // Current unread-highlight total so the SW can set the app-icon badge
+        // (#451). The triggering message is already persisted at this point, so
+        // the count includes it.
+        badge: computeTotalHighlights(userId),
       })
       .catch((err) => console.warn('[push] deliver failed:', err?.message || err));
   }
@@ -1018,6 +1067,10 @@ export function attachWsHub(httpServer: HttpServer, sessionSecret: string) {
         // target is the friend's nick so a notification tap opens their DM.
         target: nick,
         displayName: contact.displayName,
+        // No `badge` here on purpose (#451 review): a friend coming online isn't
+        // a highlight, so the total can't have changed since the last message
+        // push set it. The SW no-ops when data.badge is absent, so omitting it
+        // avoids an O(buffers) scan that would only re-stamp the same number.
       })
       .catch((err) => console.warn('[push] friend-online deliver failed:', err?.message || err));
   }

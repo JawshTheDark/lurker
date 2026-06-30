@@ -12,8 +12,11 @@ let createUser: typeof import('../db/users.js').createUser;
 let createNetwork: typeof import('../db/networks.js').createNetwork;
 let insertMessage: typeof import('../db/messages.js').insertMessage;
 let closeBuffer: typeof import('../db/closedBuffers.js').closeBuffer;
+let reopenBuffer: typeof import('../db/closedBuffers.js').reopenBuffer;
 let isClosed: typeof import('../db/closedBuffers.js').isClosed;
 let setClearedState: typeof import('../db/bufferReads.js').setClearedState;
+let setReadState: typeof import('../db/bufferReads.js').setReadState;
+let computeTotalHighlights: typeof import('./wsHub.js').computeTotalHighlights;
 let buildBufferBacklog: typeof import('./wsHub.js').buildBufferBacklog;
 let buildResumeSlice: typeof import('./wsHub.js').buildResumeSlice;
 let buildOfflineBacklogFrames: typeof import('./wsHub.js').buildOfflineBacklogFrames;
@@ -34,9 +37,10 @@ beforeAll(async () => {
   ({ createUser } = await import('../db/users.js'));
   ({ createNetwork } = await import('../db/networks.js'));
   ({ insertMessage } = await import('../db/messages.js'));
-  ({ closeBuffer, isClosed } = await import('../db/closedBuffers.js'));
-  ({ setClearedState } = await import('../db/bufferReads.js'));
+  ({ closeBuffer, reopenBuffer, isClosed } = await import('../db/closedBuffers.js'));
+  ({ setClearedState, setReadState } = await import('../db/bufferReads.js'));
   ({
+    computeTotalHighlights,
     buildBufferBacklog,
     buildResumeSlice,
     buildOfflineBacklogFrames,
@@ -484,5 +488,67 @@ describe('startChanlistRefresh (issue #396)', () => {
       .rows.map((r) => r.channel);
     expect(names).toEqual(['#a', '#b']);
     expect(names).not.toContain('#gone');
+  });
+});
+
+// Drives the PWA app-icon badge (#451). Uses its own user/network so the shared
+// per-file DB seeded by the other suites doesn't perturb the totals.
+describe('computeTotalHighlights', () => {
+  it('counts every buffer with history (even never-opened ones), respects read pointers, excludes closed', () => {
+    const u = createUser('badger').id;
+    const net = createNetwork(u, {
+      name: 'n',
+      host: 'h',
+      port: 6697,
+      tls: true,
+      nick: 'badger',
+    })!.id;
+    const ins = (target: string, text: string) =>
+      Number(
+        insertMessage({
+          networkId: net,
+          target,
+          time: new Date().toISOString(),
+          type: 'message',
+          nick: 'bob',
+          text,
+          self: false,
+        }).id,
+      );
+
+    // The system-buffer term is constant for this user across the test (we never
+    // add notable system lines), so assert deltas against this baseline rather
+    // than absolute totals — keeps the test immune to the shared per-file DB and
+    // any global (user_id NULL) system messages other suites seeded.
+    const base = computeTotalHighlights(u);
+
+    // Never-opened DM (no read pointer). The client counts these from
+    // lastReadId 0, so the badge total must too — this is the regression that
+    // made the push badge vanish for buffers the user hadn't opened yet.
+    ins('frank', 'hey');
+    ins('frank', 'you around?');
+    expect(computeTotalHighlights(u)).toBe(base + 2);
+
+    // Never-opened channel, plain lines, no highlight-rule match → adds 0.
+    ins('#noise', 'chatter');
+    ins('#noise', 'more chatter');
+    expect(computeTotalHighlights(u)).toBe(base + 2);
+
+    // DM 'dave': read the first line, then two more arrive → contributes 2.
+    const d1 = ins('dave', 'one');
+    setReadState(u, net, 'dave', d1);
+    ins('dave', 'two');
+    const d3 = ins('dave', 'three');
+    expect(computeTotalHighlights(u)).toBe(base + 4); // frank 2 + dave 2
+
+    // Closed buffers are excluded — the client drops them from its store.
+    closeBuffer(u, net, 'frank');
+    expect(computeTotalHighlights(u)).toBe(base + 2);
+    reopenBuffer(u, net, 'frank');
+    expect(computeTotalHighlights(u)).toBe(base + 4);
+
+    // Reading dave up to its newest line clears its contribution.
+    setReadState(u, net, 'dave', d3);
+    expect(computeTotalHighlights(u)).toBe(base + 2);
   });
 });
