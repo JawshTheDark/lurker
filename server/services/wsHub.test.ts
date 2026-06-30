@@ -494,7 +494,7 @@ describe('startChanlistRefresh (issue #396)', () => {
 // Drives the PWA app-icon badge (#451). Uses its own user/network so the shared
 // per-file DB seeded by the other suites doesn't perturb the totals.
 describe('computeTotalHighlights', () => {
-  it('sums per-buffer highlights, counts unread DM lines, ignores plain channel lines, excludes closed buffers', () => {
+  it('counts every buffer with history (even never-opened ones), respects read pointers, excludes closed', () => {
     const u = createUser('badger').id;
     const net = createNetwork(u, {
       name: 'n',
@@ -516,34 +516,39 @@ describe('computeTotalHighlights', () => {
         }).id,
       );
 
-    // No read pointers yet → nothing to badge.
-    expect(computeTotalHighlights(u)).toBe(0);
+    // The system-buffer term is constant for this user across the test (we never
+    // add notable system lines), so assert deltas against this baseline rather
+    // than absolute totals — keeps the test immune to the shared per-file DB and
+    // any global (user_id NULL) system messages other suites seeded.
+    const base = computeTotalHighlights(u);
 
-    // DM 'dave': read the first line, then two more arrive. Every unread DM line
-    // is a highlight, so this buffer contributes 2.
+    // Never-opened DM (no read pointer). The client counts these from
+    // lastReadId 0, so the badge total must too — this is the regression that
+    // made the push badge vanish for buffers the user hadn't opened yet.
+    ins('frank', 'hey');
+    ins('frank', 'you around?');
+    expect(computeTotalHighlights(u)).toBe(base + 2);
+
+    // Never-opened channel, plain lines, no highlight-rule match → adds 0.
+    ins('#noise', 'chatter');
+    ins('#noise', 'more chatter');
+    expect(computeTotalHighlights(u)).toBe(base + 2);
+
+    // DM 'dave': read the first line, then two more arrive → contributes 2.
     const d1 = ins('dave', 'one');
     setReadState(u, net, 'dave', d1);
     ins('dave', 'two');
-    ins('dave', 'three');
+    const d3 = ins('dave', 'three');
+    expect(computeTotalHighlights(u)).toBe(base + 4); // frank 2 + dave 2
 
-    // Channel '#general': unread but no highlight-rule match → contributes 0.
-    const c1 = ins('#general', 'hello there');
-    setReadState(u, net, '#general', c1);
-    ins('#general', 'general chatter');
+    // Closed buffers are excluded — the client drops them from its store.
+    closeBuffer(u, net, 'frank');
+    expect(computeTotalHighlights(u)).toBe(base + 2);
+    reopenBuffer(u, net, 'frank');
+    expect(computeTotalHighlights(u)).toBe(base + 4);
 
-    expect(computeTotalHighlights(u)).toBe(2);
-
-    // A closed DM's unread highlights are excluded — the client drops closed
-    // buffers from its store, so counting them here would desync the two paths.
-    const s1 = ins('spammer', 'buy now');
-    setReadState(u, net, 'spammer', s1);
-    ins('spammer', 'act fast');
-    expect(computeTotalHighlights(u)).toBe(3); // dave 2 + spammer 1
-
-    closeBuffer(u, net, 'spammer');
-    expect(computeTotalHighlights(u)).toBe(2);
-
-    reopenBuffer(u, net, 'spammer');
-    expect(computeTotalHighlights(u)).toBe(3);
+    // Reading dave up to its newest line clears its contribution.
+    setReadState(u, net, 'dave', d3);
+    expect(computeTotalHighlights(u)).toBe(base + 2);
   });
 });

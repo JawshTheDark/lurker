@@ -38,7 +38,6 @@ import {
 } from '../db/messages.js';
 import {
   listReadStateForUser,
-  listReadStateRowsForUser,
   getReadState,
   setReadState,
   listClearedStateForUser,
@@ -346,22 +345,39 @@ function computeUnreadFor(
 }
 
 // App-wide unread-highlight total for a user — the number the PWA app-icon
-// badge shows while no client is open (#451). Mirrors the client's
-// `totalHighlights` getter: sum each buffer's `highlighted` count (channel
-// mentions, every unread DM, notable system lines) via computeUnreadFor, and
-// exclude closed buffers — the client drops those from its store, so counting
-// them here would desync the two badge paths. Reuses the same indexed counts as
-// the snapshot; only called on push delivery (which fires solely when no client
-// is visible), so the handful of per-buffer queries is cheap.
+// badge shows while no client is open (#451). Must equal the client's
+// `totalHighlights` getter (sum of every store buffer's `highlighted`), so it
+// enumerates the SAME buffer set the snapshot ships: every network the user
+// owns and every target with history under it, plus the app-scoped system
+// buffer. Crucially it keys off buffer history, NOT buffer_reads rows — a
+// buffer the user has never opened has no read pointer, but the client still
+// counts it (the snapshot computes its highlights from lastReadId 0), so this
+// uses getReadState (which defaults to 0) the same way. Closed buffers are
+// excluded to mirror the client dropping them from its store. :server: pseudo-
+// buffers aren't in listBufferTargets and carry no highlights, so they're
+// naturally skipped. Only called on push delivery (no visible client), so the
+// per-buffer indexed counts are cheap; computeUnreadFor skips the highlight
+// query entirely when a buffer has no unread.
 export function computeTotalHighlights(userId: number): number {
   const closed = closedKeySetForUser(userId);
-  let total = 0;
-  for (const row of listReadStateRowsForUser(userId)) {
-    // closedKeySetForUser keys are `${networkId}::${lowercased target}`; the
-    // app-scoped system buffer (networkId null) is uncloseable and never in the
-    // set, so its highlights always count.
-    if (closed.has(`${row.networkId}::${row.target.toLowerCase()}`)) continue;
-    total += computeUnreadFor(userId, row.networkId, row.target, row.lastReadId).highlights;
+  // System buffer first — app-scoped (networkId null), uncloseable.
+  let total = computeUnreadFor(
+    userId,
+    null,
+    SYSTEM_TARGET,
+    getReadState(userId, null, SYSTEM_TARGET),
+  ).highlights;
+  for (const net of listNetworksForUser(userId)) {
+    for (const target of listBufferTargets(net.id)) {
+      // closedKeySetForUser keys are `${networkId}::${lowercased target}`.
+      if (closed.has(`${net.id}::${target.toLowerCase()}`)) continue;
+      total += computeUnreadFor(
+        userId,
+        net.id,
+        target,
+        getReadState(userId, net.id, target),
+      ).highlights;
+    }
   }
   return total;
 }
