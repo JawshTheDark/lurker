@@ -445,7 +445,13 @@ export function buildBufferShell(
     networkId,
     target,
     events: [],
-    speakers: [],
+    // Deliberately OMIT `speakers` and `inputHistory` (rather than shipping []).
+    // The client applies both under a presence guard — `if (speakers !==
+    // undefined)` and truthy `if (payload.inputHistory)` — so an empty array is
+    // read as "replace with nothing" and would WIPE existing state on a
+    // re-snapshot (e.g. an isFreshNetwork reconnect re-shells a buffer the client
+    // still holds speakers/recall for). Omitting them makes the client keep what
+    // it has; a brand-new shell buffer defaults to empty locally anyway.
     joined,
     // Shell marker: no messages loaded yet, but there IS history to fetch on
     // open. The client's empty-seed branch honors this flag (see replaceBacklog).
@@ -456,7 +462,6 @@ export function buildBufferShell(
     highlightsCapped: counts.highlightsCapped,
     clearedBeforeId: cleared.clearedBeforeId,
     clearedAt: cleared.clearedAt,
-    inputHistory: [],
   };
 }
 

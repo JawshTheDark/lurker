@@ -33,14 +33,22 @@ function envFlag(name: string): boolean {
 export function startEventLoopMonitor(opts: { intervalMs?: number; warnMs?: number } = {}): void {
   if (envFlag('LURKER_EVENT_LOOP_MONITOR_DISABLED')) return;
   if (timer) return;
-  const intervalMs = opts.intervalMs ?? envInt('LURKER_EVENT_LOOP_MONITOR_INTERVAL_MS', 1000);
+  // Floor the interval so a misconfigured 0/tiny value can't turn into a
+  // setInterval(0) hot loop (high CPU + log spam); 100ms is plenty fine-grained
+  // for detecting the multi-hundred-ms+ stalls we care about.
+  const intervalMs = Math.max(
+    100,
+    opts.intervalMs ?? envInt('LURKER_EVENT_LOOP_MONITOR_INTERVAL_MS', 1000),
+  );
   const warnMs = opts.warnMs ?? envInt('LURKER_EVENT_LOOP_MONITOR_WARN_MS', 500);
-  let last = Date.now();
+  // Monotonic clock: drift must measure elapsed real time, not wall-clock, so an
+  // NTP step (or a suspend/resume) can't masquerade as — or mask — a stall.
+  let last = performance.now();
   timer = setInterval(() => {
-    const now = Date.now();
+    const now = performance.now();
     // Drift = actual elapsed minus scheduled elapsed = time the loop was blocked
     // and couldn't run this callback on schedule.
-    const drift = now - last - intervalMs;
+    const drift = Math.round(now - last - intervalMs);
     last = now;
     if (drift >= warnMs) {
       console.warn(

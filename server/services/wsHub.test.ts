@@ -215,8 +215,11 @@ describe('buildBufferShell', () => {
     const shell = buildBufferShell(userId, networkId, '#shellchan', true);
     expect(shell.kind).toBe('backlog');
     expect((shell.events as unknown[]).length).toBe(0);
-    expect((shell.inputHistory as unknown[]).length).toBe(0);
-    expect((shell.speakers as unknown[]).length).toBe(0);
+    // speakers/inputHistory are OMITTED (not []): the client applies both under a
+    // presence guard, so an empty array would wipe existing state on a re-snapshot
+    // (isFreshNetwork). Absent keys make the client preserve what it has.
+    expect(shell.inputHistory).toBeUndefined();
+    expect(shell.speakers).toBeUndefined();
     // hasMoreOlder gates the client's open-time lazy fetch — must be true.
     expect(shell.hasMoreOlder).toBe(true);
     expect(shell.unread).toBe(2);
@@ -278,7 +281,8 @@ describe('buildOfflineBacklogFrames', () => {
     expect((chan.events as unknown[]).length).toBe(0);
     expect(chan.hasMoreOlder).toBe(true);
     expect(chan.unread).toBe(2);
-    expect((chan.inputHistory as unknown[]).length).toBe(0);
+    // inputHistory/speakers are omitted (not []) so a re-snapshot can't wipe them.
+    expect(chan.inputHistory).toBeUndefined();
     // Channels are parted (no live connection tracks them).
     expect(chan.joined).toBe(false);
 
