@@ -1036,10 +1036,16 @@ export class IrcConnection {
     // healthy network usually means WE stopped reading the socket, i.e. the
     // event loop was starved by synchronous work (see eventLoopMonitor); when
     // every network times out together on a client connect, that's the tell.
-    // Surface it on the server buffer + console so the cause isn't invisible.
+    // Surface it so the cause isn't invisible. Deliberately does NOT publish() a
+    // notice (which inserts a message row + fanOuts to every socket): a
+    // loop-stall trips this on EVERY live network at once, so a publish per
+    // network would be a synchronous DB-write + fan-out burst on the recovery
+    // ticks — exactly the write amplification we're trying to avoid on the stall
+    // path. logNet is a single lightweight systemLog line (visible in the app's
+    // system buffer), and console.warn lands in `docker logs` next to the
+    // [event-loop] stall line for correlation.
     c.on('ping timeout', () => {
       const text = `Ping timeout — no data from ${this.network.host} for the timeout window; reconnecting. If every network did this at once, the server event loop stalled (check logs for [event-loop]).`;
-      this.publish({ type: 'notice', target: this.serverTarget(), nick: 'lurker', text });
       this.logNet(text, 'warn');
       console.warn(`[irc] ping timeout on network ${this.network.id} (${this.network.host})`);
     });

@@ -311,3 +311,77 @@ describe('replaceBacklog empty-seed honors server hasMoreOlder', () => {
     expect(buf.hasMoreOlder).toBe(false);
   });
 });
+
+// A fresh-connect shell (empty backlog frame + hasMoreOlder) can receive a live
+// line before the user opens it. `unseeded` (not messages.length) must decide
+// hydration so opening still fetches the real backlog and doesn't mark-read the
+// unshown gap.
+describe('shell unseeded lifecycle', () => {
+  const shellFrame = (store: ReturnType<typeof useBuffersStore>, target: string) =>
+    store.replaceBacklog(
+      1,
+      target,
+      [],
+      undefined,
+      { lastReadId: 1000, unread: 5, highlights: 0 },
+      true,
+      { hasMoreOlder: true },
+    );
+  const live = (target: string, id: number) => ({
+    networkId: 1,
+    target,
+    id,
+    type: 'message',
+    nick: 'bob',
+    body: 'x',
+  });
+
+  it('marks an empty shell frame unseeded but a real-content frame seeded', () => {
+    const store = useBuffersStore();
+    shellFrame(store, '#a');
+    expect(store.byKey('1::#a')!.unseeded).toBe(true);
+    store.replaceBacklog(1, '#b', [live('#b', 5)], undefined, undefined, true, {
+      hasMoreOlder: true,
+    });
+    expect(store.byKey('1::#b')!.unseeded).toBe(false);
+  });
+
+  it('stays unseeded when a live line arrives on the shell before open', () => {
+    const store = useBuffersStore();
+    shellFrame(store, '#a');
+    store.pushMessage(live('#a', 5002));
+    const buf = store.byKey('1::#a')!;
+    expect(buf.messages.length).toBe(1);
+    expect(buf.unseeded).toBe(true); // a stray live line does not hydrate it
+  });
+
+  it('on open, refetches the real backlog and does NOT mark-read the stray line', () => {
+    const store = useBuffersStore();
+    shellFrame(store, '#a');
+    store.pushMessage(live('#a', 5002));
+    vi.mocked(socketSend).mockClear();
+
+    store.activate(1, '#a');
+
+    const sends = vi.mocked(socketSend).mock.calls.map((c) => c[0] as Record<string, unknown>);
+    expect(sends).toContainEqual(
+      expect.objectContaining({ type: 'history', mode: 'latest', networkId: 1, target: '#a' }),
+    );
+    // The bug: without the unseeded guard, activate() would mark-read up to 5002,
+    // clearing unread for the whole unshown gap (1001..5001).
+    expect(sends.some((s) => s.type === 'mark-read')).toBe(false);
+  });
+
+  it('clears unseeded once applyLatestReplace hydrates it', () => {
+    const store = useBuffersStore();
+    shellFrame(store, '#a');
+    store.activate(1, '#a');
+    const token = store.byKey('1::#a')!.pendingHistoryToken;
+    store.applyLatestReplace(1, '#a', {
+      token,
+      events: [live('#a', 4998), live('#a', 4999), live('#a', 5000)],
+      hasMoreOlder: true,
+    });
+    expect(store.byKey('1::#a')!.unseeded).toBe(false);
+  });
+});

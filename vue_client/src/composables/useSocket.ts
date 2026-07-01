@@ -450,6 +450,11 @@ function handleMessage(raw: string): void {
       buffers.applyAroundSlice(payload.networkId, payload.target, payload);
     } else if (mode === 'latest') {
       buffers.applyLatestReplace(payload.networkId, payload.target, payload);
+      // The 'latest' reply is also how a fresh-connect SHELL hydrates on open;
+      // it carries inputHistory so up-arrow recall is restored (shells omit it).
+      if (payload.inputHistory) {
+        useInputHistoryStore().seed(payload.networkId, payload.target, payload.inputHistory);
+      }
     } else if (mode === 'after') {
       buffers.appendHistory(
         payload.networkId,

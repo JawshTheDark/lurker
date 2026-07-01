@@ -385,6 +385,55 @@ export function computeTotalHighlights(userId: number): number {
   return total;
 }
 
+// Single source of the "is this buffer joined?" rule: a #channel counts as
+// joined only while a live connection is tracking it; DMs and the server
+// pseudo-buffer have no join concept, so they always count as joined (never
+// dimmed). `conn` is optional — an offline network passes none, which folds a
+// #channel to parted. Centralized so the four snapshot/backlog sites can't drift
+// (channel-case folding already bit this codebase — see #289/#269).
+function channelJoined(
+  target: string,
+  conn?: { channels: { has(name: string): boolean } } | null,
+): boolean {
+  return target.startsWith('#') ? !!conn?.channels.has(target.toLowerCase()) : true;
+}
+
+// The per-buffer read/unread/cleared block shared by every backlog frame
+// (buildBufferBacklog, buildBufferShell, the snapshot loop). `precomputed` lets
+// the snapshot's hot path pass the values it already has from the bulk
+// listReadStateForUser / listClearedStateForUser maps, so it doesn't re-issue a
+// getReadState + getClearedState point query per buffer (the O(buffers) cost the
+// shell optimization is meant to avoid). computeUnreadFor still runs per buffer —
+// it's the unread count and has no bulk form.
+function bufferStateFields(
+  userId: number,
+  networkId: number | null,
+  target: string,
+  precomputed?: {
+    lastReadId?: number;
+    cleared?: { clearedBeforeId: number; clearedAt: string | null };
+  },
+): {
+  lastReadId: number;
+  unread: number;
+  highlights: number;
+  highlightsCapped: boolean;
+  clearedBeforeId: number;
+  clearedAt: string | null;
+} {
+  const lastReadId = precomputed?.lastReadId ?? getReadState(userId, networkId, target);
+  const counts = computeUnreadFor(userId, networkId, target, lastReadId);
+  const cleared = precomputed?.cleared ?? getClearedState(userId, networkId, target);
+  return {
+    lastReadId: counts.lastReadId,
+    unread: counts.unread,
+    highlights: counts.highlights,
+    highlightsCapped: counts.highlightsCapped,
+    clearedBeforeId: cleared.clearedBeforeId,
+    clearedAt: cleared.clearedAt,
+  };
+}
+
 // Builds a one-off `backlog` frame for a single buffer — used when a closed
 // buffer is reopened (the user clicked its channel name). Unlike the snapshot
 // loop this ignores the resume cursor and always ships the recent slice; the
@@ -394,25 +443,14 @@ export function buildBufferBacklog(userId: number, networkId: number, target: st
   const events = listMessages(networkId, target, { limit: 200 }).map((e) =>
     decorateMessage(userId, e),
   );
-  const lastReadId = getReadState(userId, networkId, target);
-  const counts = computeUnreadFor(userId, networkId, target, lastReadId);
-  const cleared = getClearedState(userId, networkId, target);
   return {
     kind: 'backlog',
     networkId,
     target,
     events,
     speakers: listSpeakers(networkId, target),
-    // A channel counts as joined only while a live connection is tracking it;
-    // a stopped/offline network has no connection, so treat it as parted
-    // rather than refusing to ship the history at all.
-    joined: target.startsWith('#') ? !!conn?.channels.has(target.toLowerCase()) : true,
-    lastReadId: counts.lastReadId,
-    unread: counts.unread,
-    highlights: counts.highlights,
-    highlightsCapped: counts.highlightsCapped,
-    clearedBeforeId: cleared.clearedBeforeId,
-    clearedAt: cleared.clearedAt,
+    joined: channelJoined(target, conn),
+    ...bufferStateFields(userId, networkId, target),
     inputHistory: listRecentInputHistory(userId, networkId, target, INPUT_HISTORY_SLICE),
   };
 }
@@ -436,10 +474,11 @@ export function buildBufferShell(
   networkId: number,
   target: string,
   joined: boolean,
+  precomputed?: {
+    lastReadId?: number;
+    cleared?: { clearedBeforeId: number; clearedAt: string | null };
+  },
 ): WsPayload {
-  const lastReadId = getReadState(userId, networkId, target);
-  const counts = computeUnreadFor(userId, networkId, target, lastReadId);
-  const cleared = getClearedState(userId, networkId, target);
   return {
     kind: 'backlog',
     networkId,
@@ -451,17 +490,13 @@ export function buildBufferShell(
     // read as "replace with nothing" and would WIPE existing state on a
     // re-snapshot (e.g. an isFreshNetwork reconnect re-shells a buffer the client
     // still holds speakers/recall for). Omitting them makes the client keep what
-    // it has; a brand-new shell buffer defaults to empty locally anyway.
+    // it has; a brand-new shell buffer defaults to empty locally anyway. On open,
+    // reattachToLive's 'history' latest reply re-seeds both.
     joined,
     // Shell marker: no messages loaded yet, but there IS history to fetch on
     // open. The client's empty-seed branch honors this flag (see replaceBacklog).
     hasMoreOlder: true,
-    lastReadId: counts.lastReadId,
-    unread: counts.unread,
-    highlights: counts.highlights,
-    highlightsCapped: counts.highlightsCapped,
-    clearedBeforeId: cleared.clearedBeforeId,
-    clearedAt: cleared.clearedAt,
+    ...bufferStateFields(userId, networkId, target, precomputed),
   };
 }
 
@@ -473,10 +508,11 @@ const RESUME_GAP_CAP = 500;
 // to match the first-connect default.
 const RESUME_LATEST_LIMIT = 200;
 
-// Per-buffer input-history slice shipped in the connect snapshot for up-arrow
-// recall. Kept modest: this is N rows PER buffer, so on a large account it's a
-// meaningful slice of the (synchronous) snapshot read cost. Older entries stay
-// in the DB; the client asks for more only if this ever proves too small.
+// Per-buffer input-history slice shipped for up-arrow recall (on a :server:
+// backlog, a resume frame, or a shell's 'history' latest hydrate). This is the
+// recall DEPTH, not a first page: there is no client verb to fetch older input
+// history, so entries beyond this slice are simply not reachable via up-arrow.
+// Kept modest because it's N rows PER buffer on the connect path.
 const INPUT_HISTORY_SLICE = 50;
 
 // A synchronous snapshot slower than this is logged (console only) — it's a
@@ -716,9 +752,9 @@ export function buildOfflineBacklogFrames(
       frames.push(
         target.startsWith(':server:')
           ? buildBufferBacklog(userId, net.id, target)
-          : // Offline: channels are parted (no live connection), DMs have no join
-            // concept so they never dim.
-            buildBufferShell(userId, net.id, target, !target.startsWith('#')),
+          : // Offline: no live conn, so channelJoined folds #channels to parted
+            // and DMs to joined (they never dim).
+            buildBufferShell(userId, net.id, target, channelJoined(target)),
       );
     }
   }
@@ -1242,11 +1278,14 @@ export function attachWsHub(httpServer: HttpServer, sessionSecret: string) {
     // list until a page refresh. Re-emit a fresh snapshot to every active
     // socket so the buffer list always reflects the server's source of truth.
     //
-    // Pass freshNetworkId so the just-connected network ships its backlog
-    // wholesale — ws.sinceId has been advanced by live events on OTHER
-    // networks, so a cursor read against this network's persisted history
-    // (all id <= sinceId) would return zero events and leave the user
-    // staring at an empty buffer until a page refresh.
+    // Pass freshNetworkId so the just-connected network's buffers ship as lazy
+    // SHELLS (they hydrate on open). ws.sinceId has been advanced by live events
+    // on OTHER networks, so a cursor read against this network's persisted
+    // history (all id <= sinceId) would return zero events and leave the user
+    // staring at an empty buffer until a page refresh; a shell reappears in the
+    // list and fetches its content on demand instead. (Note: a channel's shell
+    // `joined` is read at this 'connected' instant, before auto-rejoin JOINs
+    // land, so it may briefly render dimmed until its JOIN event arrives.)
     if (event.type === 'state' && event.state === 'connected') {
       const set = socketsByUser.get(event.userId);
       if (set) {
@@ -1517,6 +1556,16 @@ export function attachWsHub(httpServer: HttpServer, sessionSecret: string) {
         // without a click). isFreshNetwork routes here too: its buffers' history
         // all predates the advanced cursor, so a gap read would be empty — a
         // shell is both correct and cheaper than the old forced-latest slice.
+        // Read/cleared state comes from the bulk maps this loop already built
+        // (listReadStateForUser/listClearedStateForUser) — thread them through so
+        // neither the shell nor the resume frame re-issues a per-buffer point
+        // query (the O(buffers) synchronous work the shell optimization exists to
+        // cut).
+        const key = `${conn.network.id}::${target}`;
+        const precomputed = {
+          lastReadId: readState[key] || 0,
+          cleared: clearedState[key] ?? { clearedBeforeId: 0, clearedAt: null },
+        };
         if ((isFreshConnect || isFreshNetwork) && !target.startsWith(':server:')) {
           send(
             ws,
@@ -1524,7 +1573,8 @@ export function attachWsHub(httpServer: HttpServer, sessionSecret: string) {
               userId,
               conn.network.id,
               target,
-              target.startsWith('#') ? conn.channels.has(target.toLowerCase()) : true,
+              channelJoined(target, conn),
+              precomputed,
             ),
           );
           bufferCount += 1;
@@ -1538,16 +1588,10 @@ export function attachWsHub(httpServer: HttpServer, sessionSecret: string) {
         for (const e of events) {
           if (e.id != null && e.id > maxSentId) maxSentId = e.id;
         }
-        const speakers = listSpeakers(conn.network.id, target);
-        const lastReadId = readState[`${conn.network.id}::${target}`] || 0;
-        const counts = computeUnreadFor(userId, conn.network.id, target, lastReadId);
-        const cleared = clearedState[`${conn.network.id}::${target}`] ?? {
-          clearedBeforeId: 0,
-          clearedAt: null,
-        };
-        // Per-buffer input history is unbounded on disk; ship a recent slice
-        // for up-arrow recall. Older entries stay in the DB and could be
-        // paginated in later if the slice ever proves too small.
+        // Per-buffer input history for up-arrow recall — a recent slice
+        // (INPUT_HISTORY_SLICE); older entries stay in the DB (no pagination
+        // request exists, so this slice is the recall depth). The 'history' latest
+        // reply re-seeds it when a shell is opened.
         const inputHistory = listRecentInputHistory(
           userId,
           conn.network.id,
@@ -1564,17 +1608,9 @@ export function attachWsHub(httpServer: HttpServer, sessionSecret: string) {
           // append, or it splices a permanent hole (issue #205).
           reset: slice.reset,
           hasMoreOlder: slice.hasMoreOlder,
-          speakers,
-          // For channels: are we currently joined? Drives the dim/active style
-          // in the buffer list. Non-channel buffers (DMs, :server:) have no
-          // join concept — flag them as joined so they never get dimmed.
-          joined: target.startsWith('#') ? conn.channels.has(target.toLowerCase()) : true,
-          lastReadId: counts.lastReadId,
-          unread: counts.unread,
-          highlights: counts.highlights,
-          highlightsCapped: counts.highlightsCapped,
-          clearedBeforeId: cleared.clearedBeforeId,
-          clearedAt: cleared.clearedAt,
+          speakers: listSpeakers(conn.network.id, target),
+          joined: channelJoined(target, conn),
+          ...bufferStateFields(userId, conn.network.id, target, precomputed),
           inputHistory,
         });
         bufferCount += 1;
@@ -2376,9 +2412,12 @@ export function attachWsHub(httpServer: HttpServer, sessionSecret: string) {
         }
 
         if (mode === 'latest') {
-          // Return-to-present reattach. Equivalent to the implicit initial
-          // backlog (`limit` rows, newest, no `before`); ships hasMoreOlder so
-          // the client can resume upward paging cleanly.
+          // Return-to-present reattach — also the path that HYDRATES a shell on
+          // first open. Equivalent to the implicit initial backlog (`limit` rows,
+          // newest, no `before`); ships hasMoreOlder so the client can resume
+          // upward paging cleanly, plus inputHistory so up-arrow recall is
+          // restored for a shell (fresh-connect shells omit it, so this is the
+          // only place a reloaded client gets its per-buffer recall back).
           const events = listMessages(histNetworkId, histTarget, { limit }).map((e) =>
             decorateMessage(userId, e),
           );
@@ -2390,6 +2429,12 @@ export function attachWsHub(httpServer: HttpServer, sessionSecret: string) {
             hasMoreNewer: false,
             hasMore: oldestId > 0 && hasOlderRow(histNetworkId, histTarget, oldestId),
             before: null,
+            inputHistory: listRecentInputHistory(
+              userId,
+              histNetworkId,
+              histTarget,
+              INPUT_HISTORY_SLICE,
+            ),
           });
           break;
         }
