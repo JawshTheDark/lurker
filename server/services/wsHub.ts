@@ -518,7 +518,13 @@ const INPUT_HISTORY_SLICE = 50;
 // A synchronous snapshot slower than this is logged (console only) — it's a
 // direct measure of how long the event loop was blocked serving one connect,
 // the thing that starves IRC socket I/O when it gets large.
-const SNAPSHOT_SLOW_MS = 250;
+// A snapshot slower than this logs a per-phase breakdown. Env-tunable so a fast
+// local/dev instance (which normally never crosses 250ms) can log every snapshot
+// for comparison — e.g. LURKER_SNAPSHOT_SLOW_MS=0 in .env.
+const SNAPSHOT_SLOW_MS = (() => {
+  const raw = Number(process.env.LURKER_SNAPSHOT_SLOW_MS);
+  return Number.isFinite(raw) && raw >= 0 ? raw : 250;
+})();
 
 // Per-phase timing of one snapshot, so a slow one says WHERE the time went
 // (member-list blob vs seeds vs the per-buffer loop vs offline frames) instead
@@ -530,6 +536,14 @@ interface SnapshotBreakdown {
   seedsMs: number; // drafts/bookmarks/system/contacts + the bulk read/cleared/closed maps
   onlineMs: number; // the live per-buffer loop (shells: unread counts; resume: +reads/speakers)
   offlineMs: number; // buildOfflineBacklogFrames
+  // Online-loop op split (the rest of onlineMs is sends/input-history/overhead).
+  // These are ms-resolution and each rounds independently, so treat as
+  // approximate; `rest` is clamped at 0 in the log to avoid rounding negatives.
+  // ≈computeUnreadFor plus a little frame/state-field assembly — read/cleared
+  // lookups are NOT included (the loop passes precomputed values).
+  unreadMs: number; // shell: buildBufferShell; resume: bufferStateFields
+  sliceMs: number; // buildResumeSlice — message reads + decorate (resume path only)
+  speakersMs: number; // listSpeakers (resume path only)
 }
 
 // Decide the slice a resume snapshot ships for ONE buffer.
@@ -1482,6 +1496,9 @@ export function attachWsHub(httpServer: HttpServer, sessionSecret: string) {
       seedsMs: 0,
       onlineMs: 0,
       offlineMs: 0,
+      unreadMs: 0,
+      sliceMs: 0,
+      speakersMs: 0,
     };
     let ok = false;
     try {
@@ -1501,9 +1518,13 @@ export function attachWsHub(httpServer: HttpServer, sessionSecret: string) {
       console.warn(
         `[wsHub] snapshot for user ${userId} took ${ms}ms across ${b.bufferCount} buffers ` +
           `(${b.fresh ? 'fresh/shells' : 'resume'}) — networks=${b.networksMs}ms seeds=${b.seedsMs}ms ` +
-          `online=${b.onlineMs}ms offline=${b.offlineMs}ms. Runs synchronously on the event loop; ` +
-          `on slow storage or a large account this can starve IRC socket I/O and trip ping timeouts ` +
-          `(see [event-loop] logs). networks=member-list blob, online=per-buffer unread/reads.`,
+          `online=${b.onlineMs}ms offline=${b.offlineMs}ms [online split: unread=${b.unreadMs}ms ` +
+          `slice=${b.sliceMs}ms speakers=${b.speakersMs}ms ` +
+          `rest=${Math.max(0, b.onlineMs - b.unreadMs - b.sliceMs - b.speakersMs)}ms]. ` +
+          `Runs synchronously on the event loop; on slow storage or a large account this can starve ` +
+          `IRC socket I/O and trip ping timeouts (see [event-loop] logs). networks=member-list blob; ` +
+          `unread≈computeUnreadFor(+frame assembly), slice=buildResumeSlice reads, speakers=listSpeakers, ` +
+          `rest=sends/input-history/overhead.`,
       );
     }
   }
@@ -1562,6 +1583,9 @@ export function attachWsHub(httpServer: HttpServer, sessionSecret: string) {
     const tOnline = Date.now();
     let maxSentId = ws.sinceId || 0;
     let bufferCount = 0;
+    let unreadMs = 0;
+    let sliceMs = 0;
+    let speakersMs = 0;
     for (const conn of ircManager.listConnections(userId)) {
       const targets = new Set(listBufferTargets(conn.network.id));
       targets.add(`:server:${conn.network.id}`);
@@ -1601,23 +1625,27 @@ export function attachWsHub(httpServer: HttpServer, sessionSecret: string) {
           cleared: clearedState[key] ?? { clearedBeforeId: 0, clearedAt: null },
         };
         if ((isFreshConnect || isFreshNetwork) && !target.startsWith(':server:')) {
-          send(
-            ws,
-            buildBufferShell(
-              userId,
-              conn.network.id,
-              target,
-              channelJoined(target, conn),
-              precomputed,
-            ),
+          // Shell path: the only per-buffer work is buildBufferShell's unread
+          // count (bufferStateFields → computeUnreadFor), so it goes to unreadMs.
+          const tShell = Date.now();
+          const shell = buildBufferShell(
+            userId,
+            conn.network.id,
+            target,
+            channelJoined(target, conn),
+            precomputed,
           );
+          unreadMs += Date.now() - tShell;
+          send(ws, shell);
           bufferCount += 1;
           continue;
         }
         // Resume cursor: ship the gap the client missed (id > sinceId), or a
         // fresh latest slice + reset flag when that gap exceeds the cap (see
         // buildResumeSlice for the gap/reset rationale).
+        const tSlice = Date.now();
         const slice = buildResumeSlice(userId, conn.network.id, target, ws.sinceId || 0);
+        sliceMs += Date.now() - tSlice;
         const events = slice.events;
         for (const e of events) {
           if (e.id != null && e.id > maxSentId) maxSentId = e.id;
@@ -1632,6 +1660,12 @@ export function attachWsHub(httpServer: HttpServer, sessionSecret: string) {
           target,
           INPUT_HISTORY_SLICE,
         );
+        const tSpeakers = Date.now();
+        const speakers = listSpeakers(conn.network.id, target);
+        speakersMs += Date.now() - tSpeakers;
+        const tUnread = Date.now();
+        const stateFields = bufferStateFields(userId, conn.network.id, target, precomputed);
+        unreadMs += Date.now() - tUnread;
         send(ws, {
           kind: 'backlog',
           networkId: conn.network.id,
@@ -1642,9 +1676,9 @@ export function attachWsHub(httpServer: HttpServer, sessionSecret: string) {
           // append, or it splices a permanent hole (issue #205).
           reset: slice.reset,
           hasMoreOlder: slice.hasMoreOlder,
-          speakers: listSpeakers(conn.network.id, target),
+          speakers,
           joined: channelJoined(target, conn),
-          ...bufferStateFields(userId, conn.network.id, target, precomputed),
+          ...stateFields,
           inputHistory,
         });
         bufferCount += 1;
@@ -1674,7 +1708,17 @@ export function attachWsHub(httpServer: HttpServer, sessionSecret: string) {
     // handed the client — otherwise a later re-snapshot on this socket would
     // re-gap-fill everything the shells deliberately skipped.
     ws.sinceId = Math.max(maxSentId, cursor);
-    return { bufferCount, fresh: isFreshConnect, networksMs, seedsMs, onlineMs, offlineMs };
+    return {
+      bufferCount,
+      fresh: isFreshConnect,
+      networksMs,
+      seedsMs,
+      onlineMs,
+      offlineMs,
+      unreadMs,
+      sliceMs,
+      speakersMs,
+    };
   }
 
   function handleClientMessage(ws: LurkerWebSocket, user: User, msg: WsPayload): void {
