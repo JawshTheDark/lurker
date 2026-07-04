@@ -94,7 +94,8 @@ describe('CHATHISTORY advertisement', () => {
     await attachBound(c, acct);
     const isupport = c.lines.find((l) => l.includes('CHATHISTORY='));
     expect(isupport).toBeTruthy();
-    expect(isupport).toContain('MSGREFTYPES=msgid,timestamp');
+    expect(isupport).toContain('CHATHISTORY=1000');
+    expect(isupport).toContain('MSGREFTYPES=timestamp');
     c.close();
   });
 });
@@ -118,28 +119,28 @@ describe('CHATHISTORY LATEST', () => {
   });
 });
 
-describe('CHATHISTORY BEFORE / AFTER (msgid, exclusive)', () => {
-  it('BEFORE returns only messages with a smaller id', async () => {
+describe('CHATHISTORY BEFORE / AFTER (timestamp, exclusive)', () => {
+  it('BEFORE excludes messages at or after the timestamp', async () => {
     const acct = harnessMod.seedAccount({ nick: 'ch3' });
-    const ids = seedMessages(acct.network.id, '#r', 4);
+    seedMessages(acct.network.id, '#r', 4); // at :01 :02 :03 :04
     const c = await harness.connect();
     await attachBound(c, acct);
-    c.send(`CHATHISTORY BEFORE #r msgid=${ids[2]} 100`);
+    c.send('CHATHISTORY BEFORE #r timestamp=2023-05-23T06:00:03.000Z 100');
     await c.waitFor((l) => l.includes('BATCH +') && l.includes('chathistory'));
     await c.waitFor((l) => l.includes('msg1'));
     await c.waitFor((l) => l.includes('msg2'));
     await c.waitFor((l) => l.includes('BATCH -'));
-    // msg3 (the bound) and msg4 must NOT appear.
+    // msg3 (at the bound) and msg4 must NOT appear.
     expect(c.lines.some((l) => l.includes('PRIVMSG #r :msg3'))).toBe(false);
     expect(c.lines.some((l) => l.includes('PRIVMSG #r :msg4'))).toBe(false);
   });
 
-  it('AFTER returns only messages with a larger id', async () => {
+  it('AFTER excludes messages at or before the timestamp', async () => {
     const acct = harnessMod.seedAccount({ nick: 'ch4' });
-    const ids = seedMessages(acct.network.id, '#r', 4);
+    seedMessages(acct.network.id, '#r', 4);
     const c = await harness.connect();
     await attachBound(c, acct);
-    c.send(`CHATHISTORY AFTER #r msgid=${ids[1]} 100`);
+    c.send('CHATHISTORY AFTER #r timestamp=2023-05-23T06:00:02.000Z 100');
     await c.waitFor((l) => l.includes('BATCH +'));
     await c.waitFor((l) => l.includes('msg3'));
     await c.waitFor((l) => l.includes('msg4'));
@@ -147,19 +148,44 @@ describe('CHATHISTORY BEFORE / AFTER (msgid, exclusive)', () => {
     expect(c.lines.some((l) => l.includes('PRIVMSG #r :msg1'))).toBe(false);
     expect(c.lines.some((l) => l.includes('PRIVMSG #r :msg2'))).toBe(false);
   });
-});
 
-describe('CHATHISTORY timestamp selector', () => {
-  it('BEFORE timestamp= excludes messages at or after the timestamp', async () => {
-    const acct = harnessMod.seedAccount({ nick: 'ch5' });
-    seedMessages(acct.network.id, '#ts', 3); // at :01, :02, :03
+  it('a netsplit of joins does not truncate the batch (limit counts real messages)', async () => {
+    const acct = harnessMod.seedAccount({ nick: 'chns' });
+    seedMessages(acct.network.id, '#split', 1); // one real message at :01
+    // Then a flood of joins (non-replayable) at :02..:09.
+    for (let i = 2; i <= 9; i++) {
+      insertMessage({
+        networkId: acct.network.id,
+        target: '#split',
+        time: `2023-05-23T06:00:0${i}.000Z`,
+        type: 'join',
+        nick: `joiner${i}`,
+        self: false,
+      });
+    }
     const c = await harness.connect();
     await attachBound(c, acct);
-    c.send('CHATHISTORY BEFORE #ts timestamp=2023-05-23T06:00:03.000Z 100');
+    c.send('CHATHISTORY LATEST #split * 3');
     await c.waitFor((l) => l.includes('BATCH +'));
-    await c.waitFor((l) => l.includes('msg2'));
+    // The real message is returned even though the newest rows are all joins.
+    const line = await c.waitFor((l) => l.includes('PRIVMSG #split :msg1'));
+    expect(line).toContain('PRIVMSG #split :msg1');
     await c.waitFor((l) => l.includes('BATCH -'));
-    expect(c.lines.some((l) => l.includes('PRIVMSG #ts :msg3'))).toBe(false);
+  });
+});
+
+describe('CHATHISTORY msgid rejected', () => {
+  it('rejects a msgid selector (timestamp-only, MSGREFTYPES=timestamp)', async () => {
+    const acct = harnessMod.seedAccount({ nick: 'chm' });
+    const c = await harness.connect();
+    await attachBound(c, acct);
+    const isupport = c.lines.find((l) => l.includes('MSGREFTYPES'));
+    expect(isupport).toContain('MSGREFTYPES=timestamp');
+    expect(isupport).not.toContain('msgid');
+    c.send('CHATHISTORY BEFORE #r msgid=5 100');
+    const fail = await c.waitForCommand('FAIL');
+    expect(fail).toContain('Invalid first bound');
+    c.close();
   });
 });
 
