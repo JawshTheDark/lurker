@@ -291,6 +291,8 @@ export async function startHarness({
       for (const c of clients) c.close();
       resetAuthThrottle();
       stopBouncer();
+      // Don't leak the TLS override into later tests sharing this worker's env.
+      delete process.env.LURKER_BOUNCER_TLS;
     },
   };
 }

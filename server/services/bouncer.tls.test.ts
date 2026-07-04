@@ -26,8 +26,7 @@ beforeAll(async () => {
 });
 
 afterAll(() => {
-  harness.stop();
-  delete process.env.LURKER_BOUNCER_TLS;
+  harness.stop(); // also clears LURKER_BOUNCER_TLS
   ctx.cleanup();
 });
 

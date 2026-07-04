@@ -159,7 +159,7 @@ const HEARTBEAT_REAP_AFTER_MS = 240_000;
 const MAX_INPUT_BUFFER = 64 * 1024;
 // How often to check the TLS cert file for a renewal and hot-swap it. Renewal
 // is never time-critical (certs renew well before expiry), so a slow poll is
-// fine and far simpler/robuster than fs.watch across symlink renames.
+// fine and far simpler and more robust than fs.watch across symlink renames.
 const CERT_RELOAD_INTERVAL_MS = 6 * 60 * 60 * 1000;
 // Ceiling on an accumulated multi-chunk SASL response. A PLAIN payload is tiny
 // (username + network + token); this only exists to stop an endless stream of
@@ -1971,25 +1971,50 @@ async function resolveBouncerTls(): Promise<ResolvedTls | null> {
   // silently self-sign under it — a client that trusted the intended real cert
   // would then get an unexpected self-signed one. Warn, then fall back.
   if (Boolean(envCert) !== Boolean(envKey)) {
-    const msg =
-      'LURKER_BOUNCER_TLS_CERT and LURKER_BOUNCER_TLS_KEY must BOTH be set to use your own certificate — only one is set, falling back to a self-signed cert.';
-    console.warn(`[bouncer] ${msg}`);
-    systemLog.log({ scope: 'bouncer', text: msg });
+    fallbackWarn(
+      'LURKER_BOUNCER_TLS_CERT and LURKER_BOUNCER_TLS_KEY must BOTH be set to use your own certificate — only one is set',
+    );
+  } else if (envCert && envKey) {
+    // Validate the operator's pair up front (as reload does): an unreadable or
+    // mismatched cert/key would otherwise start a TLS listener whose every
+    // handshake fails. Fall back to a working self-signed cert instead.
+    try {
+      const cert = fs.readFileSync(envCert);
+      const key = fs.readFileSync(envKey);
+      if (keyMatchesCert(cert, key)) {
+        return {
+          cert,
+          key,
+          certPath: envCert,
+          keyPath: envKey,
+          source: 'configured',
+          fingerprint: certFingerprint(cert),
+        };
+      }
+      fallbackWarn('the configured TLS certificate and key do not match');
+    } catch (e) {
+      fallbackWarn(`could not read the configured TLS certificate/key (${(e as Error).message})`);
+    }
   }
-  let certPath: string;
-  let keyPath: string;
-  let source: ResolvedTls['source'];
-  if (envCert && envKey) {
-    certPath = envCert;
-    keyPath = envKey;
-    source = 'configured';
-  } else {
-    ({ certPath, keyPath } = await loadOrCreateSelfSignedCert());
-    source = 'self-signed';
-  }
+  const { certPath, keyPath } = await loadOrCreateSelfSignedCert();
   const cert = fs.readFileSync(certPath);
   const key = fs.readFileSync(keyPath);
-  return { cert, key, certPath, keyPath, source, fingerprint: certFingerprint(cert) };
+  return {
+    cert,
+    key,
+    certPath,
+    keyPath,
+    source: 'self-signed',
+    fingerprint: certFingerprint(cert),
+  };
+}
+
+// Warn (console + system buffer) that a configured-cert problem forced the
+// self-signed fallback, so the operator can see why TLS isn't using their cert.
+function fallbackWarn(reason: string): void {
+  const msg = `${reason} — falling back to a self-signed certificate.`;
+  console.warn(`[bouncer] ${msg}`);
+  systemLog.log({ scope: 'bouncer', text: msg });
 }
 
 // Re-read the cert from disk and hot-swap it into the running TLS server if it
