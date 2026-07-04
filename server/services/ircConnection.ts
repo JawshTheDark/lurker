@@ -1767,6 +1767,7 @@ export class IrcConnection {
       // the snapshot keeps current modes after page reload.
       let memberModesChanged = false;
       let chanModesChanged = false;
+      const listModes = this.listModes();
       if (ch) {
         for (const m of eventModes) {
           if (!m || !m.mode) continue;
@@ -1783,11 +1784,10 @@ export class IrcConnection {
             memberModesChanged = true;
             continue;
           }
-          // Channel-level flag mode (or parameter mode like +k/+l). We track them
-          // to surface them in the status bar, but we exclude list-type modes like +b/+e/+I
-          // to prevent polluting the display.
-          const isListMode = ['b', 'e', 'I', 'q', 'a'].includes(letter);
-          if (!isListMode) {
+          // Channel-level flag mode (or parameter mode like +k/+l). We track
+          // them to surface them in the status bar, but exclude list-type modes
+          // (bans/exceptions/quiets) so their masks don't pollute the display.
+          if (!listModes.has(letter)) {
             if (sign === '+' && !ch.modes.has(letter)) {
               ch.modes.add(letter);
               chanModesChanged = true;
@@ -1824,11 +1824,12 @@ export class IrcConnection {
       if (!eventChannel || !eventModes) return;
       const ch = this.channels.get(eventChannel.toLowerCase());
       if (!ch) return;
+      const listModes = this.listModes();
       const next = new Set<string>();
       for (const m of eventModes) {
         if (!m || !m.mode) continue;
         const letter = m.mode.replace(/^[+-]/, '');
-        if (!letter || ['b', 'e', 'I', 'q', 'a'].includes(letter)) continue;
+        if (!letter || listModes.has(letter)) continue;
         next.add(letter);
       }
       const before = [...ch.modes].toSorted().join('');
@@ -2481,6 +2482,19 @@ export class IrcConnection {
       target: ch.name,
       modes: [...ch.modes].join(''),
     });
+  }
+
+  // List-type channel modes (CHANMODES group A) carry a mask param — bans,
+  // ban/invite exceptions, solanum-style +q quiets — that we don't surface in
+  // the status bar. We read the set from the server's ISUPPORT CHANMODES so
+  // it's correct per-ircd (e.g. +q is a list mode on solanum but a member
+  // prefix on UnrealIRCd, where it's handled via PREFIX instead), falling back
+  // to the RFC defaults before 005 has been parsed. This is the same
+  // categorisation weechat/irssi/gamja use. Parameter modes like +k/+l are
+  // NOT list modes, so they still land in the (+...) display.
+  private listModes(): Set<string> {
+    const chanmodes = this.client.network?.options?.CHANMODES as string[] | undefined;
+    return new Set((chanmodes?.[0] || 'beI').split(''));
   }
 
   publishLag(): void {

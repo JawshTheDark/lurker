@@ -269,6 +269,18 @@ describe('join / part', () => {
     expect((await aliceAgent.post(`/api/networks/${id}/part`).send({})).status).toBe(400);
   });
 
+  it('forwards an optional channel key to ircManager', async () => {
+    const net = await makeNet(aliceAgent, { name: 'keyed' });
+    const id = net.body.network.id;
+    fakeManager.calls = [];
+    expect(
+      (await aliceAgent.post(`/api/networks/${id}/join`).send({ channel: '#x', key: 'sekret' }))
+        .status,
+    ).toBe(200);
+    const call = fakeManager.calls.find(([m]) => m === 'joinChannel');
+    expect(call).toEqual(['joinChannel', expect.any(Number), id, '#x', 'sekret']);
+  });
+
   it('returns 409 when ircManager reports not-connected', async () => {
     const net = await makeNet(aliceAgent, { name: 'offline' });
     const id = net.body.network.id;

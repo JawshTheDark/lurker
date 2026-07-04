@@ -1624,3 +1624,167 @@ describe('invite channel lines + dedup (#261)', () => {
     );
   });
 });
+
+describe('channel mode display (status bar)', () => {
+  function makeConn(): IrcConnection {
+    return new IrcConnection({
+      network: {
+        id: 1,
+        user_id: 1,
+        name: 'n',
+        host: 'irc.example.test',
+        port: 6697,
+        tls: 1,
+        trusted_certificates: 1,
+        nick: 'me',
+        username: null,
+        realname: null,
+        server_password: null,
+        autoconnect: 1,
+        sasl_account: null,
+        sasl_password: null,
+        connect_commands: null,
+        position: 0,
+        created_at: new Date().toISOString(),
+      },
+      onEvent: () => {},
+    });
+  }
+
+  // Grab the latest channel-modes payload (the (+...) status-bar string).
+  function latestModes(publish: ReturnType<typeof vi.fn>): string | undefined {
+    const calls = publish.mock.calls
+      .map((c) => c[0] as { type: string; modes?: string })
+      .filter((e) => e.type === 'channel-modes');
+    return calls.at(-1)?.modes;
+  }
+
+  it('surfaces +k in the mode string but never the key value (#476)', () => {
+    const conn = makeConn();
+    conn.upsertChannel('#chan');
+    const publish = vi.fn<(event: unknown) => void>();
+    conn.publish = publish;
+
+    conn.client.emit('mode', {
+      target: '#chan',
+      modes: [{ mode: '+k', param: 'hunter2' }],
+      raw_modes: '+k',
+      raw_params: ['hunter2'],
+    });
+
+    const modes = latestModes(publish);
+    expect(modes).toContain('k');
+    expect(modes).not.toContain('hunter2'); // only the letter, never the secret
+  });
+
+  it('surfaces +l (limit) as a flag', () => {
+    const conn = makeConn();
+    conn.upsertChannel('#chan');
+    const publish = vi.fn<(event: unknown) => void>();
+    conn.publish = publish;
+
+    conn.client.emit('mode', {
+      target: '#chan',
+      modes: [{ mode: '+l', param: '42' }],
+      raw_modes: '+l',
+      raw_params: ['42'],
+    });
+
+    const modes = latestModes(publish);
+    expect(modes).toContain('l');
+    expect(modes).not.toContain('42');
+  });
+
+  it('excludes list-type modes (+b bans) from the display', () => {
+    const conn = makeConn();
+    conn.upsertChannel('#chan');
+    const publish = vi.fn<(event: unknown) => void>();
+    conn.publish = publish;
+
+    conn.client.emit('mode', {
+      target: '#chan',
+      modes: [{ mode: '+n' }, { mode: '+b', param: 'troll!*@*' }],
+      raw_modes: '+nb',
+      raw_params: ['troll!*@*'],
+    });
+
+    const modes = latestModes(publish);
+    expect(modes).toContain('n');
+    expect(modes).not.toContain('b'); // the ban mask must not pollute the display
+  });
+
+  it('honours the server ISUPPORT CHANMODES when deciding what is a list mode', () => {
+    const conn = makeConn();
+    // Declare a server-specific list mode (+g) in CHANMODES group A. A hardcoded
+    // b/e/I list would miss it; reading group A excludes exactly what the server
+    // says is list-type.
+    // irc-framework stores CHANMODES as the four comma-split groups at runtime
+    // (see registration.js), though its .d.ts types it as a string.
+    (conn.client.network.options as { CHANMODES?: unknown }).CHANMODES = [
+      'beIg',
+      'k',
+      'l',
+      'imnpst',
+    ];
+    conn.upsertChannel('#chan');
+    const publish = vi.fn<(event: unknown) => void>();
+    conn.publish = publish;
+
+    conn.client.emit('mode', {
+      target: '#chan',
+      modes: [
+        { mode: '+n' },
+        { mode: '+g', param: 'spam' }, // server-declared list mode → excluded
+        { mode: '+k', param: 'secret' }, // param mode, not a list mode → kept
+      ],
+      raw_modes: '+ngk',
+      raw_params: ['spam', 'secret'],
+    });
+
+    const modes = latestModes(publish);
+    expect([...(modes ?? '')].toSorted().join('')).toBe('kn');
+    expect(modes).not.toContain('g');
+    expect(modes).not.toContain('secret');
+  });
+
+  it('drops a channel mode when it is removed (-k)', () => {
+    const conn = makeConn();
+    conn.upsertChannel('#chan');
+    const publish = vi.fn<(event: unknown) => void>();
+    conn.publish = publish;
+
+    conn.client.emit('mode', {
+      target: '#chan',
+      modes: [{ mode: '+k', param: 'secret' }],
+      raw_modes: '+k',
+      raw_params: ['secret'],
+    });
+    expect(latestModes(publish)).toContain('k');
+
+    conn.client.emit('mode', {
+      target: '#chan',
+      modes: [{ mode: '-k', param: 'secret' }],
+      raw_modes: '-k',
+      raw_params: ['secret'],
+    });
+    expect(latestModes(publish)).not.toContain('k');
+  });
+
+  it('RPL_CHANNELMODEIS (324) captures param modes and drops list modes', () => {
+    const conn = makeConn();
+    conn.upsertChannel('#chan');
+    const publish = vi.fn<(event: unknown) => void>();
+    conn.publish = publish;
+
+    conn.client.emit('channel info', {
+      channel: '#chan',
+      modes: [{ mode: '+n' }, { mode: '+k', param: 'secret' }, { mode: '+b', param: 'troll!*@*' }],
+    });
+
+    const modes = latestModes(publish);
+    expect(modes).toContain('n');
+    expect(modes).toContain('k');
+    expect(modes).not.toContain('b');
+    expect(modes).not.toContain('secret');
+  });
+});
