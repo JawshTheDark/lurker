@@ -31,22 +31,30 @@
 import net from 'net';
 import tls from 'tls';
 import fs from 'fs';
+import { StringDecoder } from 'node:string_decoder';
 import ircManager from './ircManager.js';
 import type { IrcConnection } from './ircConnection.js';
 import * as systemLog from './systemLog.js';
 import { findUserByUsername, getPasswordHash } from '../db/users.js';
 import type { User } from '../db/users.js';
-import { verifyPassword } from './password.js';
+import { verifyPassword, hashPassword } from './password.js';
 import { hashToken, findActiveByHash, touchLastUsed } from '../db/apiTokens.js';
 import { listNetworksForUser, upsertChannel } from '../db/networks.js';
 import type { Network } from '../db/networks.js';
-import { reopenBuffer, isClosed as isBufferClosed } from '../db/closedBuffers.js';
+import { reopenBuffer, closedKeySetForUser } from '../db/closedBuffers.js';
 import { listMessages, listBuffersForNetwork } from '../db/messages.js';
 import type { MessageEvent } from '../db/messages.js';
 import { splitSay, splitAction } from './messageSplit.js';
+import { e2eManager } from './e2e/manager.js';
+import { contextKey, isChannelContext } from './e2e/context.js';
 import { APP_NAME, APP_VERSION } from '../utils/userAgent.js';
 
 const SERVER_NAME = 'lurker.bouncer';
+
+// A precomputed scrypt hash used ONLY to equalize login latency (see
+// verifyUser): every auth path runs one scrypt so an unknown/passwordless
+// username can't be distinguished from a real one by response time.
+const TIMING_DUMMY_HASH = hashPassword('lurker-bouncer-timing-equalizer');
 
 // Caps we can honestly offer an attaching client. server-time stamps playback
 // and relayed lines; message-tags passes upstream tags through verbatim;
@@ -321,7 +329,19 @@ function isChannelName(target: string): boolean {
 // client's logs on every reconnect.
 export function isServicesNick(nick: string): boolean {
   const lower = nick.toLowerCase();
-  return /^[a-z]+serv$/.test(lower) || lower === 'global' || lower === 'services';
+  // *serv (NickServ/ChanServ/AuthServ/…) covers most networks; the short list
+  // catches well-known non-*serv auth bots (QuakeNet Q, Undernet X/W) whose
+  // self-lines also carry AUTH credentials. Best-effort — over-matching only
+  // withholds a user's own DMs from playback; the durable fix is tagging
+  // credential-bearing messages at persist time.
+  return (
+    /^[a-z]+serv$/.test(lower) ||
+    lower === 'global' ||
+    lower === 'services' ||
+    lower === 'q' ||
+    lower === 'x' ||
+    lower === 'w'
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -376,6 +396,9 @@ class BouncerSession {
   private readonly socket: net.Socket;
   private readonly remoteIp: string;
   private buf = '';
+  // Decode incrementally so a multi-byte UTF-8 character split across two TCP
+  // segments isn't corrupted (chunk.toString() per packet would mangle it).
+  private readonly decoder = new StringDecoder('utf8');
   private capNegotiating = false;
   private passRaw: string | null = null;
   private clientNick: string | null = null;
@@ -445,9 +468,32 @@ class BouncerSession {
     return `${nick}!${user}@${host}`;
   }
 
+  // True if `line` is an upstream reflection of our own PRIVMSG/NOTICE (prefix
+  // nick matches our current nick) — used to drop duplicate self-echoes.
+  private isReflectedSelfLine(line: string): boolean {
+    const selfNick = this.currentNick();
+    if (!selfNick) return false;
+    let s = line;
+    if (s.startsWith('@')) {
+      const sp = s.indexOf(' ');
+      if (sp === -1) return false;
+      s = s.slice(sp + 1);
+    }
+    if (!s.startsWith(':')) return false; // no prefix → not attributable to us
+    const sp = s.indexOf(' ');
+    if (sp === -1) return false;
+    const nick = s.slice(1, sp).split('!')[0];
+    if (nick.toLowerCase() !== selfNick.toLowerCase()) return false;
+    const cmd = s
+      .slice(sp + 1)
+      .split(' ', 1)[0]
+      .toUpperCase();
+    return cmd === 'PRIVMSG' || cmd === 'NOTICE';
+  }
+
   private onData(chunk: Buffer | string): void {
     this.lastActivityAt = Date.now();
-    this.buf += typeof chunk === 'string' ? chunk : chunk.toString('utf8');
+    this.buf += typeof chunk === 'string' ? chunk : this.decoder.write(chunk);
     if (this.buf.length > MAX_INPUT_BUFFER) {
       this.closeWithError('Input buffer exceeded');
       return;
@@ -490,6 +536,11 @@ class BouncerSession {
         break;
       case 'AUTHENTICATE':
         this.write(`:${SERVER_NAME} 904 * :SASL authentication failed (not supported — use PASS)`);
+        break;
+      case 'PING':
+        // Answer keepalive PINGs during CAP/registration so strict clients
+        // don't treat the missing PONG as a ping timeout and drop the attach.
+        this.write(`:${SERVER_NAME} PONG ${SERVER_NAME} :${msg.params[0] ?? ''}`);
         break;
       case 'QUIT':
         this.destroy();
@@ -602,6 +653,14 @@ class BouncerSession {
       );
       return;
     }
+    // A valid login can otherwise open unbounded attach connections; cap how
+    // many a single account may hold at once (across all its networks).
+    if (attachedSessionCount(user.id) >= maxSessionsPerUser()) {
+      this.failRegistration(
+        `Too many bouncer connections for this account (max ${maxSessionsPerUser()})`,
+      );
+      return;
+    }
     // Attach to the live upstream connection; attaching to a stopped or dead
     // network (re)connects it, mirroring how ZNC brings a network up when a
     // client attaches. A conn object stuck in 'disconnected' (e.g. its boot-
@@ -639,13 +698,13 @@ class BouncerSession {
 
   private verifyUser(username: string, secret: string): User | null {
     const user = findUserByUsername(username) ?? findUserByUsername(username.toLowerCase());
-    if (!user) {
-      // Burn comparable time so a missing username isn't distinguishable from
-      // a wrong password by response latency.
-      verifyPassword(secret, null);
-      return null;
-    }
-    if (verifyPassword(secret, getPasswordHash(user.id))) return user;
+    const storedHash = user ? getPasswordHash(user.id) : null;
+    // Always run exactly one scrypt (against a dummy hash when the user is
+    // unknown or has no password) so login latency can't reveal whether the
+    // username exists — verifyPassword(_, null) would otherwise return instantly.
+    const passwordOk = verifyPassword(secret, storedHash ?? TIMING_DUMMY_HASH);
+    if (!user) return null;
+    if (passwordOk && storedHash) return user;
     const token = findActiveByHash(hashToken(secret));
     if (token && token.userId === user.id && token.scope === 'read-write') {
       touchLastUsed(token.id);
@@ -699,6 +758,10 @@ class BouncerSession {
     // stream don't interleave out of order.
     this.onRawUpstream = (event) => {
       if (this.closed || !event?.from_server || typeof event.line !== 'string') return;
+      // Some upstreams (Ergo always-on, a chained bouncer, echo-message relays)
+      // reflect our OWN PRIVMSG/NOTICE back. dispatchIrcEvent already synthesizes
+      // the self-echo, so drop the reflected copy to avoid a duplicate line.
+      if (this.isReflectedSelfLine(event.line)) return;
       const out = filterRelayLine(event.line, this.caps);
       if (out) this.write(out);
     };
@@ -745,17 +808,27 @@ class BouncerSession {
     const targets: Array<{ target: string; isChannel: boolean }> = [];
     for (const ch of conn.channels.values()) targets.push({ target: ch.name, isChannel: true });
     const joined = new Set(Array.from(conn.channels.keys()));
+    // One query for the whole closed-buffer set instead of one per candidate
+    // buffer; listBuffersForNetwork is already ORDER BY lastMessageAt DESC, so
+    // no re-sort is needed before taking the most-recent DMs.
+    const closed = closedKeySetForUser(this.userId);
     const dms = listBuffersForNetwork(this.networkId)
       .filter((b) => !isChannelName(b.target) && !b.target.startsWith(':server:'))
       .filter((b) => !joined.has(b.target.toLowerCase()))
-      .filter((b) => !isBufferClosed(this.userId, this.networkId, b.target))
-      .toSorted((a, b) => (a.lastMessageAt < b.lastMessageAt ? 1 : -1))
+      .filter((b) => !closed.has(`${this.networkId}::${b.target.toLowerCase()}`))
       .slice(0, PLAYBACK_MAX_DM_BUFFERS);
     for (const b of dms) targets.push({ target: b.target, isChannel: false });
 
+    // Bound the total burst: a user in very many buffers (or a high per-buffer
+    // limit) could otherwise stall the shared event loop on attach.
+    let budget = maxTotalPlaybackLines();
     for (const { target, isChannel } of targets) {
+      if (budget <= 0) break;
       const rows = listMessages(this.networkId, target, { limit });
-      for (const line of this.playbackLines(rows, target, isChannel)) this.write(line);
+      for (const line of this.playbackLines(rows, target, isChannel)) {
+        this.write(line);
+        if (--budget <= 0) break;
+      }
     }
   }
 
@@ -764,7 +837,11 @@ class BouncerSession {
     const selfNick = this.currentNick() || this.clientNick || '*';
     for (const row of rows) {
       if (row.type !== 'message' && row.type !== 'action' && row.type !== 'notice') continue;
-      if (row.fromIgnored || row.mirrored || !row.text) continue;
+      // Note: `fromIgnored` is deliberately NOT filtered here — the live relay
+      // passes ignored senders through (ignore is a client-side Lurker feature,
+      // not the bouncer's job), so playback stays consistent with it rather
+      // than hiding in history what the client will then see live.
+      if (row.mirrored || !row.text) continue;
       // A self-message in a DM is `:you PRIVMSG peer` — a shape only clients
       // that negotiated znc.in/self-message (or echo-message) can attribute
       // correctly. Anything else (e.g. mIRC) misreads it as an INCOMING PM
@@ -911,6 +988,20 @@ class BouncerSession {
         // Non-ACTION CTCP (VERSION, PING, replies…): forward on the wire
         // untouched; these aren't conversation and don't persist.
         conn.raw(rebuildLine({ command: msg.command, params: [target, text] }));
+        continue;
+      }
+      // /me actions and NOTICEs aren't encrypted yet, so ircManager refuses
+      // them on an E2E channel and reports success — tell the attached client
+      // instead of letting the send vanish with no feedback (a plain PRIVMSG
+      // is fine: ircManager.send encrypts it).
+      if (
+        (isAction || msg.command === 'NOTICE') &&
+        isChannelContext(target) &&
+        e2eManager.isChannelEnabled(this.userId, this.networkId, contextKey(target, ''))
+      ) {
+        this.notice(
+          `${isAction ? '/me actions' : 'Notices'} aren't encrypted yet — not sent on E2E channel ${target}`,
+        );
         continue;
       }
       if (isAction) {
@@ -1130,6 +1221,30 @@ function playbackLimit(): number {
   return Math.min(1000, Math.floor(n));
 }
 
+// Ceiling on the TOTAL lines replayed across all buffers on a single attach, so
+// a user in many buffers can't stall the shared event loop. Generous — only
+// pathological cases hit it.
+export function maxTotalPlaybackLines(): number {
+  const n = Number(process.env.LURKER_BOUNCER_MAX_PLAYBACK_TOTAL);
+  if (!Number.isFinite(n) || n <= 0) return 10000;
+  return Math.floor(n);
+}
+
+// Backstops against unbounded attach connections — a valid login can otherwise
+// open arbitrarily many sessions (fd/memory exhaustion). Generous by default;
+// operators tune via env. Per-user counts a user's sessions across all networks.
+export function maxSessionsPerUser(): number {
+  const n = Number(process.env.LURKER_BOUNCER_MAX_SESSIONS_PER_USER);
+  if (!Number.isFinite(n) || n <= 0) return 32;
+  return Math.floor(n);
+}
+
+export function maxSessionsTotal(): number {
+  const n = Number(process.env.LURKER_BOUNCER_MAX_SESSIONS);
+  if (!Number.isFinite(n) || n <= 0) return 512;
+  return Math.floor(n);
+}
+
 // TLS when both cert and key paths are set (LURKER_BOUNCER_TLS_CERT/KEY).
 // Read once at startup; a reload requires a restart, same as the web server.
 function tlsOptions(): { cert: Buffer; key: Buffer } | null {
@@ -1143,6 +1258,13 @@ export function startBouncer(port: number = bouncerPort(), host?: string): void 
   if (server) return;
   const tlsOpts = tlsOptions();
   const onConnection = (socket: net.Socket) => {
+    // Global backstop: refuse new sockets once the process-wide ceiling is hit.
+    // An unauthenticated flood is otherwise bounded only by the registration
+    // timeout and the OS.
+    if (sessions.size >= maxSessionsTotal()) {
+      socket.end('ERROR :Bouncer connection limit reached\r\n');
+      return;
+    }
     sessions.add(new BouncerSession(socket));
   };
   server = tlsOpts ? tls.createServer(tlsOpts, onConnection) : net.createServer(onConnection);

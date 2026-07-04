@@ -16,6 +16,9 @@ let filterRelayLine: typeof import('./bouncer.js').filterRelayLine;
 let memberPrefixSymbol: typeof import('./bouncer.js').memberPrefixSymbol;
 let buildNamesLines: typeof import('./bouncer.js').buildNamesLines;
 let isServicesNick: typeof import('./bouncer.js').isServicesNick;
+let maxSessionsPerUser: typeof import('./bouncer.js').maxSessionsPerUser;
+let maxSessionsTotal: typeof import('./bouncer.js').maxSessionsTotal;
+let maxTotalPlaybackLines: typeof import('./bouncer.js').maxTotalPlaybackLines;
 
 beforeAll(async () => {
   const mod = await import('./bouncer.js');
@@ -27,6 +30,9 @@ beforeAll(async () => {
   memberPrefixSymbol = mod.memberPrefixSymbol;
   buildNamesLines = mod.buildNamesLines;
   isServicesNick = mod.isServicesNick;
+  maxSessionsPerUser = mod.maxSessionsPerUser;
+  maxSessionsTotal = mod.maxSessionsTotal;
+  maxTotalPlaybackLines = mod.maxTotalPlaybackLines;
 });
 
 afterAll(() => ctx.cleanup());
@@ -256,8 +262,15 @@ describe('isServicesNick', () => {
     }
   });
 
+  it('matches well-known non-*serv auth bots regardless of case', () => {
+    // QuakeNet Q, Undernet X/W, and AuthServ (caught by the *serv rule).
+    for (const n of ['Q', 'q', 'X', 'W', 'AuthServ']) {
+      expect(isServicesNick(n)).toBe(true);
+    }
+  });
+
   it('leaves ordinary nicks alone', () => {
-    for (const n of ['bob', 'serv', 'nickservv', 'server1', 'preserve1']) {
+    for (const n of ['bob', 'serv', 'nickservv', 'server1', 'preserve1', 'quinn', 'xavier']) {
       expect(isServicesNick(n)).toBe(false);
     }
   });
@@ -310,5 +323,71 @@ describe('buildNamesLines', () => {
       .split(' ');
     expect(all).toHaveLength(200);
     expect(new Set(all).size).toBe(200);
+  });
+});
+
+describe('maxSessionsPerUser / maxSessionsTotal', () => {
+  const perUserKey = 'LURKER_BOUNCER_MAX_SESSIONS_PER_USER';
+  const totalKey = 'LURKER_BOUNCER_MAX_SESSIONS';
+  let savedPerUser: string | undefined;
+  let savedTotal: string | undefined;
+  beforeAll(() => {
+    savedPerUser = process.env[perUserKey];
+    savedTotal = process.env[totalKey];
+  });
+  afterAll(() => {
+    if (savedPerUser === undefined) delete process.env[perUserKey];
+    else process.env[perUserKey] = savedPerUser;
+    if (savedTotal === undefined) delete process.env[totalKey];
+    else process.env[totalKey] = savedTotal;
+  });
+
+  it('defaults to 32 per-user and 512 total when unset', () => {
+    delete process.env[perUserKey];
+    delete process.env[totalKey];
+    expect(maxSessionsPerUser()).toBe(32);
+    expect(maxSessionsTotal()).toBe(512);
+  });
+
+  it('reads positive integers from env', () => {
+    process.env[perUserKey] = '4';
+    process.env[totalKey] = '100';
+    expect(maxSessionsPerUser()).toBe(4);
+    expect(maxSessionsTotal()).toBe(100);
+  });
+
+  it('falls back to the default for non-positive or garbage values', () => {
+    process.env[perUserKey] = '0';
+    expect(maxSessionsPerUser()).toBe(32);
+    process.env[perUserKey] = '-5';
+    expect(maxSessionsPerUser()).toBe(32);
+    process.env[totalKey] = 'nope';
+    expect(maxSessionsTotal()).toBe(512);
+  });
+});
+
+describe('maxTotalPlaybackLines', () => {
+  const key = 'LURKER_BOUNCER_MAX_PLAYBACK_TOTAL';
+  let saved: string | undefined;
+  beforeAll(() => {
+    saved = process.env[key];
+  });
+  afterAll(() => {
+    if (saved === undefined) delete process.env[key];
+    else process.env[key] = saved;
+  });
+
+  it('defaults to 10000 when unset', () => {
+    delete process.env[key];
+    expect(maxTotalPlaybackLines()).toBe(10000);
+  });
+
+  it('reads a positive integer and rejects non-positive/garbage', () => {
+    process.env[key] = '2500';
+    expect(maxTotalPlaybackLines()).toBe(2500);
+    process.env[key] = '0';
+    expect(maxTotalPlaybackLines()).toBe(10000);
+    process.env[key] = 'nope';
+    expect(maxTotalPlaybackLines()).toBe(10000);
   });
 });
