@@ -81,11 +81,11 @@ describe('control (unbound) mode', () => {
 });
 
 describe('BOUNCER LISTNETWORKS', () => {
-  it('returns a batch of BOUNCER NETWORK lines, one per network', async () => {
+  it('returns a batch of BOUNCER NETWORK lines when the client negotiated batch', async () => {
     const acct = harnessMod.seedAccount({ nick: 'ls1', networkName: 'alpha' });
     harnessMod.seedNetwork(acct.user, { networkName: 'beta', nick: 'ls1b' });
     const c = await harness.connect();
-    await negotiate(c, acct, 'sasl soju.im/bouncer-networks');
+    await negotiate(c, acct, 'sasl batch soju.im/bouncer-networks');
     c.send('CAP END');
     await c.waitForCommand('422');
     c.send('BOUNCER LISTNETWORKS');
@@ -98,6 +98,33 @@ describe('BOUNCER LISTNETWORKS', () => {
     expect(net1).toContain('state=connected'); // fake upstream is "connected"
     await c.waitFor((l) => l.includes('BOUNCER NETWORK') && l.includes('name=beta'));
     await c.waitFor((l) => l.includes(`BATCH -${ref}`));
+  });
+
+  it('sends unwrapped, untagged BOUNCER NETWORK lines without the batch cap', async () => {
+    const acct = harnessMod.seedAccount({ nick: 'ls2', networkName: 'solo' });
+    const c = await harness.connect();
+    await negotiate(c, acct, 'sasl soju.im/bouncer-networks'); // no batch cap
+    c.send('CAP END');
+    await c.waitForCommand('422');
+    c.send('BOUNCER LISTNETWORKS');
+    const line = await c.waitFor((l) => l.includes('BOUNCER NETWORK') && l.includes('name=solo'));
+    // No message tag, and no surrounding BATCH command.
+    expect(line).not.toContain('@batch=');
+    expect(line.startsWith(':')).toBe(true);
+    expect(c.lines.some((l) => harnessMod.commandOf(l) === 'BATCH')).toBe(false);
+  });
+
+  it('refuses BOUNCER without the bouncer-networks cap', async () => {
+    const acct = harnessMod.seedAccount({ nick: 'ls3', networkName: 'onlynet' });
+    const c = await harness.connect();
+    // Single network + no cap → auto-binds; then BOUNCER should be refused.
+    await negotiate(c, acct, 'sasl');
+    c.send('CAP END');
+    await c.waitForCommand('422');
+    c.send('BOUNCER LISTNETWORKS');
+    const fail = await c.waitForCommand('FAIL');
+    expect(fail).toContain('UNKNOWN_COMMAND');
+    c.close();
   });
 });
 

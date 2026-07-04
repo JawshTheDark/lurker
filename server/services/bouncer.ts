@@ -79,6 +79,10 @@ const SUPPORTED_CAPS = [
   'message-tags',
   'echo-message',
   'znc.in/self-message',
+  // batch groups the BOUNCER NETWORK burst (LISTNETWORKS / initial -notify dump)
+  // — advertised so a client can opt into the batched form; without it we send
+  // the same lines unwrapped.
+  'batch',
   // soju's bouncer-networks: a control connection can enumerate/bind the user's
   // networks; -notify opts into unsolicited BOUNCER NETWORK state pushes.
   'soju.im/bouncer-networks',
@@ -1093,6 +1097,12 @@ class BouncerSession {
   // Pre-registration BOUNCER: only BIND is legal here (soju parity). BIND
   // stashes the netid to resolve at completeAttach; everything else is refused.
   private handleBouncerPreReg(msg: ParsedClientLine): void {
+    if (!this.caps.has(CAP_BOUNCER_NETWORKS)) {
+      this.write(
+        `:${SERVER_NAME} FAIL BOUNCER UNKNOWN_COMMAND :Negotiate the soju.im/bouncer-networks capability first`,
+      );
+      return;
+    }
     const sub = (msg.params[0] || '').toUpperCase();
     if (sub !== 'BIND') {
       this.write(`:${SERVER_NAME} FAIL BOUNCER UNKNOWN_COMMAND ${sub || '*'} :Unknown subcommand`);
@@ -1118,6 +1128,12 @@ class BouncerSession {
   // Post-registration BOUNCER: LISTNETWORKS (+ BIND is now too late; CRUD is
   // deferred to the web UI).
   private handleBouncer(msg: ParsedClientLine): void {
+    if (!this.caps.has(CAP_BOUNCER_NETWORKS)) {
+      this.write(
+        `:${SERVER_NAME} FAIL BOUNCER UNKNOWN_COMMAND :Negotiate the soju.im/bouncer-networks capability first`,
+      );
+      return;
+    }
     const sub = (msg.params[0] || '').toUpperCase();
     switch (sub) {
       case 'LISTNETWORKS':
@@ -1144,20 +1160,24 @@ class BouncerSession {
     }
   }
 
-  // Reply to LISTNETWORKS (and the initial -notify dump) with a
-  // soju.im/bouncer-networks batch of BOUNCER NETWORK lines, one per network.
+  // Reply to LISTNETWORKS (and the initial -notify dump) with a BOUNCER NETWORK
+  // line per network. The soju.im/bouncer-networks batch wrapper (and its
+  // `@batch=` message tag) is only used when the client negotiated `batch` —
+  // otherwise we must not emit tags, so send the same lines unwrapped.
   private sendNetworkList(): void {
+    const batched = this.caps.has('batch');
     const ref = `lbnc${++this.batchSeq}`;
-    this.write(`:${SERVER_NAME} BATCH +${ref} soju.im/bouncer-networks`);
+    if (batched) this.write(`:${SERVER_NAME} BATCH +${ref} soju.im/bouncer-networks`);
+    const tag = batched ? `@batch=${ref} ` : '';
     for (const network of listNetworksForUser(this.userId)) {
       const conn = ircManager.getConnection(this.userId, network.id);
       const attrs = buildNetworkAttrs(network, {
         state: bouncerNetworkState(conn?.state),
         nickname: conn?.currentNick || network.nick,
       });
-      this.write(`@batch=${ref} :${SERVER_NAME} BOUNCER NETWORK ${network.id} ${attrs}`);
+      this.write(`${tag}:${SERVER_NAME} BOUNCER NETWORK ${network.id} ${attrs}`);
     }
-    this.write(`:${SERVER_NAME} BATCH -${ref}`);
+    if (batched) this.write(`:${SERVER_NAME} BATCH -${ref}`);
   }
 
   // Push an unsolicited (unbatched) network state change to a -notify client.
