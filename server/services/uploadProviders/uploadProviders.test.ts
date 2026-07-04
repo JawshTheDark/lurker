@@ -5,6 +5,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as x0 from './x0.js';
 import * as catbox from './catbox.js';
 import * as hoarder from './hoarder.js';
+import * as zipline from './zipline.js';
+import * as chibisafe from './chibisafe.js';
 import * as multipart from './multipart.js';
 import type { PostBufferResult } from './multipart.js';
 
@@ -228,6 +230,142 @@ describe('hoarder provider', () => {
     );
     await expect(
       hoarder.upload(
+        Buffer.from([1]),
+        { filename: 'x.png', mime: 'image/png' },
+        { url: 'https://u', api_key: 'k' },
+      ),
+    ).rejects.toMatchObject({ code: 'PROVIDER_ERROR' });
+  });
+});
+
+describe('zipline provider', () => {
+  it('POSTs to {base}/api/upload with raw authorization header and `file` field', async () => {
+    const cap = captureFormData();
+    captureResponse = new Response(
+      JSON.stringify({
+        files: [{ id: 'a1', name: 'x.png', type: 'image/png', url: 'https://zl.test/u/x.png' }],
+      }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    );
+    const result = await zipline.upload(
+      Buffer.from([0x89, 0x50]),
+      { filename: 'x.png', mime: 'image/png' },
+      { url: 'https://zl.test', token: 'ziptok' },
+    );
+    expect(cap.url).toBe('https://zl.test/api/upload');
+    const headers = (cap.init as RequestInit & { headers: Record<string, string> }).headers;
+    // Raw token, NOT "Bearer …" — Zipline's middleware decrypts the header verbatim.
+    expect(headers.authorization).toBe('ziptok');
+    expect(headers['User-Agent']).toMatch(/^Lurker\//);
+    expect(cap.formData!.get('file')).toBeInstanceOf(Blob);
+    expect(result.url).toBe('https://zl.test/u/x.png');
+  });
+
+  it('accepts the v3 response shape (files as URL strings)', async () => {
+    captureFormData();
+    captureResponse = new Response(JSON.stringify({ files: ['https://zl.test/u/y.png'] }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+    const result = await zipline.upload(
+      Buffer.from([1]),
+      { filename: 'y.png', mime: 'image/png' },
+      { url: 'https://zl.test/', token: 't' },
+    );
+    expect(result.url).toBe('https://zl.test/u/y.png');
+  });
+
+  it('rejects with PROVIDER_CONFIG when url or token is missing', async () => {
+    await expect(
+      zipline.upload(Buffer.from([1]), { filename: 'x.png', mime: 'image/png' }, { token: 't' }),
+    ).rejects.toMatchObject({ code: 'PROVIDER_CONFIG' });
+    await expect(
+      zipline.upload(
+        Buffer.from([1]),
+        { filename: 'x.png', mime: 'image/png' },
+        { url: 'https://u' },
+      ),
+    ).rejects.toMatchObject({ code: 'PROVIDER_CONFIG' });
+  });
+
+  it('maps 401 to PROVIDER_AUTH and missing url in body to PROVIDER_ERROR', async () => {
+    globalThis.fetch = vi.fn<typeof fetch>(
+      async () => new Response('unauthorized', { status: 401 }),
+    );
+    await expect(
+      zipline.upload(
+        Buffer.from([1]),
+        { filename: 'x.png', mime: 'image/png' },
+        { url: 'https://u', token: 'bad' },
+      ),
+    ).rejects.toMatchObject({ code: 'PROVIDER_AUTH' });
+
+    globalThis.fetch = vi.fn<typeof fetch>(
+      async () => new Response(JSON.stringify({ files: [] }), { status: 200 }),
+    );
+    await expect(
+      zipline.upload(
+        Buffer.from([1]),
+        { filename: 'x.png', mime: 'image/png' },
+        { url: 'https://u', token: 't' },
+      ),
+    ).rejects.toMatchObject({ code: 'PROVIDER_ERROR' });
+  });
+});
+
+describe('chibisafe provider', () => {
+  it('POSTs to {base}/api/upload with x-api-key and `file[]` field', async () => {
+    const cap = captureFormData();
+    captureResponse = new Response(
+      JSON.stringify({ name: 'x.png', uuid: 'u-u-i-d', url: 'https://cb.test/x1y2z.png' }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    );
+    const result = await chibisafe.upload(
+      Buffer.from([0x47, 0x49]),
+      { filename: 'x.png', mime: 'image/png' },
+      { url: 'https://cb.test/', api_key: 'chibikey' },
+    );
+    expect(cap.url).toBe('https://cb.test/api/upload');
+    const headers = (cap.init as RequestInit & { headers: Record<string, string> }).headers;
+    expect(headers['x-api-key']).toBe('chibikey');
+    expect(headers['User-Agent']).toMatch(/^Lurker\//);
+    // Chibisafe's uploader expects the lolisafe-lineage field name `file[]`.
+    expect(cap.formData!.get('file[]')).toBeInstanceOf(Blob);
+    expect(result.url).toBe('https://cb.test/x1y2z.png');
+  });
+
+  it('rejects with PROVIDER_CONFIG when url or api_key is missing', async () => {
+    await expect(
+      chibisafe.upload(
+        Buffer.from([1]),
+        { filename: 'x.png', mime: 'image/png' },
+        { api_key: 'k' },
+      ),
+    ).rejects.toMatchObject({ code: 'PROVIDER_CONFIG' });
+    await expect(
+      chibisafe.upload(
+        Buffer.from([1]),
+        { filename: 'x.png', mime: 'image/png' },
+        { url: 'https://u' },
+      ),
+    ).rejects.toMatchObject({ code: 'PROVIDER_CONFIG' });
+  });
+
+  it('maps 401 to PROVIDER_AUTH and missing url in body to PROVIDER_ERROR', async () => {
+    globalThis.fetch = vi.fn<typeof fetch>(async () => new Response('no key', { status: 401 }));
+    await expect(
+      chibisafe.upload(
+        Buffer.from([1]),
+        { filename: 'x.png', mime: 'image/png' },
+        { url: 'https://u', api_key: 'bad' },
+      ),
+    ).rejects.toMatchObject({ code: 'PROVIDER_AUTH' });
+
+    globalThis.fetch = vi.fn<typeof fetch>(
+      async () => new Response(JSON.stringify({ name: 'x' }), { status: 200 }),
+    );
+    await expect(
+      chibisafe.upload(
         Buffer.from([1]),
         { filename: 'x.png', mime: 'image/png' },
         { url: 'https://u', api_key: 'k' },

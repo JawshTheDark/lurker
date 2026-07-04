@@ -1004,7 +1004,7 @@ export const REGISTRY: readonly SettingOption[] = Object.freeze([
     category: 'uploads',
     group: 'provider',
     type: 'enum',
-    choices: ['x0', 'catbox', 'hoarder'],
+    choices: ['x0', 'catbox', 'hoarder', 'zipline', 'chibisafe'],
     default: 'x0',
     // Node edition forces the operator's in-house uploader (A8); a tenant never
     // picks a host, so this and the provider-credential settings below are
@@ -1012,8 +1012,9 @@ export const REGISTRY: readonly SettingOption[] = Object.freeze([
     selfHostedOnly: true,
     description:
       'Where pasted/picked images are uploaded. x0.at and catbox.moe are ' +
-      'anonymous public hosts. hoarder uploads to your own self-hosted ' +
-      'Hoarder instance using the URL + API key configured below.',
+      'anonymous public hosts. hoarder, zipline, and chibisafe upload to ' +
+      'your own self-hosted instance using the URL + credential ' +
+      'configured below.',
   },
   {
     key: 'uploads.image.max_dimension',
@@ -1104,6 +1105,54 @@ export const REGISTRY: readonly SettingOption[] = Object.freeze([
       'API key for your Hoarder instance. Generate one on the Hoarder server ' +
       'with `node scripts/gen-api-key.js` and add it to ' +
       'web.auth.api_keys in its config.json.',
+  },
+  {
+    key: 'uploads.zipline.url',
+    label: 'Zipline URL',
+    category: 'uploads',
+    group: 'zipline',
+    type: 'string',
+    default: '',
+    selfHostedOnly: true,
+    description:
+      'Base URL of your Zipline instance (e.g. https://zipline.example.com). ' +
+      'Only used when the upload provider is set to zipline.',
+  },
+  {
+    key: 'uploads.zipline.token',
+    label: 'Zipline token',
+    category: 'uploads',
+    group: 'zipline',
+    type: 'secret',
+    default: '',
+    selfHostedOnly: true,
+    description:
+      'Your Zipline user token — copy it from the Zipline dashboard under ' +
+      'Settings (or via "Copy token"). Sent as the authorization header.',
+  },
+  {
+    key: 'uploads.chibisafe.url',
+    label: 'Chibisafe URL',
+    category: 'uploads',
+    group: 'chibisafe',
+    type: 'string',
+    default: '',
+    selfHostedOnly: true,
+    description:
+      'Base URL of your Chibisafe instance (e.g. https://chibi.example.com). ' +
+      'Only used when the upload provider is set to chibisafe.',
+  },
+  {
+    key: 'uploads.chibisafe.api_key',
+    label: 'Chibisafe API key',
+    category: 'uploads',
+    group: 'chibisafe',
+    type: 'secret',
+    default: '',
+    selfHostedOnly: true,
+    description:
+      'API key for your Chibisafe instance — generate it in the Chibisafe ' +
+      'dashboard under Credentials. Sent as the x-api-key header.',
   },
 
   // ─── Notifications (unified intent, per signal type) ──────────────────
@@ -1514,6 +1563,8 @@ export const GROUPS: Readonly<Record<string, string>> = Object.freeze({
   viewing: 'Viewing',
   catbox: 'catbox.moe',
   hoarder: 'Hoarder',
+  zipline: 'Zipline',
+  chibisafe: 'Chibisafe',
   alerts: 'Alerts',
   push_filters: 'Push filters',
   system_features: 'System text features',

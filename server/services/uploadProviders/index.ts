@@ -4,6 +4,8 @@
 import * as x0 from './x0.js';
 import * as catbox from './catbox.js';
 import * as hoarder from './hoarder.js';
+import * as zipline from './zipline.js';
+import * as chibisafe from './chibisafe.js';
 
 /** Shared shape every upload provider must satisfy. */
 export interface UploadProvider {
@@ -23,6 +25,8 @@ const PROVIDERS: Record<string, UploadProvider> = {
   [x0.id]: x0,
   [catbox.id]: catbox,
   [hoarder.id]: hoarder,
+  [zipline.id]: zipline,
+  [chibisafe.id]: chibisafe,
 };
 
 export const providerIds = Object.keys(PROVIDERS);
@@ -45,6 +49,16 @@ export function secretsForProvider(
       return {
         url: userSettings['uploads.hoarder.url'] || '',
         api_key: userSettings['uploads.hoarder.api_key'] || '',
+      };
+    case 'zipline':
+      return {
+        url: userSettings['uploads.zipline.url'] || '',
+        token: userSettings['uploads.zipline.token'] || '',
+      };
+    case 'chibisafe':
+      return {
+        url: userSettings['uploads.chibisafe.url'] || '',
+        api_key: userSettings['uploads.chibisafe.api_key'] || '',
       };
     default:
       return {};
