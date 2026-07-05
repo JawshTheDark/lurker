@@ -4,6 +4,9 @@
 import * as x0 from './x0.js';
 import * as catbox from './catbox.js';
 import * as hoarder from './hoarder.js';
+import * as zipline from './zipline.js';
+import * as chibisafe from './chibisafe.js';
+import * as s3 from './s3.js';
 
 /** Shared shape every upload provider must satisfy. */
 export interface UploadProvider {
@@ -23,6 +26,9 @@ const PROVIDERS: Record<string, UploadProvider> = {
   [x0.id]: x0,
   [catbox.id]: catbox,
   [hoarder.id]: hoarder,
+  [zipline.id]: zipline,
+  [chibisafe.id]: chibisafe,
+  [s3.id]: s3,
 };
 
 export const providerIds = Object.keys(PROVIDERS);
@@ -45,6 +51,26 @@ export function secretsForProvider(
       return {
         url: userSettings['uploads.hoarder.url'] || '',
         api_key: userSettings['uploads.hoarder.api_key'] || '',
+      };
+    case 'zipline':
+      return {
+        url: userSettings['uploads.zipline.url'] || '',
+        token: userSettings['uploads.zipline.token'] || '',
+      };
+    case 'chibisafe':
+      return {
+        url: userSettings['uploads.chibisafe.url'] || '',
+        api_key: userSettings['uploads.chibisafe.api_key'] || '',
+      };
+    case 's3':
+      return {
+        endpoint: userSettings['uploads.s3.endpoint'] || '',
+        region: userSettings['uploads.s3.region'] || '',
+        bucket: userSettings['uploads.s3.bucket'] || '',
+        access_key_id: userSettings['uploads.s3.access_key_id'] || '',
+        secret_access_key: userSettings['uploads.s3.secret_access_key'] || '',
+        public_base_url: userSettings['uploads.s3.public_base_url'] || '',
+        key_prefix: userSettings['uploads.s3.key_prefix'] || '',
       };
     default:
       return {};

@@ -1004,7 +1004,7 @@ export const REGISTRY: readonly SettingOption[] = Object.freeze([
     category: 'uploads',
     group: 'provider',
     type: 'enum',
-    choices: ['x0', 'catbox', 'hoarder'],
+    choices: ['x0', 'catbox', 'hoarder', 'zipline', 'chibisafe', 's3'],
     default: 'x0',
     // Node edition forces the operator's in-house uploader (A8); a tenant never
     // picks a host, so this and the provider-credential settings below are
@@ -1012,8 +1012,10 @@ export const REGISTRY: readonly SettingOption[] = Object.freeze([
     selfHostedOnly: true,
     description:
       'Where pasted/picked images are uploaded. x0.at and catbox.moe are ' +
-      'anonymous public hosts. hoarder uploads to your own self-hosted ' +
-      'Hoarder instance using the URL + API key configured below.',
+      'anonymous public hosts. hoarder, zipline, and chibisafe upload to ' +
+      'your own self-hosted instance, and s3 uploads straight to any ' +
+      'S3-compatible bucket (Cloudflare R2, MinIO, Garage, AWS), each ' +
+      'using the settings configured below.',
   },
   {
     key: 'uploads.image.max_dimension',
@@ -1104,6 +1106,135 @@ export const REGISTRY: readonly SettingOption[] = Object.freeze([
       'API key for your Hoarder instance. Generate one on the Hoarder server ' +
       'with `node scripts/gen-api-key.js` and add it to ' +
       'web.auth.api_keys in its config.json.',
+  },
+  {
+    key: 'uploads.zipline.url',
+    label: 'Zipline URL',
+    category: 'uploads',
+    group: 'zipline',
+    type: 'string',
+    default: '',
+    selfHostedOnly: true,
+    description:
+      'Base URL of your Zipline instance (e.g. https://zipline.example.com). ' +
+      'Only used when the upload provider is set to zipline.',
+  },
+  {
+    key: 'uploads.zipline.token',
+    label: 'Zipline token',
+    category: 'uploads',
+    group: 'zipline',
+    type: 'secret',
+    default: '',
+    selfHostedOnly: true,
+    description:
+      'Your Zipline user token — copy it from the Zipline dashboard under ' +
+      'Settings (or via "Copy token"). Sent as the authorization header.',
+  },
+  {
+    key: 'uploads.chibisafe.url',
+    label: 'Chibisafe URL',
+    category: 'uploads',
+    group: 'chibisafe',
+    type: 'string',
+    default: '',
+    selfHostedOnly: true,
+    description:
+      'Base URL of your Chibisafe instance (e.g. https://chibi.example.com). ' +
+      'Only used when the upload provider is set to chibisafe.',
+  },
+  {
+    key: 'uploads.chibisafe.api_key',
+    label: 'Chibisafe API key',
+    category: 'uploads',
+    group: 'chibisafe',
+    type: 'secret',
+    default: '',
+    selfHostedOnly: true,
+    description:
+      'API key for your Chibisafe instance — generate it in the Chibisafe ' +
+      'dashboard under Credentials. Sent as the x-api-key header.',
+  },
+  {
+    key: 'uploads.s3.endpoint',
+    label: 'S3 endpoint',
+    category: 'uploads',
+    group: 's3',
+    type: 'string',
+    default: '',
+    selfHostedOnly: true,
+    description:
+      'Bucket API endpoint: https://<account-id>.r2.cloudflarestorage.com ' +
+      'for R2, or your MinIO/Garage URL (e.g. http://192.0.2.1:9000). ' +
+      'Requests are path-style, so no wildcard DNS is needed.',
+  },
+  {
+    key: 'uploads.s3.region',
+    label: 'S3 region',
+    category: 'uploads',
+    group: 's3',
+    type: 'string',
+    default: '',
+    selfHostedOnly: true,
+    description:
+      'Signing region. Leave blank for "auto" (correct for R2 and fine for ' +
+      'MinIO/Garage); AWS S3 needs the real bucket region (e.g. us-east-1).',
+  },
+  {
+    key: 'uploads.s3.bucket',
+    label: 'S3 bucket',
+    category: 'uploads',
+    group: 's3',
+    type: 'string',
+    default: '',
+    selfHostedOnly: true,
+    description: 'Bucket name uploads are written into.',
+  },
+  {
+    key: 'uploads.s3.access_key_id',
+    label: 'S3 access key ID',
+    category: 'uploads',
+    group: 's3',
+    type: 'string',
+    default: '',
+    selfHostedOnly: true,
+    description: 'Access key ID for a credential with write access to the bucket.',
+  },
+  {
+    key: 'uploads.s3.secret_access_key',
+    label: 'S3 secret access key',
+    category: 'uploads',
+    group: 's3',
+    type: 'secret',
+    default: '',
+    selfHostedOnly: true,
+    description: 'Secret access key paired with the access key ID.',
+  },
+  {
+    key: 'uploads.s3.public_base_url',
+    label: 'S3 public base URL',
+    category: 'uploads',
+    group: 's3',
+    type: 'string',
+    default: '',
+    selfHostedOnly: true,
+    description:
+      'Public URL prefix the uploaded object is reachable under — an R2 ' +
+      'public bucket domain, a CDN, or a reverse-proxied MinIO bucket ' +
+      '(e.g. https://cdn.example.com). The object key is appended to this. ' +
+      'Serving files is the bucket/proxy side, not Lurker.',
+  },
+  {
+    key: 'uploads.s3.key_prefix',
+    label: 'S3 key prefix',
+    category: 'uploads',
+    group: 's3',
+    type: 'string',
+    default: '',
+    selfHostedOnly: true,
+    description:
+      'Optional folder prefix for uploaded objects (e.g. lurker). Slashes ' +
+      'create nesting; unsafe characters are stripped.',
   },
 
   // ─── Notifications (unified intent, per signal type) ──────────────────
@@ -1514,6 +1645,9 @@ export const GROUPS: Readonly<Record<string, string>> = Object.freeze({
   viewing: 'Viewing',
   catbox: 'catbox.moe',
   hoarder: 'Hoarder',
+  zipline: 'Zipline',
+  chibisafe: 'Chibisafe',
+  s3: 'S3 / R2',
   alerts: 'Alerts',
   push_filters: 'Push filters',
   system_features: 'System text features',
