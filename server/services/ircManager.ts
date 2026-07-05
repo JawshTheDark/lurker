@@ -294,18 +294,22 @@ class IrcManager extends EventEmitter {
   joinChannel(userId: number, networkId: number, name: string, key?: string): boolean {
     const conn = this.getConnection(userId, networkId);
     if (!conn) return false;
+    // Coerce the key to a safe string-or-undefined once, up front. The ws/HTTP
+    // join payloads are unvalidated, so a non-string (e.g. a number) can reach
+    // here — it must not flow into upsertChannel → encryptSecret (which throws
+    // on a non-string and, on the unguarded ws path, would take down the shared
+    // cell process). An empty string coerces to undefined too, so a keyless
+    // re-join preserves a stored key instead of wiping it (soju does the same);
+    // a key that no longer applies is cleared by the MODE -k handler, not here.
+    const safeKey = typeof key === 'string' && key !== '' ? key : undefined;
     // Persist the key (encrypted at rest) so the channel auto-rejoins keyed
-    // after a reconnect/restart. Normalize an empty/absent key to undefined so a
-    // keyless re-join (clicking an already-keyed channel, /join with no key, or
-    // an API call passing key:"") preserves the stored key rather than wiping it
-    // — soju does the same. A key that no longer applies is cleared by the
-    // MODE -k handler, not here.
-    upsertChannel(networkId, name, true, key || undefined);
+    // after a reconnect/restart.
+    upsertChannel(networkId, name, true, safeKey);
     // Joining is an explicit "I want this buffer back" — clear any stale
     // closed flag from a prior close. The matching channel-joined event will
     // recreate the buffer in clients via the normal flow.
     reopenBuffer(userId, networkId, name);
-    conn.join(name, key);
+    conn.join(name, safeKey);
     return true;
   }
 

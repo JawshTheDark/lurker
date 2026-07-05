@@ -447,4 +447,26 @@ describe('planChannelRejoins', () => {
     const joined = listChannels(net.id).filter((c) => c.joined);
     expect(planChannelRejoins(joined)).toContainEqual({ channels: '#secret', keys: 'hunter2' });
   });
+
+  it('joinChannel drops a non-string key from an untrusted payload without throwing', () => {
+    const user = createUser('irc-join-badkey');
+    const net = createNetwork(user.id, {
+      name: 'n',
+      host: 'irc.example.invalid',
+      port: 6697,
+      tls: true,
+      nick: 'a',
+    })!;
+    const conn = ircManager.startNetwork(user.id, net.id, { deferrable: true })!;
+    conn.client.join = vi.fn<(channel: string, key?: string) => void>();
+
+    // A number sneaks in via an unvalidated ws/HTTP join payload. It must not
+    // reach encryptSecret (which throws on a non-string and, on the unguarded
+    // ws path, would crash the process).
+    expect(() =>
+      ircManager.joinChannel(user.id, net.id, '#x', 123 as unknown as string),
+    ).not.toThrow();
+    expect(listChannels(net.id).find((c) => c.name === '#x')!.key).toBeNull(); // dropped
+    expect(conn.client.join).toHaveBeenCalledWith('#x', undefined);
+  });
 });

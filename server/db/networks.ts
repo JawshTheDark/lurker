@@ -228,17 +228,20 @@ export function backfillEncryptNetworkSecrets(): { scanned: number; encrypted: n
 // key. Idempotent — isEncrypted() skips already-wrapped values.
 export function backfillEncryptChannelKeys(): { scanned: number; encrypted: number } {
   if (!hasSecretKey()) return { scanned: 0, encrypted: 0 };
-  const rows = db.prepare(`SELECT id, key FROM channels`).all() as Array<{
+  // Only rows with an actual key can need wrapping — most channels are keyless,
+  // so filter at the SQL level rather than scanning the whole table each boot.
+  const rows = db
+    .prepare(`SELECT id, key FROM channels WHERE key IS NOT NULL AND key != ''`)
+    .all() as Array<{
     id: number;
-    key: string | null;
+    key: string;
   }>;
   const update = db.prepare(`UPDATE channels SET key = ? WHERE id = ?`);
   let encrypted = 0;
   const tx = db.transaction(() => {
     for (const row of rows) {
-      const v = row.key;
-      if (typeof v === 'string' && v !== '' && !isEncrypted(v)) {
-        update.run(encryptSecret(v), row.id);
+      if (!isEncrypted(row.key)) {
+        update.run(encryptSecret(row.key), row.id);
         encrypted += 1;
       }
     }
