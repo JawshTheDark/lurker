@@ -151,6 +151,7 @@
               class="link"
               title="Join channel"
               aria-label="Join channel"
+              :disabled="serverConnectionState !== 'connected'"
               @click="active && joinChannelModal.open(active.networkId)"
             >
               <i class="fa-solid fa-plus"></i>
@@ -764,6 +765,15 @@ useChatBootstrap({ onJump: onJumpToMessage });
 }
 .link:hover {
   color: var(--fg);
+}
+/* Disabled topic-bar link (e.g. Join channel while the network is disconnected):
+   dimmed and non-interactive, and it must not brighten on hover. */
+.link:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.link:disabled:hover {
+  color: var(--accent);
 }
 /* Transfers button: while an unsolicited offer awaits a decision the glyph
    turns warn-colored to draw the eye (color-as-signal, no count badge). */

@@ -102,6 +102,7 @@
             class="icon"
             title="Join channel"
             aria-label="Join channel"
+            :disabled="serverConnectionState !== 'connected'"
             @click="active && joinChannelModal.open(active.networkId)"
           >
             <i class="fa-solid fa-plus"></i>
@@ -569,6 +570,15 @@ useChatBootstrap({ onJump: onJumpToMessage });
 }
 .icon:hover {
   color: var(--fg);
+}
+/* Disabled top-bar icon (e.g. Join channel while the network is disconnected):
+   dimmed and non-interactive, and it must not brighten on hover. */
+.icon:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.icon:disabled:hover {
+  color: var(--accent);
 }
 /* Transfers button turns warn-colored while an offer awaits a decision
    (color-as-signal, no count badge — matches DesktopChat). */
