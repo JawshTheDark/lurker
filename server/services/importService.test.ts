@@ -720,9 +720,13 @@ type AnyTableDef = {
 // widening it would mask a real regression elsewhere. (Comparing created_at
 // here is also what made this test flaky: alice's seed time and bob's import
 // time differ whenever the clock ticks a second mid-run.)
+// `satisfies` keeps the keys checked against the real table registry — a
+// mistyped table name is a compile error rather than a silently-ineffective
+// exclusion (which would let the flake back in) — while the `Record<string, …>`
+// annotation keeps it indexable by the arbitrary `table` string below.
 const VOLATILE_COLUMNS: Record<string, string[]> = {
   ignored_masks: ['created_at'],
-};
+} satisfies Partial<Record<keyof typeof EXPORT_TABLES, string[]>>;
 
 // Columns that legitimately differ between the source and target accounts.
 // Per-table FK-rekey columns are taken from the registry; PKs of
