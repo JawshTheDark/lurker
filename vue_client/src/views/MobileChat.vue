@@ -23,7 +23,7 @@
           <i class="fa-regular fa-bookmark"></i>
         </button>
         <button class="icon" title="Recent uploads" @click="showUploads = true">
-          <i class="fa-solid fa-paperclip"></i>
+          <i class="fa-solid fa-arrow-up-from-bracket"></i>
         </button>
         <!-- Self-revealing DCC transfers button — see DesktopChat for rationale.
              Warn-colored while an offer awaits a decision. -->
@@ -34,7 +34,7 @@
           :title="dccTitle"
           @click="dcc.open()"
         >
-          <i class="fa-solid fa-circle-down"></i>
+          <i class="fa-solid fa-download"></i>
         </button>
         <button class="icon" title="Add network" @click="openAddNetwork">
           <i class="fa-solid fa-plus"></i>
@@ -81,17 +81,41 @@
             <i class="fa-solid fa-users"></i> {{ friendCount }}
           </span>
         </template>
-        <button v-if="!isVirtual" class="icon" title="Search this buffer" @click="openSearch(true)">
+        <button
+          v-if="!isVirtual && !isServerBuffer"
+          class="icon"
+          title="Search this buffer"
+          @click="openSearch(true)"
+        >
           <i class="fa-solid fa-magnifying-glass"></i>
         </button>
         <button
-          v-if="!isVirtual"
+          v-if="!isVirtual && !isServerBuffer"
           class="icon"
           title="Highlights in this buffer"
           @click="openHighlights(true)"
         >
           <i class="fa-regular fa-bell"></i>
         </button>
+        <template v-if="isServerBuffer">
+          <button
+            class="icon"
+            title="Join channel"
+            aria-label="Join channel"
+            :disabled="serverConnectionState !== 'connected'"
+            @click="active && joinChannelModal.open(active.networkId)"
+          >
+            <i class="fa-solid fa-plus"></i>
+          </button>
+          <button
+            class="icon"
+            title="Channel list"
+            aria-label="Channel list"
+            @click="active && channelListModal.open(active.networkId)"
+          >
+            <i class="fa-solid fa-hashtag"></i>
+          </button>
+        </template>
         <button
           v-if="isChannel"
           class="icon"
@@ -158,6 +182,11 @@
       :network-id="channelListModal.networkId!"
       @close="channelListModal.close()"
     />
+    <JoinChannelModal
+      v-if="joinChannelModal.isOpen && joinChannelModal.networkId !== null"
+      :network-id="joinChannelModal.networkId!"
+      @close="joinChannelModal.close()"
+    />
     <RecentUploadsModal v-if="showUploads" @close="showUploads = false" />
     <TransfersModal v-if="dcc.panelOpen" @close="dcc.close()" />
     <SearchModal
@@ -210,6 +239,7 @@ import HighlightsModal from '../components/HighlightsModal.vue';
 import BookmarksModal from '../components/BookmarksModal.vue';
 import TopicModal from '../components/TopicModal.vue';
 import ChannelListModal from '../components/ChannelListModal.vue';
+import JoinChannelModal from '../components/JoinChannelModal.vue';
 import RecentUploadsModal from '../components/RecentUploadsModal.vue';
 import TransfersModal from '../components/TransfersModal.vue';
 import SearchModal from '../components/SearchModal.vue';
@@ -223,6 +253,7 @@ import { useDccStore } from '../stores/dcc.js';
 import { useSearchStore } from '../stores/search.js';
 import { useWhoisStore } from '../stores/whois.js';
 import { useChannelListModal } from '../composables/useChannelListModal.js';
+import { useJoinChannelModal } from '../composables/useJoinChannelModal.js';
 import { useImageModal } from '../composables/useImageModal.js';
 import { useNetworkEditor } from '../composables/useNetworkEditor.js';
 import { useJumpToMessage } from '../composables/useJumpToMessage.js';
@@ -275,6 +306,7 @@ function openSystemConsole() {
 // flow is short and stateful, and a URL would expose us to bookmarks that
 // land on the buffer screen with no active buffer.
 const channelListModal = reactive(useChannelListModal());
+const joinChannelModal = reactive(useJoinChannelModal());
 const imageModal = reactive(useImageModal());
 const networkEditor = reactive(useNetworkEditor());
 const screen = ref('list');
@@ -345,12 +377,9 @@ function openBufferActions() {
     });
   }
   if (isServerBuffer.value) {
+    // Join channel / Channel list now live as top-bar buttons for server buffers,
+    // so the kebab keeps just the less-frequent connect/edit actions.
     items.push(
-      {
-        label: 'Channel list',
-        icon: 'fa-solid fa-hashtag',
-        onClick: () => channelListModal.open(a.networkId),
-      },
       {
         label: serverConnectActionLabel.value,
         icon: serverConnectActionIcon.value,
@@ -541,6 +570,15 @@ useChatBootstrap({ onJump: onJumpToMessage });
 }
 .icon:hover {
   color: var(--fg);
+}
+/* Disabled top-bar icon (e.g. Join channel while the network is disconnected):
+   dimmed and non-interactive, and it must not brighten on hover. */
+.icon:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.icon:disabled:hover {
+  color: var(--accent);
 }
 /* Transfers button turns warn-colored while an offer awaits a decision
    (color-as-signal, no count badge — matches DesktopChat). */
