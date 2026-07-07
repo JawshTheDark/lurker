@@ -37,7 +37,7 @@ import {
   maxIdByBuffer,
   maxIdForBuffer,
   maxMessageId,
-  COUNTABLE_TYPES,
+  typeCountsForUnread,
 } from '../db/messages.js';
 import {
   listReadStateForUser,
@@ -1324,8 +1324,15 @@ export function attachWsHub(httpServer: HttpServer, sessionSecret: string) {
     // Countable persisted events change the buffer's unread/highlight counts
     // for this user. Broadcast the recomputed read-state so every tab —
     // including inactive ones — reflects the new badge without the client
-    // having to mirror the server's counting logic.
-    if (decorated.id != null && decorated.target && COUNTABLE_TYPES.has(decorated.type)) {
+    // having to mirror the server's counting logic. The `:server:` buffer also
+    // counts 'error' lines (a disconnect/quit echo, a kill/ban); without matching
+    // that here the badge wouldn't refresh until the NEXT countable event landed
+    // (e.g. a reconnect's "Connecting…" notice) — the delayed-badge bug (#470).
+    if (
+      decorated.id != null &&
+      decorated.target &&
+      typeCountsForUnread(decorated.target, decorated.type)
+    ) {
       const lastReadId = getReadState(eventUserId, decorated.networkId, decorated.target);
       broadcastReadState(eventUserId, decorated.networkId, decorated.target, lastReadId);
     }

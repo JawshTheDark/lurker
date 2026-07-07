@@ -17,6 +17,7 @@ let listMessagesAround: typeof import('./messages.js').listMessagesAround;
 let searchMessages: typeof import('./messages.js').searchMessages;
 let countNewer: typeof import('./messages.js').countNewer;
 let countServerBufferUnread: typeof import('./messages.js').countServerBufferUnread;
+let typeCountsForUnread: typeof import('./messages.js').typeCountsForUnread;
 let countHighlightsNewer: typeof import('./messages.js').countHighlightsNewer;
 let listUserHighlights: typeof import('./messages.js').listUserHighlights;
 let maxIdForBuffer: typeof import('./messages.js').maxIdForBuffer;
@@ -38,6 +39,7 @@ beforeAll(async () => {
     searchMessages,
     countNewer,
     countServerBufferUnread,
+    typeCountsForUnread,
     countHighlightsNewer,
     listUserHighlights,
     maxIdForBuffer,
@@ -143,6 +145,21 @@ describe('countServerBufferUnread (#470)', () => {
     put(n, target, 'notice', { nick: 'lurker', notable: false });
     put(n, target, 'notice', { nick: 'lurker', notable: false });
     expect(countServerBufferUnread(n, target, 0)).toBe(0);
+  });
+
+  it('typeCountsForUnread: :server: counts errors, other buffers do not — matches the count queries', () => {
+    // This is the rule the live read-state-broadcast trigger uses (wsHub). A
+    // :server: 'error' (a disconnect/quit echo, a kill/ban) must count here, or
+    // its badge wouldn't refresh until the next ordinary countable event — the
+    // delayed-badge bug. Everything countNewer counts still counts everywhere.
+    expect(typeCountsForUnread(':server:1', 'error')).toBe(true);
+    expect(typeCountsForUnread(':server:1', 'notice')).toBe(true);
+    expect(typeCountsForUnread(':server:1', 'message')).toBe(true);
+    expect(typeCountsForUnread(':server:1', 'motd')).toBe(false); // motd never counts
+    // Channels/DMs keep the narrower set: an error there doesn't badge.
+    expect(typeCountsForUnread('#chan', 'error')).toBe(false);
+    expect(typeCountsForUnread('#chan', 'message')).toBe(true);
+    expect(typeCountsForUnread('bob', 'notice')).toBe(true);
   });
 
   it('backfill demotes historical Lurker :server: status notices, sparing inbound and channel rows', () => {

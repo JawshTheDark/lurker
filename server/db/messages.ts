@@ -476,9 +476,23 @@ const COUNTABLE_TYPES_SQL = `('${[...COUNTABLE_TYPES].join("','")}')`;
 export const UNREAD_COUNT_CAP = 1000;
 
 // The server pseudo-buffer also counts `error` lines (killed/banned/connection
-// failures SHOULD badge it), which countNewer's type set omits. Derived from
-// COUNTABLE_TYPES so the two SQL paths can't drift (see the note on that const).
-const SERVER_COUNTABLE_TYPES_SQL = `('${[...COUNTABLE_TYPES, 'error'].join("','")}')`;
+// failures, and the QUIT-echo disconnect line — all SHOULD badge it), which
+// countNewer's type set omits. Derived from COUNTABLE_TYPES so the paths can't
+// drift.
+const SERVER_COUNTABLE_TYPES = new Set([...COUNTABLE_TYPES, 'error']);
+const SERVER_COUNTABLE_TYPES_SQL = `('${[...SERVER_COUNTABLE_TYPES].join("','")}')`;
+
+// Does an event of `type` count toward `target`'s unread badge? This is the same
+// rule countNewer / countServerBufferUnread apply, exposed so the live read-state
+// broadcast trigger (wsHub) can tell whether an event changed the count without
+// re-implementing it. Crucially a `:server:` 'error' counts here — otherwise its
+// badge wouldn't refresh until the next ordinary countable event landed (a
+// reconnect's "Connecting…" notice), which is the delayed-badge bug (#470).
+export function typeCountsForUnread(target: string, type: string): boolean {
+  return target.startsWith(':server:')
+    ? SERVER_COUNTABLE_TYPES.has(type)
+    : COUNTABLE_TYPES.has(type);
+}
 
 // Shared unread-count core for countNewer and countServerBufferUnread. Both need
 // the same cap guard and the same ORDER BY id DESC LIMIT index walk; they differ
