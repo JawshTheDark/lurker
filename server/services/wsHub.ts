@@ -364,12 +364,13 @@ export interface UserBufferTarget {
 // this walk and re-derive the system / :server: / closed-vs-joined carve-outs
 // slightly differently, which let the PWA app-icon badge total drift from the
 // in-app count (#454). Now they all iterate this generator, so the set can't
-// diverge. It yields, in order:
-//   1. the app-scoped system buffer (networkId null, uncloseable);
-//   2. for every network the user owns (live OR offline): its :server: pseudo-
-//      buffer (uncloseable), every target with persisted history
-//      (listBufferTargets), and — for a live connection — its currently-joined
-//      channels even before they have history (matching what the snapshot ships).
+// diverge. The app-scoped system buffer (networkId null, uncloseable) is yielded
+// first; then, for every network the user owns (live OR offline), the buffers
+// under it — in no particular order — its :server: pseudo-buffer (uncloseable),
+// every target with persisted history (listBufferTargets), and, for a live
+// connection, its currently-joined channels even before they have history
+// (matching what the snapshot ships). Consumers key frames by network+target and
+// sum per buffer, so intra-network yield order doesn't matter.
 // Closed buffers are dropped with the SAME join-precedence the snapshot uses
 // (isHiddenClosedBuffer): a closed flag hides a buffer only when it isn't
 // currently joined, so an autorejoin/reconnect race where a channel is both

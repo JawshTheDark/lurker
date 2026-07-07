@@ -644,15 +644,12 @@ describe('eachUserBufferTarget / badge-vs-snapshot parity (#454)', () => {
     return { network: { id: netId }, channels } as unknown as LiveConn;
   }
   function setLiveConn(uid: number, conn: LiveConn) {
-    let m = ircManager.byUser.get(uid);
-    if (!m) {
-      m = new Map();
-      ircManager.byUser.set(uid, m);
-    }
-    m.set(conn.network.id, conn);
+    // connectionsForUser creates the inner map if absent — same seam the bouncer
+    // test harness uses to inject upstream connections.
+    ircManager.connectionsForUser(uid).set(conn.network.id, conn);
   }
   function clearLiveConns(uid: number) {
-    ircManager.byUser.delete(uid);
+    ircManager.connectionsForUser(uid).clear();
   }
 
   const netFor = (uid: number, name: string) =>
