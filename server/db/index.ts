@@ -869,8 +869,9 @@ ensureColumn('messages', 'mirrored', 'INTEGER NOT NULL DEFAULT 0');
 // published with nick:'lurker') — are stamped notable=0 so they still render in
 // the server buffer but never mark it unread. Genuine inbound notices/messages,
 // server errors (killed/banned/etc.), and closed-buffer NOTICE mirrors stay
-// notable=1 (the default). Only the :server: unread count consults this column
-// (countServerBufferUnread); channel/DM counts never filter on it, so they're
+// notable=1 (the default). The column is consulted by countServerBufferUnread
+// (the :server: unread count) and countHighlightsNewer (highlight counts); the
+// generic channel/DM unread count never filters on it, so channels/DMs are
 // unaffected. Old rows default to 1 — no behavior change for existing history.
 const hadNotableColumn = columnExists('messages', 'notable');
 ensureColumn('messages', 'notable', 'INTEGER NOT NULL DEFAULT 1');

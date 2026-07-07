@@ -1,4 +1,4 @@
-//Copyright (c) 2026 Brad Root
+// Copyright (c) 2026 Brad Root
 // SPDX-License-Identifier: MPL-2.0
 
 import IRC, { ircLineParser } from 'irc-framework';

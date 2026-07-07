@@ -72,7 +72,8 @@ export interface MessageInput {
   mirrored?: boolean;
   // Server-buffer notability (#470). Defaults to notable (true); pass false for
   // Lurker's own connection-status notices so they render in the server buffer
-  // but don't mark it unread. Only countServerBufferUnread reads this.
+  // but don't mark it unread. Read by countServerBufferUnread (the :server: unread
+  // count) and countHighlightsNewer (which excludes notable=0 lines from highlights).
   notable?: boolean;
 }
 
