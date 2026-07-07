@@ -449,12 +449,14 @@ export function countOlder(networkId: number, target: string, beforeId: number):
   ).n;
 }
 
-// Types that count as "real content" for the unread badge. Membership churn
-// (join/part/quit/kick/nick/mode/topic), MOTD, away markers, and server
-// errors are all persisted for the buffer log but shouldn't bump the badge —
-// the live unread path in useSocket.applyEvent uses the same allowlist, and
-// we need the SQL paths to match so backlog/read-state recomputes don't snap
-// the count to an inflated number.
+// Types that count as "real content" for the unread badge in a channel or DM.
+// Membership churn (join/part/quit/kick/nick/mode/topic), MOTD, and away markers
+// are persisted for the buffer log but don't bump the badge. `error` is excluded
+// HERE but the `:server:` buffer does count it (see SERVER_COUNTABLE_TYPES /
+// typeCountsForUnread below) — a killed/banned/disconnect line should badge the
+// server tab. The client no longer mirrors any allowlist: unread is driven purely
+// by the server's read-state broadcast (whose trigger uses typeCountsForUnread),
+// so this set only has to stay in sync with the count queries in this file.
 export const COUNTABLE_TYPES = new Set(['message', 'action', 'notice']);
 const COUNTABLE_TYPES_SQL = `('${[...COUNTABLE_TYPES].join("','")}')`;
 
