@@ -108,10 +108,19 @@ describe('scrubMetadata — WebP', () => {
     expect(scrubMetadata(input, 'webp')).toBe(input);
   });
 
-  it('bails (returns input) on a truncated chunk', () => {
-    const input = buildWebp([webpChunk('VP8L', Buffer.from('frame', 'latin1'))]);
-    input.writeUInt32LE(9999, 20); // corrupt the VP8L declared size
-    expect(scrubMetadata(input, 'webp')).toBe(input);
+  it('bails (returns input untouched) on a truncated chunk without partial scrubbing', () => {
+    // EXIF first (flagged for removal), then a chunk whose declared size overruns
+    // the buffer. Order matters: the scrubber has already marked the EXIF chunk
+    // gone, so hitting the truncated chunk must make it return the ORIGINAL bytes
+    // (EXIF intact) rather than emit a partially-scrubbed buffer. A broken bail
+    // would drop the EXIF and return a different buffer, failing both assertions.
+    const exif = webpChunk('EXIF', Buffer.from('gps-here', 'latin1'));
+    const input = buildWebp([exif, webpChunk('VP8L', Buffer.from('frame', 'latin1'))]);
+    // VP8L size field = RIFF header (12) + EXIF chunk length + FourCC (4).
+    input.writeUInt32LE(9999, 12 + exif.length + 4);
+    const out = scrubMetadata(input, 'webp');
+    expect(out).toBe(input);
+    expect(out.toString('latin1')).toContain('gps-here');
   });
 });
 
