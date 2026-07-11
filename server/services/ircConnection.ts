@@ -76,18 +76,27 @@ import { openDccListener } from './dccListener.js';
 import type { DccListenHandle } from './dccListener.js';
 import net from 'net';
 import { FserveSession } from './fserve.js';
+import { FserveQueue, type FserveSendItem } from './fserveQueue.js';
+import { searchArchive } from './fserveCommands.js';
 import {
   fserveEnabledForUser,
   fserveRoot,
   fserveTrigger,
   fserveWelcome,
   fserveMaxSessions,
+  fserveMaxSends,
+  fserveMaxQueue,
+  fserveIdleTimeoutMs,
+  fserveServerName,
   fserveAccessMode,
   fservePassword,
   fserveAllowlist,
   fserveAdChannel,
   fserveAdMessage,
   fserveAdIntervalMs,
+  fserveFindEnabled,
+  fserveFindTrigger,
+  fserveFindMaxResults,
   decideFserveAccess,
 } from './fserveConfig.js';
 import {
@@ -368,6 +377,18 @@ export class IrcConnection {
   private readonly fserveSessions = new Set<FserveSession>();
   // Periodic fserve channel-ad timer (null when ads are off).
   private fserveAdTimer: ReturnType<typeof setInterval> | null = null;
+  // The shared send queue for this user's fserve ("Sends:[x/N] Queues:[y/M]").
+  // Built lazily so it reads live limits from settings. See getFserveQueue().
+  private fserveQueue: FserveQueue | null = null;
+  // transferId → queue item id, so a settled DCC send frees the right slot.
+  private readonly fserveSendItemByTransfer = new Map<number, number>();
+  // queue item id → the session that requested it, for async "now sending"
+  // notifications when a queued item is promoted.
+  private readonly fserveSessionByItem = new Map<number, FserveSession>();
+  // Cumulative fserve counters for the `stats` command (reset on reconnect).
+  private fserveStats = { filesSent: 0, bytesSent: 0, since: Date.now() };
+  // Per-nick last @find time (ms) for a light anti-spam cooldown.
+  private readonly fserveFindCooldown = new Map<string, number>();
   // Resumes awaiting the sender's DCC ACCEPT, keyed by nick|filename. Each holds
   // a timeout so a bot that never accepts fails the transfer cleanly.
   private readonly dccPendingResume = new Map<
@@ -1320,6 +1341,17 @@ export class IrcConnection {
           this.maybeTriggerFserve(eventNick, event, eventMessage);
         } catch {
           /* never let a trigger check break message handling */
+        }
+      }
+
+      // fserve @find search: a PRIVMSG (channel or DM) beginning with the search
+      // trigger gets a private reply listing matching files. Opt-in + bounded +
+      // rate-limited inside maybeFserveFind. Wrapped so it can't break plumbing.
+      if (eventNick && !isServer && !isNotice && eventMessage) {
+        try {
+          this.maybeFserveFind(eventNick, eventMessage);
+        } catch {
+          /* never let a search break message handling */
         }
       }
 
@@ -3489,6 +3521,7 @@ export class IrcConnection {
     if (!row || !DCC_ACTIVE_STATES.has(row.state)) return; // don't clobber a terminal row
     updateDccTransferState(transferId, 'cancelled');
     this.publishDcc(transferId);
+    this.fserveSettleSend(transferId); // free the fserve slot if this was one
   }
 
   // Drop any armed DCC RESUME wait for this transfer (clear its timeout + pending
@@ -3512,6 +3545,8 @@ export class IrcConnection {
       markDccFailed(transferId, received, msg);
       this.publishDcc(transferId);
     }
+    // If this was an fserve-queued send, free its slot + promote the next waiter.
+    this.fserveSettleSend(transferId);
   }
 
   // A positive 31-bit passive-DCC token not currently outstanding.
@@ -3667,14 +3702,18 @@ export class IrcConnection {
         markDccCompleted(transferId, sent, null, null);
         this.surfaceCtcp(nick, `DCC: sent "${filename}" (${formatBytes(sent)}) to ${nick}`);
         this.publishDcc(transferId);
+        // Count it, then free the fserve slot + promote the next waiter.
+        this.fserveNoteSent(transferId, sent);
+        this.fserveSettleSend(transferId);
       },
       onError: (err, sent) => {
         this.dccSenders.delete(transferId);
         if (err.message === 'cancelled') {
           updateDccTransferState(transferId, 'cancelled');
           this.surfaceCtcp(nick, `DCC: cancelled send of "${filename}"`);
+          this.fserveSettleSend(transferId);
         } else {
-          this.failDccIfActive(transferId, sent, err.message);
+          this.failDccIfActive(transferId, sent, err.message); // settles the slot
           this.surfaceCtcp(nick, `DCC: send of "${filename}" failed — ${err.message}`);
         }
         this.publishDcc(transferId);
@@ -3984,18 +4023,27 @@ export class IrcConnection {
       nick,
       welcome: welcome || undefined,
       password,
+      banner: () => this.fserveBanner(),
+      idleTimeoutMs: fserveIdleTimeoutMs(this.network.user_id),
       onGet: (absPath) => {
         // The interpreter already sandboxed + stat'd it; re-stat for the size and
-        // to catch a file that vanished, then DCC-SEND it to the requester.
+        // to catch a file that vanished, then hand it to the send queue.
         try {
           const size = fs.statSync(absPath).size;
-          this.offerDccSend(nick, absPath, path.basename(absPath), size);
+          this.fserveEnqueue(session, absPath, size);
         } catch {
-          /* file gone — the session already told the peer it was sending */
+          session.emitLine('That file just vanished — try dir again.');
         }
       },
+      onControl: (name, arg, who) => this.fserveControl(name, arg, who),
       onClose: () => {
         this.fserveSessions.delete(session);
+        // Drop this peer's waiting items + any item→session mappings for it, so a
+        // freed slot never tries to notify a gone session.
+        this.getFserveQueue().dropWaitingFor(session.nick);
+        for (const [itemId, s] of this.fserveSessionByItem) {
+          if (s === session) this.fserveSessionByItem.delete(itemId);
+        }
       },
     });
     this.fserveSessions.add(session);
@@ -4006,6 +4054,208 @@ export class IrcConnection {
       fields: { networkId: this.network.id },
       text: `fserve session opened for ${nick}`,
     });
+  }
+
+  // --- Fserve send queue -----------------------------------------------------
+
+  // Lazily build the shared send queue, reading its limits live from settings so
+  // a change to max_sends/max_queue takes effect on the next request.
+  private getFserveQueue(): FserveQueue {
+    if (!this.fserveQueue) {
+      const uid = this.network.user_id;
+      this.fserveQueue = new FserveQueue(() => ({
+        maxSends: fserveMaxSends(uid),
+        maxQueue: fserveMaxQueue(uid),
+      }));
+    }
+    return this.fserveQueue;
+  }
+
+  // A peer `get`: ask the queue for a slot and report the outcome to the session.
+  private fserveEnqueue(session: FserveSession, absPath: string, size: number): void {
+    const filename = path.basename(absPath);
+    const outcome = this.getFserveQueue().request(session.nick, absPath, filename, size);
+    if (outcome.status === 'full') {
+      session.emitLine(`Queue is full (${outcome.maxQueue} slots). Try again shortly.`);
+      return;
+    }
+    // Remember which session asked, so a later promotion can notify it.
+    this.fserveSessionByItem.set(outcome.item.id, session);
+    if (outcome.status === 'queued') {
+      session.emitLine(
+        `Queued "${filename}" (${formatBytes(size)}) — slot ${outcome.position}. ` +
+          `It sends when a slot opens.`,
+      );
+      return;
+    }
+    session.emitLine(`Sending "${filename}" (${formatBytes(size)}) now…`);
+    this.fserveDispatchSend(outcome.item);
+  }
+
+  // Kick off the DCC SEND for a queue item and remember the mapping so its
+  // completion frees the slot.
+  private fserveDispatchSend(item: FserveSendItem): void {
+    const transferId = this.offerDccSend(item.nick, item.absPath, item.filename, item.size);
+    this.fserveSendItemByTransfer.set(transferId, item.id);
+  }
+
+  // A DCC send owned by the fserve reached a terminal state — free its slot and,
+  // if the queue promotes a waiter, dispatch + notify it. Idempotent; a no-op for
+  // non-fserve transfers.
+  private fserveSettleSend(transferId: number): void {
+    const itemId = this.fserveSendItemByTransfer.get(transferId);
+    if (itemId === undefined) return;
+    this.fserveSendItemByTransfer.delete(transferId);
+    this.fserveSessionByItem.delete(itemId);
+    const promoted = this.getFserveQueue().settle(itemId);
+    if (!promoted) return;
+    this.fserveDispatchSend(promoted);
+    const sess = this.fserveSessionByItem.get(promoted.id);
+    if (sess) sess.notify(`Your queued file "${promoted.filename}" is now sending…`);
+  }
+
+  // Count a completed fserve send toward the cumulative stats (before settle
+  // clears the mapping).
+  private fserveNoteSent(transferId: number, bytes: number): void {
+    if (!this.fserveSendItemByTransfer.has(transferId)) return;
+    this.fserveStats.filesSent += 1;
+    this.fserveStats.bytesSent += bytes;
+  }
+
+  // The server's display name — configured name, else this connection's nick.
+  private fserveName(): string {
+    return fserveServerName(this.network.user_id) || this.currentNick || this.network.nick;
+  }
+
+  // The status banner shown when a session authenticates.
+  private fserveBanner(): string[] {
+    const uid = this.network.user_id;
+    const q = this.getFserveQueue();
+    const idle = fserveIdleTimeoutMs(uid);
+    return [
+      `── ${this.fserveName()}'s file server ──`,
+      `Sends: [${q.activeCount()}/${fserveMaxSends(uid)}]   ` +
+        `Queues: [${q.queuedCount()}/${fserveMaxQueue(uid)}]   CPS: unlimited`,
+      `Sessions: [${this.fserveSessions.size}/${fserveMaxSessions(uid)}]   ` +
+        `Idle timeout: ${idle > 0 ? `${Math.round(idle / 1000)}s` : 'off'}`,
+    ];
+  }
+
+  // Run a stateful fserve command (queues/sends/stats/who/clr_queue/clr_queues)
+  // against live state, returning the lines to show the requester.
+  private fserveControl(name: string, _arg: string, nick: string): string[] {
+    const uid = this.network.user_id;
+    const q = this.getFserveQueue();
+    switch (name) {
+      case 'sends': {
+        const active = q.activeSends();
+        if (active.length === 0) return ['No transfers in progress.'];
+        const lines = [`Sending [${active.length}/${fserveMaxSends(uid)}]:`];
+        for (const it of active) {
+          lines.push(`  ${it.filename} — ${it.nick} (${formatBytes(it.size)})`);
+        }
+        return lines;
+      }
+      case 'queues': {
+        const waiting = q.queued();
+        if (waiting.length === 0) return ['The queue is empty.'];
+        const lines = [`Queue [${waiting.length}/${fserveMaxQueue(uid)}]:`];
+        waiting.forEach((it, i) => {
+          lines.push(`  ${i + 1}. ${it.filename} — ${it.nick} (${formatBytes(it.size)})`);
+        });
+        return lines;
+      }
+      case 'who': {
+        const nicks = [...this.fserveSessions].map((s) => s.nick);
+        return [
+          `Browsing now [${nicks.length}/${fserveMaxSessions(uid)}]:`,
+          ...nicks.map((n) => `  ${n}`),
+        ];
+      }
+      case 'stats': {
+        const upSecs = Math.max(1, Math.round((Date.now() - this.fserveStats.since) / 1000));
+        return [
+          `${this.fserveName()}'s fserve stats:`,
+          `  Sent: ${this.fserveStats.filesSent} file(s), ${formatBytes(this.fserveStats.bytesSent)}`,
+          `  Now:  Sends [${q.activeCount()}/${fserveMaxSends(uid)}]  ` +
+            `Queues [${q.queuedCount()}/${fserveMaxQueue(uid)}]`,
+          `  Up:   ${this.formatDurationSecs(upSecs)}`,
+        ];
+      }
+      case 'clr_queue': {
+        const n = q.clearFor(nick);
+        return [n > 0 ? `Removed ${n} of your queued file(s).` : 'You have nothing queued.'];
+      }
+      case 'clr_queues': {
+        const n = q.clearAll();
+        return [`Cleared ${n} queued file(s).`];
+      }
+      default:
+        return [`Unknown command "${name}".`];
+    }
+  }
+
+  private formatDurationSecs(secs: number): string {
+    const d = Math.floor(secs / 86400);
+    const h = Math.floor((secs % 86400) / 3600);
+    const m = Math.floor((secs % 3600) / 60);
+    const s = secs % 60;
+    const parts: string[] = [];
+    if (d) parts.push(`${d}d`);
+    if (h) parts.push(`${h}h`);
+    if (m) parts.push(`${m}m`);
+    parts.push(`${s}s`);
+    return parts.join(' ');
+  }
+
+  // @find <query> in a channel/DM: search the archive and reply to the requester
+  // over NOTICE. Opt-in (fserve.find_enabled), rate-limited per nick, and bounded
+  // in scan/results so a big archive can't be walked to death. A no-op when the
+  // text doesn't start with the trigger word.
+  private maybeFserveFind(nick: string, text: string): void {
+    const uid = this.network.user_id;
+    if (this.disposed || !fserveFindEnabled(uid)) return;
+    const trigger = fserveFindTrigger(uid);
+    const trimmed = text.trim();
+    const lower = trimmed.toLowerCase();
+    const tl = trigger.toLowerCase();
+    if (lower !== tl && !lower.startsWith(tl + ' ')) return;
+    const query = trimmed.slice(trigger.length).trim();
+    if (!query) return;
+
+    // Per-nick cooldown (30s) so @find can't be spammed.
+    const now = Date.now();
+    const last = this.fserveFindCooldown.get(nick.toLowerCase()) ?? 0;
+    if (now - last < 30_000) return;
+    this.fserveFindCooldown.set(nick.toLowerCase(), now);
+
+    const root = fserveRoot();
+    if (!root) return;
+    const maxResults = fserveFindMaxResults(uid);
+    let found;
+    try {
+      found = searchArchive(root, query, { maxResults, maxScan: 200_000, budgetMs: 400 });
+    } catch {
+      return;
+    }
+    const reply = (line: string): void => {
+      try {
+        this.client.notice(nick, line);
+      } catch {
+        /* ignore */
+      }
+    };
+    const trig = fserveTrigger(uid);
+    const how = trig ? `/msg ${this.fserveName()} ${trig}` : `/ctcp ${this.fserveName()} FSERVE`;
+    if (found.results.length === 0) {
+      reply(`@find "${query}": no matches in ${this.fserveName()}'s archive.`);
+      return;
+    }
+    reply(
+      `@find "${query}": ${found.results.length}${found.truncated ? '+' : ''} match(es). ` +
+        `Browse: ${how}`,
+    );
+    for (const r of found.results) reply(`  ${r.path}  (${formatBytes(r.size)})`);
   }
 
   // Start (or restart) the periodic channel-ad timer from the user's settings.
