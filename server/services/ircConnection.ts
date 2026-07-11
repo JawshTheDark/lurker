@@ -3128,7 +3128,12 @@ export class IrcConnection {
       `DCC: accepting passive "${offer.filename}" (${formatBytes(offer.size)}) from ${nick}…`,
     );
 
-    openDccListener({ expectPeerHost: offer.host })
+    // Don't pin the listener to the offer's advertised address: a passive sender
+    // frequently can't determine its own public IP and advertises a placeholder
+    // (mIRC sends 255.255.255.255), or is NAT'd so it connects from an address
+    // that differs from what it advertised. The one-shot listener + timeout is
+    // the boundary; matching the source address just false-rejects real peers.
+    openDccListener({})
       .then((handle) => {
         this.dccListeners.set(transferId, handle);
         // Reverse offer back to the sender: our address/port + their token. Same
@@ -3723,7 +3728,9 @@ export class IrcConnection {
       const externalHost = dccExternalHost();
       const addr = externalHost ? encodeDccAddress(externalHost) : null;
       if (addr === null) return;
-      openDccListener({ expectPeerHost: offer.host })
+      // No address pin — a passive peer's advertised address is often a
+      // placeholder or differs from its NAT'd source (see acceptPassiveDccOffer).
+      openDccListener({})
         .then((handle) => {
           this.dccChatListeners.add(handle);
           this.client.ctcpRequest(
