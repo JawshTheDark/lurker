@@ -15,6 +15,7 @@ import type { IrcConnection } from './ircConnection.js';
 import { e2eManager } from './e2e/manager.js';
 import { MAX_IMPORT_BYTES } from './e2e/portable.js';
 import settingsService from './settingsService.js';
+import activeBufferService from './activeBufferService.js';
 import highlightRulesService from './highlightRulesService.js';
 import draftsService from './draftsService.js';
 import * as systemLog from './systemLog.js';
@@ -88,6 +89,9 @@ import { callVerb } from './verbRegistry.js';
 interface LurkerWebSocket extends WebSocket {
   userId?: number;
   sinceId?: number;
+  // Per-connection id (for the active-buffer registry, which self-cleans on
+  // close). Assigned once at upgrade.
+  connId?: number;
   presence?: { visible: boolean };
   // Liveness flag for the heartbeat reaper (see sweepWsHeartbeat). Set true on
   // connect and on every pong; set false right before each ping. A socket still
@@ -1011,6 +1015,8 @@ export function handleOpenBuffer(
 // owned by attachWsHub at runtime (it's the only writer to socketsByUser via
 // addSocket/removeSocket); the registry just reads through it.
 const socketsByUser = new Map<number, Set<LurkerWebSocket>>();
+// Monotonic per-connection id source for the active-buffer registry.
+let connSeq = 0;
 
 function send(ws: LurkerWebSocket, payload: WsPayload): void {
   if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(payload));
@@ -1260,6 +1266,7 @@ export function attachWsHub(httpServer: HttpServer, sessionSecret: string) {
   }
 
   function removeSocket(userId: number, ws: LurkerWebSocket): void {
+    if (ws.connId != null) activeBufferService.drop(ws.connId);
     const set = socketsByUser.get(userId);
     if (!set) return;
     set.delete(ws);
@@ -1665,6 +1672,7 @@ export function attachWsHub(httpServer: HttpServer, sessionSecret: string) {
       lurkerWs.userId = user.id;
       lurkerWs.sinceId = initialSinceId;
       lurkerWs.protocolVersion = clientVersion ?? PROTOCOL_VERSION;
+      lurkerWs.connId = ++connSeq;
       lurkerWs.presence = { visible: false };
       lurkerWs.isAlive = true;
       lurkerWs.accountPaused = user.is_paused === 1;
@@ -2008,7 +2016,26 @@ export function attachWsHub(httpServer: HttpServer, sessionSecret: string) {
         const next = !!msg.visible;
         const prev = ws.presence?.visible === true;
         ws.presence = { visible: next };
+        if (ws.connId != null) activeBufferService.setVisible(ws.connId, next);
         if (next !== prev) evaluatePresence(userId);
+        break;
+      }
+      // Which buffer this tab currently has focused, for "show in active" routing
+      // (notice.msgbuffer='active'). Purely advisory server state — no IRC effect,
+      // allowed for paused accounts. networkId is validated at the boundary above;
+      // a virtual buffer (:system:/:friends:) sends no networkId → stored as null.
+      case 'active-buffer': {
+        if (ws.connId == null) break;
+        const nid = msg.networkId == null ? null : Number(msg.networkId);
+        const target = typeof msg.target === 'string' ? msg.target : '';
+        if (!target) break;
+        activeBufferService.setActive(
+          ws.connId,
+          userId,
+          nid,
+          target,
+          ws.presence?.visible === true,
+        );
         break;
       }
       case 'send':
