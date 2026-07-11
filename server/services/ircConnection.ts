@@ -1388,12 +1388,19 @@ export class IrcConnection {
           this.currentNick &&
           eventTarget.toLowerCase() === this.currentNick.toLowerCase()
         ) {
-          // Fold to an existing buffer's casing so a reply sourced as "ChanServ"
-          // doesn't fork history from a "chanserv" buffer the user started (#289).
-          const nickLower = (eventNick as string).toLowerCase();
-          target =
-            listBufferTargets(this.network.id).find((t) => t.toLowerCase() === nickLower) ??
-            (eventNick as string);
+          // notice.msgbuffer: "server" collects user notices (services/bots/memos)
+          // in the network's server buffer instead of spawning a DM with the
+          // sender — the mIRC "notice in status window" behavior.
+          if (effectiveSetting(this.network.user_id, 'notice.msgbuffer') === 'server') {
+            target = `:server:${this.network.id}`;
+          } else {
+            // Fold to an existing buffer's casing so a reply sourced as "ChanServ"
+            // doesn't fork history from a "chanserv" buffer the user started (#289).
+            const nickLower = (eventNick as string).toLowerCase();
+            target =
+              listBufferTargets(this.network.id).find((t) => t.toLowerCase() === nickLower) ??
+              (eventNick as string);
+          }
         } else {
           target = `:server:${this.network.id}`;
         }
@@ -1686,6 +1693,20 @@ export class IrcConnection {
           /* ignore */
         }
         this.publish({ type: 'channel-parted', target: channel });
+        // channel.rejoin_on_kick: hop back in after a short beat (immediate
+        // rejoin can race the server's post-kick state). Guarded on still being
+        // connected so a kick during shutdown doesn't resurrect the channel.
+        if (effectiveSetting(this.network.user_id, 'channel.rejoin_on_kick') === true) {
+          const timer = setTimeout(() => {
+            if (this.disposed || this.state !== 'connected') return;
+            try {
+              this.client.join(channel);
+            } catch {
+              /* ignore */
+            }
+          }, 2000);
+          timer.unref?.();
+        }
       }
     });
 
@@ -1714,6 +1735,14 @@ export class IrcConnection {
           userhost: buildUserhost(event),
         });
         this.logNet(`${inviter} invited you to ${channel}`);
+        // channel.autojoin_on_invite: hop straight in instead of just notifying.
+        if (effectiveSetting(this.network.user_id, 'channel.autojoin_on_invite') === true) {
+          try {
+            this.client.join(channel);
+          } catch {
+            /* ignore */
+          }
+        }
         return;
       }
 
