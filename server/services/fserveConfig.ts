@@ -68,6 +68,53 @@ export function fserveMaxSessions(userId: number): number {
   return typeof v === 'number' && v > 0 ? Math.floor(v) : 3;
 }
 
+/** Concurrent DCC sends the queue runs at once (the "Sends:[x/N]" cap). */
+export function fserveMaxSends(userId: number): number {
+  const v = effectiveSetting(userId, 'fserve.max_sends');
+  return typeof v === 'number' && v > 0 ? Math.floor(v) : 1;
+}
+
+/** Waiting slots beyond the active sends (the "Queues:[y/M]" cap). */
+export function fserveMaxQueue(userId: number): number {
+  const v = effectiveSetting(userId, 'fserve.max_queue');
+  return typeof v === 'number' && v >= 0 ? Math.floor(v) : 10;
+}
+
+/** Idle disconnect in ms; 0 disables. Stored in seconds. A short grace warning
+ *  is sent before the cut (see FserveSession). */
+export function fserveIdleTimeoutMs(userId: number): number {
+  const v = effectiveSetting(userId, 'fserve.idle_timeout');
+  const secs = typeof v === 'number' ? Math.floor(v) : 300;
+  return secs > 0 ? secs * 1000 : 0;
+}
+
+/** Display name shown in banners/ads; falls back to the caller's own nick when
+ *  blank (handled by the caller). */
+export function fserveServerName(userId: number): string {
+  return settingStr(userId, 'fserve.server_name');
+}
+
+// --- @find channel search ----------------------------------------------------
+
+/** Whether the fserve answers `@find <query>` triggers in channels/DMs. Opt-in
+ *  (default false): it responds to arbitrary users and walks the archive. */
+export function fserveFindEnabled(userId: number): boolean {
+  return fserveEnabledForUser(userId) && effectiveSetting(userId, 'fserve.find_enabled') === true;
+}
+
+/** The search trigger word (default "@find"). Compared case-insensitively on the
+ *  first token of an incoming message. */
+export function fserveFindTrigger(userId: number): string {
+  const t = settingStr(userId, 'fserve.find_trigger');
+  return t || '@find';
+}
+
+/** Max file matches returned by one @find. */
+export function fserveFindMaxResults(userId: number): number {
+  const v = effectiveSetting(userId, 'fserve.find_max_results');
+  return typeof v === 'number' && v > 0 ? Math.floor(v) : 15;
+}
+
 export type FserveAccessMode = 'open' | 'allowlist' | 'password';
 
 export function fserveAccessMode(userId: number): FserveAccessMode {

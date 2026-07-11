@@ -9,6 +9,11 @@ import {
   maskToRegExp,
   allowlistMatches,
   decideFserveAccess,
+  fserveMaxSends,
+  fserveMaxQueue,
+  fserveIdleTimeoutMs,
+  fserveFindTrigger,
+  fserveFindMaxResults,
   type FserveAccessMode,
 } from './fserveConfig.js';
 
@@ -63,5 +68,20 @@ describe('decideFserveAccess', () => {
     // Types guard this, but a stray stored value should still be safe.
     const mode = 'weird' as unknown as FserveAccessMode;
     expect(decideFserveAccess(mode, [], hm, 'alice')).toEqual({ kind: 'allow' });
+  });
+});
+
+describe('queue + search config defaults (no user overrides → registry defaults)', () => {
+  const uid = 1;
+  it('send/queue limits default to 1 send, 10 queue slots', () => {
+    expect(fserveMaxSends(uid)).toBe(1);
+    expect(fserveMaxQueue(uid)).toBe(10);
+  });
+  it('idle timeout defaults to 300s expressed in ms', () => {
+    expect(fserveIdleTimeoutMs(uid)).toBe(300_000);
+  });
+  it('search trigger + result cap have sane defaults', () => {
+    expect(fserveFindTrigger(uid)).toBe('@find');
+    expect(fserveFindMaxResults(uid)).toBe(15);
   });
 });

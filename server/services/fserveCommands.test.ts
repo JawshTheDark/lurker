@@ -5,7 +5,13 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { runFserveCommand, displayPath, type FserveState } from './fserveCommands.js';
+import {
+  runFserveCommand,
+  displayPath,
+  searchArchive,
+  FSERVE_CONTROL_COMMANDS,
+  type FserveState,
+} from './fserveCommands.js';
 
 // A small archive tree on disk:
 //   root/
@@ -42,12 +48,23 @@ describe('displayPath', () => {
 });
 
 describe('runFserveCommand — listing + help', () => {
-  it('dir lists directories then files with sizes', () => {
+  it('dir lists directories (Nd) then files (NF) with sizes', () => {
     const r = runFserveCommand(atRoot(), 'dir');
     expect(r.lines[0]).toBe('Directory /:');
-    expect(r.lines.some((l) => l.includes('[DIR]  empty/'))).toBe(true);
-    expect(r.lines.some((l) => l.includes('[DIR]  music/'))).toBe(true);
-    expect(r.lines.some((l) => l.endsWith('readme.txt') && l.includes('12 B'))).toBe(true);
+    // At root there is no "0d ../" line.
+    expect(r.lines.some((l) => l.includes('0d  ../'))).toBe(false);
+    expect(r.lines.some((l) => l.includes('1d  empty/'))).toBe(true);
+    expect(r.lines.some((l) => l.includes('2d  music/'))).toBe(true);
+    expect(
+      r.lines.some((l) => l.includes('1F') && l.endsWith('readme.txt') && l.includes('12 B')),
+    ).toBe(true);
+    expect(r.lines[r.lines.length - 1]).toBe('End of list — 2 dir(s), 1 file(s).');
+  });
+
+  it('a subdirectory listing offers 0d to go up', () => {
+    const r = runFserveCommand({ root, cwd: path.join(root, 'music') }, 'dir');
+    expect(r.lines.some((l) => l.includes('0d  ../'))).toBe(true);
+    expect(r.lines.some((l) => l.includes('1F') && l.endsWith('song.mp3'))).toBe(true);
   });
 
   it('ls is an alias for dir', () => {
@@ -96,11 +113,34 @@ describe('runFserveCommand — cd navigation', () => {
   });
 });
 
-describe('runFserveCommand — get', () => {
-  it('get a file returns its absolute path to send', () => {
+describe('runFserveCommand — number-letter navigation', () => {
+  it('1d enters the first directory (empty), 2d the second (music)', () => {
+    expect(runFserveCommand(atRoot(), '1d').newCwd).toBe(path.join(root, 'empty'));
+    expect(runFserveCommand(atRoot(), '2d').newCwd).toBe(path.join(root, 'music'));
+  });
+
+  it('0d goes up one level', () => {
+    const inMusic: FserveState = { root, cwd: path.join(root, 'music') };
+    expect(runFserveCommand(inMusic, '0d').newCwd).toBe(root);
+  });
+
+  it('1F gets the first file', () => {
+    const r = runFserveCommand(atRoot(), '1F');
+    expect(r.sendPath).toBe(path.join(root, 'readme.txt'));
+  });
+
+  it('an out-of-range index is a clean error, no action', () => {
+    const r = runFserveCommand(atRoot(), '9F');
+    expect(r.lines[0]).toMatch(/No file 9F here/);
+    expect(r.sendPath).toBeUndefined();
+  });
+});
+
+describe('runFserveCommand — get (hands a path to the queue, no premature line)', () => {
+  it('get a file returns its absolute path and no status line', () => {
     const r = runFserveCommand(atRoot(), 'get readme.txt');
     expect(r.sendPath).toBe(path.join(root, 'readme.txt'));
-    expect(r.lines[0]).toMatch(/Sending "readme\.txt" \(12 B\)/);
+    expect(r.lines).toEqual([]); // the caller/queue emits the real status
   });
 
   it('get a file in a subdir via cwd', () => {
@@ -116,6 +156,65 @@ describe('runFserveCommand — get', () => {
 
   it('get a nonexistent file is a clean error', () => {
     expect(runFserveCommand(atRoot(), 'get ghost.bin').lines[0]).toMatch(/No such file/);
+  });
+});
+
+describe('runFserveCommand — control commands are delegated', () => {
+  it('recognises the stateful command set and returns a control marker', () => {
+    for (const c of ['queues', 'sends', 'stats', 'who', 'clr_queue', 'clr_queues']) {
+      const r = runFserveCommand(atRoot(), c);
+      expect(r.control?.name).toBe(c);
+      expect(r.sendPath).toBeUndefined();
+      expect(r.newCwd).toBeUndefined();
+    }
+  });
+
+  it('normalises "queue" to "queues" and carries the arg', () => {
+    expect(runFserveCommand(atRoot(), 'queue').control?.name).toBe('queues');
+    const r = runFserveCommand(atRoot(), 'clr_queue please');
+    expect(r.control).toEqual({ name: 'clr_queue', arg: 'please' });
+  });
+
+  it('exports the canonical control command set', () => {
+    expect(FSERVE_CONTROL_COMMANDS.has('stats')).toBe(true);
+    expect(FSERVE_CONTROL_COMMANDS.has('get')).toBe(false);
+  });
+});
+
+describe('searchArchive (@find backend)', () => {
+  it('matches files by name, returning archive-relative paths + sizes', () => {
+    const r = searchArchive(root, 'song');
+    expect(r.results).toEqual([{ path: '/music/song.mp3', size: 2048 }]);
+    expect(r.truncated).toBe(false);
+  });
+
+  it('requires ALL whitespace terms to appear in the path', () => {
+    expect(searchArchive(root, 'music song').results).toHaveLength(1);
+    expect(searchArchive(root, 'music nope').results).toHaveLength(0);
+  });
+
+  it('is case-insensitive', () => {
+    expect(searchArchive(root, 'README').results[0].path).toBe('/readme.txt');
+  });
+
+  it('empty query yields nothing', () => {
+    expect(searchArchive(root, '   ').results).toHaveLength(0);
+  });
+
+  it('honours maxResults and flags truncation', () => {
+    // Both files contain a common substring via their extension-less names? Use a
+    // term present in more than one path: the archive root separator "/" — every
+    // file path contains it, so all match; cap at 1.
+    const r = searchArchive(root, '.', { maxResults: 1 });
+    expect(r.results).toHaveLength(1);
+    expect(r.truncated).toBe(true);
+  });
+
+  it('stops when the time budget is exhausted (never escapes root)', () => {
+    // now() jumps past the budget immediately → the walk halts, no leak.
+    let t = 0;
+    const r = searchArchive(root, 'song', { budgetMs: 5, now: () => (t += 1000) });
+    expect(r.results.every((h) => h.path.startsWith('/'))).toBe(true);
   });
 });
 
