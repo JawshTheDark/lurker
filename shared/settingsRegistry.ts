@@ -742,6 +742,51 @@ export const REGISTRY: readonly SettingOption[] = Object.freeze([
       'summary above stay host-less. Regular chat messages are unaffected.',
   },
 
+  // ─── Message routing (mIRC "show in active"-style) ───────────────────
+  // Where certain event types land. Lurker is multi-device and the server
+  // doesn't track a per-client "active window", so the mIRC "active window"
+  // choice isn't offered — but you can steer noisy events to the server
+  // (status) buffer instead of spawning a DM. CTCP has its own routing knob
+  // under CTCP replies (ctcp.msgbuffer).
+  {
+    key: 'notice.msgbuffer',
+    label: 'Where notices from users appear',
+    category: 'chat',
+    group: 'routing',
+    type: 'enum',
+    choices: ['private', 'server'],
+    default: 'private',
+    description:
+      'A NOTICE sent to you (services, bots, memos) normally opens/uses a DM ' +
+      'buffer with the sender ("private"). Choose "server" to collect them in ' +
+      "the network's server (status) buffer instead. Channel notices are " +
+      'unaffected — they always show in the channel.',
+  },
+
+  // ─── Channels (invite / kick behavior) ───────────────────────────────
+  {
+    key: 'channel.autojoin_on_invite',
+    label: 'Auto-join channels you’re invited to',
+    category: 'chat',
+    group: 'channel-behavior',
+    type: 'bool',
+    default: false,
+    description:
+      'When someone invites you to a channel, join it automatically instead of ' +
+      'just showing the invite. Off by default.',
+  },
+  {
+    key: 'channel.rejoin_on_kick',
+    label: 'Rejoin a channel when kicked',
+    category: 'chat',
+    group: 'channel-behavior',
+    type: 'bool',
+    default: false,
+    description:
+      'Automatically rejoin a channel a moment after being kicked. Off by ' +
+      'default (some channels treat auto-rejoin as abuse — use with care).',
+  },
+
   // ─── Composing (outgoing message guardrails) ─────────────────────────
   // irc-framework splits anything past ~350 bytes into multiple PRIVMSGs on
   // the wire. The default UX blocks the user from accidentally flooding —
@@ -1795,6 +1840,8 @@ export const GROUPS: Readonly<Record<string, string>> = Object.freeze({
   layout: 'Layout',
   misc: 'Misc',
   consolidate: 'Join/part consolidation',
+  routing: 'Message routing',
+  'channel-behavior': 'Channels',
   composing: 'Composing',
   'smart-filter': 'Smart filter',
   connection: 'Connection',
