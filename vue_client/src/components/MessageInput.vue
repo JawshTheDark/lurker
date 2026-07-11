@@ -682,7 +682,10 @@ function buildNickStripItems(buf: Buffer, networkId: number, prefix: string): Ni
 }
 
 function buildChannelMatches(networkId: number, prefix: string): string[] {
-  return buildChannelCandidates(buffers.forNetwork(networkId), prefix);
+  // Pass the active buffer's target so the channel you're currently in sorts
+  // first (standard IRC `#`+Tab behavior); a DM target is ignored by the
+  // builder, leaving the list alphabetical.
+  return buildChannelCandidates(buffers.forNetwork(networkId), prefix, active.value?.target);
 }
 
 function applyCompletion() {
