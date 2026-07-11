@@ -7,6 +7,7 @@ import { useSettingsStore } from '../stores/settings.js';
 import { useBuffersStore } from '../stores/buffers.js';
 import { useToastsStore } from '../stores/toasts.js';
 import { startPresenceReporter, reportNow } from './usePresence.js';
+import { startActiveBufferReporter } from './useActiveBufferReporter.js';
 import { registerSW, onSWPushMessage } from './usePush.js';
 import { onJumpIntent } from './useJumpIntent.js';
 import { connected } from './useSocket.js';
@@ -136,6 +137,7 @@ export function useChatBootstrap({ onJump }: ChatBootstrapOptions = {}): void {
     await networks.fetchAll();
     startPresenceReporter();
     reportNow();
+    startActiveBufferReporter();
     // Mirror the unread-highlight total onto the PWA app icon (#451). Idempotent
     // and feature-detected — a no-op where the Badging API is unavailable.
     startAppBadge();

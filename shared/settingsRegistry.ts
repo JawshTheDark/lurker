@@ -754,13 +754,15 @@ export const REGISTRY: readonly SettingOption[] = Object.freeze([
     category: 'chat',
     group: 'routing',
     type: 'enum',
-    choices: ['private', 'server'],
+    choices: ['private', 'server', 'active'],
     default: 'private',
     description:
       'A NOTICE sent to you (services, bots, memos) normally opens/uses a DM ' +
-      'buffer with the sender ("private"). Choose "server" to collect them in ' +
-      "the network's server (status) buffer instead. Channel notices are " +
-      'unaffected — they always show in the channel.',
+      'buffer with the sender ("private"). "server" collects them in the ' +
+      'network\'s server (status) buffer; "active" shows them in whatever ' +
+      'buffer you\'re currently looking at on that network (mIRC "show in ' +
+      'active"), falling back to the DM when no tab is focused there. Channel ' +
+      'notices are unaffected — they always show in the channel.',
   },
 
   // ─── Channels (invite / kick behavior) ───────────────────────────────

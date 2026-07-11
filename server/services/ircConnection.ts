@@ -26,6 +26,7 @@ import ignoreRulesService from './ignoreRulesService.js';
 import { decideStamp } from './insertDecisions.js';
 import * as systemLog from './systemLog.js';
 import { effectiveSetting, effectiveSettings } from './settingsService.js';
+import activeBufferService from './activeBufferService.js';
 import { APP_NAME, APP_VERSION } from '../utils/userAgent.js';
 import { findUserById } from '../db/users.js';
 import { isNodeMode } from '../utils/edition.js';
@@ -1388,18 +1389,26 @@ export class IrcConnection {
           this.currentNick &&
           eventTarget.toLowerCase() === this.currentNick.toLowerCase()
         ) {
-          // notice.msgbuffer: "server" collects user notices (services/bots/memos)
-          // in the network's server buffer instead of spawning a DM with the
-          // sender — the mIRC "notice in status window" behavior.
-          if (effectiveSetting(this.network.user_id, 'notice.msgbuffer') === 'server') {
+          // notice.msgbuffer controls where a NOTICE addressed to us lands:
+          //   server → the network's server (status) buffer
+          //   active → the buffer you're currently looking at on this network
+          //            (mIRC "show in active window"), else the natural DM
+          //   private (default) → a DM buffer with the sender
+          // Fold to an existing buffer's casing so a reply sourced as "ChanServ"
+          // doesn't fork history from a "chanserv" buffer the user started (#289).
+          const nickLower = (eventNick as string).toLowerCase();
+          const naturalTarget =
+            listBufferTargets(this.network.id).find((t) => t.toLowerCase() === nickLower) ??
+            (eventNick as string);
+          const mode = effectiveSetting(this.network.user_id, 'notice.msgbuffer');
+          if (mode === 'server') {
             target = `:server:${this.network.id}`;
-          } else {
-            // Fold to an existing buffer's casing so a reply sourced as "ChanServ"
-            // doesn't fork history from a "chanserv" buffer the user started (#289).
-            const nickLower = (eventNick as string).toLowerCase();
+          } else if (mode === 'active') {
             target =
-              listBufferTargets(this.network.id).find((t) => t.toLowerCase() === nickLower) ??
-              (eventNick as string);
+              activeBufferService.activeTarget(this.network.user_id, this.network.id) ??
+              naturalTarget;
+          } else {
+            target = naturalTarget;
           }
         } else {
           target = `:server:${this.network.id}`;
