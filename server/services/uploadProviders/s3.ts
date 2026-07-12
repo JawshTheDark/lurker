@@ -30,7 +30,7 @@ export const label = 'S3 / R2';
 export const capabilities: DriverCapabilities = {
   creatable: true,
   storesRemotely: true,
-  supportsDelete: false,
+  supportsDelete: true,
   // WE construct the object key (unlike a remote host that names the file).
   mintsKeys: true,
   acceptsContentClasses: ['image', 'text', 'binary'],
@@ -135,35 +135,39 @@ export function buildObjectKey(
   return segments.join('/');
 }
 
-export interface SignedPut {
+export interface SignedRequest {
   url: string;
   headers: Record<string, string>;
 }
 
-/** Build a SigV4-signed PUT for one object. Pure given `now`, so tests can pin
- *  the clock and assert determinism. */
-export function signPutObject(
+/** Build a SigV4-signed request for one object. Pure given `now`, so tests can
+ *  pin the clock and assert determinism. PUT carries the payload plus the
+ *  cache/content headers a store may validate; DELETE signs an empty payload
+ *  and only the mandatory host/x-amz headers. */
+export function signObjectRequest(
   {
+    method,
     endpoint,
     bucket,
     key,
-    payload,
+    payload = Buffer.alloc(0),
     contentType,
     region,
     accessKeyId,
     secretAccessKey,
   }: {
+    method: 'PUT' | 'DELETE';
     endpoint: string;
     bucket: string;
     key: string;
-    payload: Buffer;
-    contentType: string;
+    payload?: Buffer;
+    contentType?: string;
     region: string;
     accessKeyId: string;
     secretAccessKey: string;
   },
   now: Date = new Date(),
-): SignedPut {
+): SignedRequest {
   const base = endpoint.replace(/\/+$/, '');
   const url = new URL(`${base}/${bucket}/${key}`);
   const host = url.host;
@@ -181,17 +185,19 @@ export function signPutObject(
   // may validate is signed — including cache-control, so a store can't reject it
   // as an unsigned x-amz-adjacent header surprise.
   const headers: Record<string, string> = {
-    'cache-control': 'public, max-age=31536000, immutable',
-    'content-type': contentType,
     host,
     'x-amz-content-sha256': payloadHash,
     'x-amz-date': amzDate,
   };
+  if (method === 'PUT') {
+    headers['cache-control'] = 'public, max-age=31536000, immutable';
+    headers['content-type'] = contentType || 'application/octet-stream';
+  }
   const signedHeaderNames = Object.keys(headers).sort();
   const canonicalHeaders = signedHeaderNames.map((h) => `${h}:${headers[h].trim()}\n`).join('');
   const signedHeaders = signedHeaderNames.join(';');
 
-  const canonicalRequest = ['PUT', path, '', canonicalHeaders, signedHeaders, payloadHash].join(
+  const canonicalRequest = [method, path, '', canonicalHeaders, signedHeaders, payloadHash].join(
     '\n',
   );
 
@@ -211,6 +217,23 @@ export function signPutObject(
     url: url.toString(),
     headers: { ...headers, authorization, 'User-Agent': USER_AGENT },
   };
+}
+
+/** Backwards-compatible PUT wrapper around signObjectRequest. */
+export function signPutObject(
+  params: {
+    endpoint: string;
+    bucket: string;
+    key: string;
+    payload: Buffer;
+    contentType: string;
+    region: string;
+    accessKeyId: string;
+    secretAccessKey: string;
+  },
+  now: Date = new Date(),
+): SignedRequest {
+  return signObjectRequest({ method: 'PUT', ...params }, now);
 }
 
 function requireField(config: Record<string, string>, field: string): string {
@@ -258,6 +281,37 @@ export async function upload(
       code: resp.status === 401 || resp.status === 403 ? 'PROVIDER_AUTH' : 'PROVIDER_ERROR',
     });
   }
-  // key is the delete handle if delete is ever added; harmless to surface now.
+  // key is the delete handle consumed by delete() below.
   return { url: `${publicBase.replace(/\/+$/, '')}/${key}`, ref: key };
 }
+
+/** Remove one object by its key (the ref upload() returned). S3 DeleteObject is
+ *  idempotent — deleting a key that's already gone returns 204 — so the
+ *  "already deleted counts as success" contract needs no special-casing here. */
+async function deleteObject(ref: string, config: Record<string, string> = {}): Promise<void> {
+  const endpoint = requireField(config, 'endpoint');
+  const bucket = requireField(config, 'bucket');
+  const accessKeyId = requireField(config, 'access_key_id');
+  const secretAccessKey = requireField(config, 'secret_access_key');
+  const region = (config.region || '').trim() || 'auto';
+
+  const signed = signObjectRequest({
+    method: 'DELETE',
+    endpoint,
+    bucket,
+    key: ref,
+    region,
+    accessKeyId,
+    secretAccessKey,
+  });
+
+  const resp = await fetch(signed.url, { method: 'DELETE', headers: signed.headers });
+  if (!resp.ok && resp.status !== 404) {
+    const text = (await resp.text()).slice(0, 200);
+    throw Object.assign(new Error(`s3 delete failed: ${resp.status} ${text}`), {
+      code: resp.status === 401 || resp.status === 403 ? 'PROVIDER_AUTH' : 'PROVIDER_ERROR',
+    });
+  }
+}
+
+export { deleteObject as delete };

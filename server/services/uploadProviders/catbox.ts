@@ -28,7 +28,11 @@ export const label = 'catbox.moe';
 export const capabilities: DriverCapabilities = {
   creatable: true,
   storesRemotely: true,
-  supportsDelete: false,
+  // Deletable only for uploads made with a userhash — upload() signals that per
+  // upload by returning a ref only when one was used. Anonymous uploads are
+  // permanently undeletable on catbox's side, so they carry no ref and the row
+  // never offers delete.
+  supportsDelete: true,
   mintsKeys: false,
   acceptsContentClasses: ['image', 'text'],
 };
@@ -91,5 +95,57 @@ export async function upload(
       code: 'PROVIDER_ERROR',
     });
   }
-  return { url: text };
+  // The delete handle is the served filename (the deletefiles API addresses
+  // files by name) — but only a userhash upload can ever be deleted, so an
+  // anonymous upload gets no ref and its row never offers delete.
+  const name = config.userhash ? text.split('/').pop() : undefined;
+  return { url: text, ...(name ? { ref: name } : {}) };
 }
+
+/** Delete a file by the served filename upload() captured. Catbox answers 200
+ *  with a plain-text body for both outcomes, so success is sniffed from the
+ *  text; "doesn't exist" counts as already-gone. Requires the userhash the
+ *  upload was made with — if the config no longer has one, the delete fails
+ *  loudly rather than pretending. */
+async function deleteFile(ref: string, config: { userhash?: string } = {}): Promise<void> {
+  if (!config.userhash) {
+    throw Object.assign(new Error('catbox delete requires the uploader’s userhash'), {
+      code: 'PROVIDER_CONFIG',
+    });
+  }
+  const { body, contentType } = buildMultipart([
+    { name: 'reqtype', value: 'deletefiles' },
+    { name: 'userhash', value: config.userhash },
+    { name: 'files', value: ref },
+  ]);
+
+  let resp;
+  try {
+    resp = await postBuffer(ENDPOINT, body, {
+      headers: {
+        'Content-Type': contentType,
+        'User-Agent': USER_AGENT,
+        Accept: '*/*',
+      },
+      timeoutMs: TIMEOUT_MS,
+    });
+  } catch (cause) {
+    const c = cause as NodeJS.ErrnoException;
+    const detail = c.code || c.message || 'unknown error';
+    throw Object.assign(new Error(`catbox delete failed: ${detail}`), {
+      code: 'PROVIDER_ERROR',
+      cause,
+    });
+  }
+
+  const text = (resp.text || '').trim();
+  // Already gone is the outcome the caller wanted.
+  if (/doesn'?t exist/i.test(text)) return;
+  if (resp.status < 200 || resp.status >= 300 || !/successful/i.test(text)) {
+    throw Object.assign(new Error(`catbox delete failed: ${text.slice(0, 200) || resp.status}`), {
+      code: 'PROVIDER_ERROR',
+    });
+  }
+}
+
+export { deleteFile as delete };

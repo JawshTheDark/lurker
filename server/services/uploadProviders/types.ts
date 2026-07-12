@@ -26,8 +26,11 @@ export interface DriverCapabilities {
   // true → the driver returns a public URL on another origin (x0/catbox/hoarder/
   // s3). false → WE serve the bytes (local) and the route builds the URL.
   storesRemotely: boolean;
-  // Can the stored bytes be removed given a ref? All P0 drivers: false (external
-  // forwarders don't offer delete; hosted takedown stays CP/admin-key-only).
+  // Can the driver remove stored bytes given a ref? Deletability of a specific
+  // upload is decided at capture time: upload() returns a ref only when that
+  // upload can actually be deleted later (e.g. catbox omits it for anonymous
+  // uploads), so "deletable row" = supportsDelete AND ref present. x0 has no
+  // delete API at all; hosted dropper deletion stays CP-mediated (CP #55).
   supportsDelete: boolean;
   // true only where WE construct the storage key (s3, local — none in P0). The
   // preserve-original-filename option (#517) is a no-op where the remote host

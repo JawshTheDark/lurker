@@ -64,16 +64,6 @@ vi.mock('../services/uploadProviders/index.js', () => ({
   }),
 }));
 
-// The byte reap is fire-and-forget (DELETE responds before the async unlink), so
-// poll for its effect rather than assume a single tick has run it.
-async function waitUntil(fn: () => boolean, timeoutMs = 2000): Promise<void> {
-  const start = Date.now();
-  while (!fn()) {
-    if (Date.now() - start > timeoutMs) throw new Error('condition not met in time');
-    await new Promise((r) => setTimeout(r, 10));
-  }
-}
-
 let app: Express;
 let agent: LurkerTestAgent;
 let user: User;
@@ -283,7 +273,7 @@ describe('local-style (storesRemotely:false) uploads', () => {
     }
   });
 
-  it('reaps the on-disk bytes via driver.delete when a deletable upload is removed', async () => {
+  it('destroys the bytes via driver.delete before removing a deletable upload', async () => {
     stub.capabilities.storesRemotely = false;
     stub.capabilities.supportsDelete = true;
     stub.nextResult = { url: '/uploads/local/112233445566.png', ref: '112233445566.png' };
@@ -293,12 +283,14 @@ describe('local-style (storesRemotely:false) uploads', () => {
         .post('/api/uploads')
         .attach('image', smallPng, { filename: 'reap.png', contentType: 'image/png' });
       expect(up.status).toBe(200);
+      expect(up.body.can_delete).toBe(true);
 
       const del = await agent.delete(`/api/uploads/${up.body.id}`);
       expect(del.status).toBe(200);
-      // The reap is fire-and-forget; poll until it runs rather than assume a tick.
-      await waitUntil(() => stub.capturedDeleteRef === '112233445566.png');
+      // Bytes-first: by the time the response lands, the driver has run.
       expect(stub.capturedDeleteRef).toBe('112233445566.png');
+      const list = await agent.get('/api/uploads');
+      expect(list.body.items.find((r: { id: number }) => r.id === up.body.id)).toBeFalsy();
     } finally {
       stub.capabilities.storesRemotely = true;
       stub.capabilities.supportsDelete = false;
@@ -306,9 +298,9 @@ describe('local-style (storesRemotely:false) uploads', () => {
     }
   });
 
-  it('does not call driver.delete for a non-deletable driver (even with a ref)', async () => {
-    // A ref is present, but supportsDelete is false → the reap must short-circuit
-    // and never unlink (external forwarders offer list-only removal).
+  it('refuses to delete when the driver cannot destroy the bytes (no fake delete)', async () => {
+    // A ref is present, but supportsDelete is false → there is no "remove the
+    // record but leave the file up" path; the request is refused and the row stays.
     stub.capabilities.storesRemotely = false;
     stub.nextResult = { url: '/uploads/local/778899aabbcc.png', ref: '778899aabbcc.png' };
     stub.capturedDeleteRef = null;
@@ -316,10 +308,12 @@ describe('local-style (storesRemotely:false) uploads', () => {
       const up = await agent
         .post('/api/uploads')
         .attach('image', smallPng, { filename: 'keep.png', contentType: 'image/png' });
+      expect(up.body.can_delete).toBe(false);
       const del = await agent.delete(`/api/uploads/${up.body.id}`);
-      expect(del.status).toBe(200);
-      await new Promise((r) => setImmediate(r));
+      expect(del.status).toBe(409);
       expect(stub.capturedDeleteRef).toBeNull();
+      const list = await agent.get('/api/uploads');
+      expect(list.body.items.find((r: { id: number }) => r.id === up.body.id)).toBeTruthy();
     } finally {
       stub.capabilities.storesRemotely = true;
       stub.nextResult = null;
@@ -345,18 +339,80 @@ describe('GET /api/uploads/:id/thumb', () => {
 });
 
 describe('DELETE /api/uploads/:id', () => {
-  it('removes an owned row', async () => {
+  it('409 for a row without a delete handle (no ref → never deletable)', async () => {
+    // The stub's default upload result carries no ref — like x0 or an anonymous
+    // catbox upload. Its row must refuse deletion and stay put.
     const upload = await agent
       .post('/api/uploads')
       .attach('image', smallPng, { filename: 'delete-me.png', contentType: 'image/png' });
+    expect(upload.body.can_delete).toBe(false);
     const del = await agent.delete(`/api/uploads/${upload.body.id}`);
-    expect(del.status).toBe(200);
+    expect(del.status).toBe(409);
     const list = await agent.get('/api/uploads');
-    expect(list.body.items.find((r: { id: number }) => r.id === upload.body.id)).toBeFalsy();
+    const row = list.body.items.find((r: { id: number }) => r.id === upload.body.id);
+    expect(row).toBeTruthy();
+    expect(row.can_delete).toBe(false);
   });
 
   it("404 for a row that doesn't exist", async () => {
     const res = await agent.delete('/api/uploads/999999');
     expect(res.status).toBe(404);
+  });
+
+  it('keeps the row and surfaces the failure when the driver delete throws', async () => {
+    stub.capabilities.supportsDelete = true;
+    stub.nextResult = { url: 'https://stub.example/fail.png', ref: 'fail.png' };
+    try {
+      const up = await agent
+        .post('/api/uploads')
+        .attach('image', smallPng, { filename: 'fail.png', contentType: 'image/png' });
+      expect(up.body.can_delete).toBe(true);
+
+      const origDelete = stub.delete;
+      stub.delete = async () => {
+        throw Object.assign(new Error('upstream down'), { code: 'PROVIDER_ERROR' });
+      };
+      try {
+        const del = await agent.delete(`/api/uploads/${up.body.id}`);
+        expect(del.status).toBe(502);
+      } finally {
+        stub.delete = origDelete;
+      }
+      // The bytes weren't destroyed, so the record must survive for a retry.
+      const list = await agent.get('/api/uploads');
+      const row = list.body.items.find((r: { id: number }) => r.id === up.body.id);
+      expect(row).toBeTruthy();
+      expect(row.can_delete).toBe(true);
+
+      // And the retry succeeds once the driver recovers.
+      const retry = await agent.delete(`/api/uploads/${up.body.id}`);
+      expect(retry.status).toBe(200);
+    } finally {
+      stub.capabilities.supportsDelete = false;
+      stub.nextResult = null;
+    }
+  });
+
+  it('maps a PROVIDER_AUTH delete failure to 401', async () => {
+    stub.capabilities.supportsDelete = true;
+    stub.nextResult = { url: 'https://stub.example/auth.png', ref: 'auth.png' };
+    try {
+      const up = await agent
+        .post('/api/uploads')
+        .attach('image', smallPng, { filename: 'auth.png', contentType: 'image/png' });
+      const origDelete = stub.delete;
+      stub.delete = async () => {
+        throw Object.assign(new Error('bad creds'), { code: 'PROVIDER_AUTH' });
+      };
+      try {
+        const del = await agent.delete(`/api/uploads/${up.body.id}`);
+        expect(del.status).toBe(401);
+      } finally {
+        stub.delete = origDelete;
+      }
+    } finally {
+      stub.capabilities.supportsDelete = false;
+      stub.nextResult = null;
+    }
   });
 });

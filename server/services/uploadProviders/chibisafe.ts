@@ -17,7 +17,7 @@ export const label = 'Chibisafe';
 export const capabilities: DriverCapabilities = {
   creatable: true,
   storesRemotely: true,
-  supportsDelete: false,
+  supportsDelete: true,
   mintsKeys: false,
   acceptsContentClasses: ['image', 'text'],
   selfHostOnly: true,
@@ -79,5 +79,33 @@ export async function upload(
   if (!body || typeof body.url !== 'string' || !body.url) {
     throw Object.assign(new Error('chibisafe returned no url'), { code: 'PROVIDER_ERROR' });
   }
-  return { url: body.url as string };
+  // The uuid is the delete handle; an older server that omits it just makes the
+  // upload non-deletable (no ref).
+  const ref = typeof body.uuid === 'string' && body.uuid ? (body.uuid as string) : undefined;
+  return { url: body.url as string, ...(ref ? { ref } : {}) };
 }
+
+/** Delete a file by the uuid upload() captured. 404 = already gone = success. */
+async function deleteFile(
+  ref: string,
+  config: { url?: string; api_key?: string } = {},
+): Promise<void> {
+  if (!config.url || !config.api_key) {
+    throw Object.assign(new Error('chibisafe uploader is missing its url or api_key'), {
+      code: 'PROVIDER_CONFIG',
+    });
+  }
+  const base = config.url.replace(/\/+$/, '');
+  const resp = await fetch(`${base}/api/file/${encodeURIComponent(ref)}`, {
+    method: 'DELETE',
+    headers: { 'x-api-key': config.api_key, 'User-Agent': USER_AGENT },
+  });
+  if (!resp.ok && resp.status !== 404) {
+    const text = (await resp.text()).slice(0, 200);
+    throw Object.assign(new Error(`chibisafe delete failed: ${resp.status} ${text}`), {
+      code: resp.status === 401 || resp.status === 403 ? 'PROVIDER_AUTH' : 'PROVIDER_ERROR',
+    });
+  }
+}
+
+export { deleteFile as delete };

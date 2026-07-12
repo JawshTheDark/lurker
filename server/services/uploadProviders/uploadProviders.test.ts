@@ -150,6 +150,62 @@ describe('catbox provider', () => {
       message: expect.stringContaining('ECONNRESET'),
     });
   });
+
+  // Deletability is decided at capture time: only a userhash upload can ever be
+  // deleted on catbox's side, so only it carries a ref.
+  it('returns the served filename as ref for userhash uploads, no ref when anonymous', async () => {
+    captureCatboxCall();
+    const withHash = await catbox.upload(
+      Buffer.from([1]),
+      { filename: 'a.png', mime: 'image/png' },
+      { userhash: 'abc123' },
+    );
+    expect(withHash.ref).toBe('xyz.png');
+    const anonymous = await catbox.upload(
+      Buffer.from([1]),
+      { filename: 'a.png', mime: 'image/png' },
+      {},
+    );
+    expect(anonymous.ref).toBeUndefined();
+  });
+
+  it('delete POSTs reqtype=deletefiles with the userhash and filename', async () => {
+    const cap = captureCatboxCall();
+    catboxResponse = { status: 200, headers: {}, text: 'Files successfully deleted.' };
+    await catbox.delete('xyz.png', { userhash: 'abc123' });
+    expect(cap.url).toBe('https://catbox.moe/user/api.php');
+    const text = cap.body!.toString('binary');
+    expect(text).toContain('name="reqtype"');
+    expect(text).toContain('deletefiles');
+    expect(text).toContain('name="userhash"');
+    expect(text).toContain('abc123');
+    expect(text).toContain('name="files"');
+    expect(text).toContain('xyz.png');
+  });
+
+  it('delete treats "doesn\'t exist" as already gone, other text as failure', async () => {
+    vi.spyOn(multipart, 'postBuffer').mockResolvedValue({
+      status: 200,
+      headers: {},
+      text: "File doesn't exist?",
+    });
+    await expect(catbox.delete('gone.png', { userhash: 'h' })).resolves.toBeUndefined();
+
+    vi.spyOn(multipart, 'postBuffer').mockResolvedValue({
+      status: 200,
+      headers: {},
+      text: 'Invalid userhash.',
+    });
+    await expect(catbox.delete('xyz.png', { userhash: 'bad' })).rejects.toMatchObject({
+      code: 'PROVIDER_ERROR',
+    });
+  });
+
+  it('delete rejects with PROVIDER_CONFIG when the config has no userhash', async () => {
+    await expect(catbox.delete('xyz.png', {})).rejects.toMatchObject({
+      code: 'PROVIDER_CONFIG',
+    });
+  });
 });
 
 describe('hoarder provider', () => {
@@ -312,6 +368,56 @@ describe('zipline provider', () => {
       ),
     ).rejects.toMatchObject({ code: 'PROVIDER_ERROR' });
   });
+
+  it('captures the v4 file id as ref; v3 string responses carry no ref', async () => {
+    captureFormData();
+    captureResponse = new Response(
+      JSON.stringify({ files: [{ id: 'clxyz123', url: 'https://zl.test/u/x.png' }] }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    );
+    const v4 = await zipline.upload(
+      Buffer.from([1]),
+      { filename: 'x.png', mime: 'image/png' },
+      { url: 'https://zl.test', token: 't' },
+    );
+    expect(v4.ref).toBe('clxyz123');
+
+    captureResponse = new Response(JSON.stringify({ files: ['https://zl.test/u/y.png'] }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+    const v3 = await zipline.upload(
+      Buffer.from([1]),
+      { filename: 'y.png', mime: 'image/png' },
+      { url: 'https://zl.test', token: 't' },
+    );
+    expect(v3.ref).toBeUndefined();
+  });
+
+  it('delete DELETEs /api/user/files/{ref} with the raw token; 404 = already gone', async () => {
+    const cap = captureFormData();
+    captureResponse = new Response(JSON.stringify({ id: 'clxyz123' }), { status: 200 });
+    await zipline.delete('clxyz123', { url: 'https://zl.test/', token: 'ziptok' });
+    expect(cap.url).toBe('https://zl.test/api/user/files/clxyz123');
+    const init = cap.init as RequestInit & { method: string; headers: Record<string, string> };
+    expect(init.method).toBe('DELETE');
+    expect(init.headers.authorization).toBe('ziptok');
+
+    globalThis.fetch = vi.fn<typeof fetch>(async () => new Response('gone', { status: 404 }));
+    await expect(
+      zipline.delete('clxyz123', { url: 'https://zl.test', token: 't' }),
+    ).resolves.toBeUndefined();
+  });
+
+  it('delete maps 401 to PROVIDER_AUTH and missing config to PROVIDER_CONFIG', async () => {
+    globalThis.fetch = vi.fn<typeof fetch>(async () => new Response('nope', { status: 401 }));
+    await expect(
+      zipline.delete('clxyz123', { url: 'https://zl.test', token: 'bad' }),
+    ).rejects.toMatchObject({ code: 'PROVIDER_AUTH' });
+    await expect(zipline.delete('clxyz123', { url: 'https://zl.test' })).rejects.toMatchObject({
+      code: 'PROVIDER_CONFIG',
+    });
+  });
 });
 
 describe('chibisafe provider', () => {
@@ -372,6 +478,56 @@ describe('chibisafe provider', () => {
         { url: 'https://u', api_key: 'k' },
       ),
     ).rejects.toMatchObject({ code: 'PROVIDER_ERROR' });
+  });
+
+  it('captures the response uuid as ref; a uuid-less response carries no ref', async () => {
+    captureFormData();
+    captureResponse = new Response(
+      JSON.stringify({ name: 'x.png', uuid: 'u-u-i-d', url: 'https://cb.test/x.png' }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    );
+    const withUuid = await chibisafe.upload(
+      Buffer.from([1]),
+      { filename: 'x.png', mime: 'image/png' },
+      { url: 'https://cb.test', api_key: 'k' },
+    );
+    expect(withUuid.ref).toBe('u-u-i-d');
+
+    captureResponse = new Response(JSON.stringify({ url: 'https://cb.test/y.png' }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+    const without = await chibisafe.upload(
+      Buffer.from([1]),
+      { filename: 'y.png', mime: 'image/png' },
+      { url: 'https://cb.test', api_key: 'k' },
+    );
+    expect(without.ref).toBeUndefined();
+  });
+
+  it('delete DELETEs /api/file/{uuid} with x-api-key; 404 = already gone', async () => {
+    const cap = captureFormData();
+    captureResponse = new Response('{}', { status: 200 });
+    await chibisafe.delete('u-u-i-d', { url: 'https://cb.test/', api_key: 'chibikey' });
+    expect(cap.url).toBe('https://cb.test/api/file/u-u-i-d');
+    const init = cap.init as RequestInit & { method: string; headers: Record<string, string> };
+    expect(init.method).toBe('DELETE');
+    expect(init.headers['x-api-key']).toBe('chibikey');
+
+    globalThis.fetch = vi.fn<typeof fetch>(async () => new Response('gone', { status: 404 }));
+    await expect(
+      chibisafe.delete('u-u-i-d', { url: 'https://cb.test', api_key: 'k' }),
+    ).resolves.toBeUndefined();
+  });
+
+  it('delete maps 401 to PROVIDER_AUTH and missing config to PROVIDER_CONFIG', async () => {
+    globalThis.fetch = vi.fn<typeof fetch>(async () => new Response('nope', { status: 401 }));
+    await expect(
+      chibisafe.delete('u-u-i-d', { url: 'https://cb.test', api_key: 'bad' }),
+    ).rejects.toMatchObject({ code: 'PROVIDER_AUTH' });
+    await expect(chibisafe.delete('u-u-i-d', { url: 'https://cb.test' })).rejects.toMatchObject({
+      code: 'PROVIDER_CONFIG',
+    });
   });
 });
 
@@ -466,5 +622,58 @@ describe('s3 provider', () => {
     await expect(
       s3.upload(Buffer.from([1]), { filename: 'x.png', mime: 'image/png' }, SECRETS),
     ).rejects.toMatchObject({ code: 'PROVIDER_ERROR' });
+  });
+
+  it('signObjectRequest DELETE signs an empty payload without content headers', () => {
+    const now = new Date('2026-01-02T03:04:05.000Z');
+    const signed = s3.signObjectRequest(
+      {
+        method: 'DELETE',
+        endpoint: SECRETS.endpoint,
+        bucket: SECRETS.bucket,
+        key: 'abc123.png',
+        region: 'auto',
+        accessKeyId: SECRETS.access_key_id,
+        secretAccessKey: SECRETS.secret_access_key,
+      },
+      now,
+    );
+    expect(signed.url).toBe('http://minio.test:9000/lurker/abc123.png');
+    // Empty payload hash (sha256 of zero bytes), no content-type/cache-control.
+    expect(signed.headers['x-amz-content-sha256']).toBe(
+      'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+    );
+    expect(signed.headers['content-type']).toBeUndefined();
+    expect(signed.headers.authorization).toMatch(
+      /SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=[0-9a-f]{64}$/,
+    );
+  });
+
+  it('delete sends a signed DELETE for the ref; 204 and 404 both succeed', async () => {
+    let delUrl = '';
+    let delMethod = '';
+    globalThis.fetch = vi.fn<typeof fetch>(async (url, init) => {
+      delUrl = String(url);
+      delMethod = init?.method ?? '';
+      return new Response(null, { status: 204 });
+    });
+    await s3.delete('abc123.png', SECRETS);
+    expect(delMethod).toBe('DELETE');
+    expect(delUrl).toBe('http://minio.test:9000/lurker/abc123.png');
+
+    globalThis.fetch = vi.fn<typeof fetch>(async () => new Response('NoSuchKey', { status: 404 }));
+    await expect(s3.delete('abc123.png', SECRETS)).resolves.toBeUndefined();
+  });
+
+  it('delete maps 403 to PROVIDER_AUTH and missing config to PROVIDER_CONFIG', async () => {
+    globalThis.fetch = vi.fn<typeof fetch>(
+      async () => new Response('SignatureDoesNotMatch', { status: 403 }),
+    );
+    await expect(s3.delete('abc123.png', SECRETS)).rejects.toMatchObject({
+      code: 'PROVIDER_AUTH',
+    });
+    await expect(s3.delete('abc123.png', { ...SECRETS, bucket: '' })).rejects.toMatchObject({
+      code: 'PROVIDER_CONFIG',
+    });
   });
 });
