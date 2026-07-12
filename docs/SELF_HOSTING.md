@@ -309,18 +309,30 @@ Symptom: you're using the **local** uploader, and an uploaded image loads fine w
 
 That asymmetry is the tell. Opening a link directly and embedding it on a page are different requests: the embedded one carries a `Referer` header naming the page it's embedded on. **Cloudflare's Hotlink Protection blocks image files whose `Referer` is a different domain**, returning a `403` at the edge before the request ever reaches Lurker.
 
-Confirm it with two `curl`s — same URL, different `Referer`:
+Confirm it with two `curl`s against the same URL, where the _only_ difference is the `Referer` header:
 
 ```bash
-# No referer: 200, image/jpeg — reaches Lurker
-curl -sSI https://lurker.example.com/uploads/local/<key>.jpg | head -1
+# 1. No referer → 200, and Lurker serves the image
+curl -sS -o /dev/null -D - \
+  https://lurker.example.com/uploads/local/<key>.jpg \
+  | grep -iE '^HTTP/|^content-type:'
+#   HTTP/2 200
+#   content-type: image/jpeg
 
-# Cross-domain referer: 403 from Cloudflare — blocked at the edge
-curl -sSI -H "Referer: https://example.org/" \
-  https://lurker.example.com/uploads/local/<key>.jpg | head -1
+# 2. Cross-domain referer → 403, and your image never gets served
+curl -sS -o /dev/null -D - -H 'Referer: https://example.org/' \
+  https://lurker.example.com/uploads/local/<key>.jpg \
+  | grep -iE '^HTTP/|^content-type:|^vary:'
+#   HTTP/2 403
+#   content-type: text/plain; charset=UTF-8
+#   vary: referer
 ```
 
-If the second one is a `403` with `server: cloudflare`, that's it. Turn Hotlink Protection off (or scope it around `/uploads/local/`) — see [File uploads on your own disk](#file-uploads-on-your-own-disk).
+If adding a `Referer` is all it takes to flip a `200` into a `403`, that's Hotlink Protection. The `403` comes back as `text/plain` (Cloudflare's block page) rather than your image, and `vary: referer` is Cloudflare telling you the decision was made on the referer.
+
+> Don't try to tell the two apart by looking for `server: cloudflare` — Cloudflare proxies the _successful_ response too, so that header is on both. The status flip is the signal.
+
+Turn Hotlink Protection off (or scope it around `/uploads/local/`) — see [File uploads on your own disk](#file-uploads-on-your-own-disk).
 
 ### Container logs
 
