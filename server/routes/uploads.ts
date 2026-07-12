@@ -8,12 +8,12 @@ import { requireAuth } from '../middleware/auth.js';
 import { getUserSettings } from '../db/settings.js';
 import { defaultsAsObject } from '../services/settingsRegistry.js';
 import * as imagePipeline from '../services/imagePipeline.js';
-import { driverIds, getDriver } from '../services/uploadProviders/index.js';
+import { driverIds } from '../services/uploadProviders/index.js';
 import type { ContentClass } from '../services/uploadProviders/index.js';
-import { getUploaderConfig } from '../db/uploaderConfig.js';
 import {
   resolveUploader,
   loadDriverForRef,
+  deletableWith,
   UploaderUnavailableError,
   UploaderNotConfiguredError,
   type ResolvedUploader,
@@ -89,6 +89,15 @@ function absolutizeUrl(url: string, storesRemotely: boolean, req: Request): stri
   }
   const base = (configured || requestOrigin(req)).replace(/\/+$/, '');
   return base ? base + url : url;
+}
+
+// Map a driver error onto an HTTP status. PROVIDER_AUTH deliberately does NOT
+// become 401: that's the provider rejecting the uploader's stored credential,
+// not the caller's Lurker session — and the client's api() treats any 401 as a
+// dead session and hard-reloads to the login page. Upstream failures of every
+// kind are 502; only a config the user can fix themselves is a 400.
+function providerErrorStatus(e: { code?: string }): number {
+  return e.code === 'PROVIDER_CONFIG' ? 400 : 502;
 }
 
 // multer needs configuring up-front, before we know the effective per-uploader
@@ -230,8 +239,7 @@ router.post(
         );
       } catch (err) {
         const e = err as { code?: string; message?: string };
-        const status = e.code === 'PROVIDER_AUTH' ? 401 : e.code === 'PROVIDER_CONFIG' ? 400 : 502;
-        res.status(status).json({ error: e.message, provider: resolved.driverId });
+        res.status(providerErrorStatus(e)).json({ error: e.message, provider: resolved.driverId });
         return;
       }
 
@@ -291,9 +299,8 @@ router.post(
 
       // Deletability is decided at capture time (decision 8): the driver returned
       // a ref only if this specific upload's bytes can be destroyed later.
-      const canDelete = Boolean(
-        result.ref && resolved.driver.capabilities.supportsDelete && resolved.driver.delete,
-      );
+      const canDelete =
+        Boolean(result.ref) && deletableWith(resolved.driver, resolved.driverConfig);
       res.json({
         id,
         url: mainUrl,
@@ -307,16 +314,17 @@ router.post(
 );
 
 // Can rows produced by this configured uploader have their bytes destroyed?
-// Memoized per request — a page of history rows references very few configs.
+// Same resolution the DELETE gate uses (loadDriverForRef → deletableWith), so
+// the list can never advertise a button the route would refuse. Memoized per
+// request — a page of history rows references very few configs.
 function configDeletableCheck(): (configId: number | null) => boolean {
   const memo = new Map<number, boolean>();
   return (configId) => {
     if (configId == null) return false;
     let known = memo.get(configId);
     if (known === undefined) {
-      const row = getUploaderConfig(configId);
-      const driver = row ? getDriver(row.driver) : null;
-      known = Boolean(driver && driver.capabilities.supportsDelete && driver.delete);
+      const loaded = loadDriverForRef(configId);
+      known = loaded != null && deletableWith(loaded.driver, loaded.driverConfig);
       memo.set(configId, known);
     }
     return known;
@@ -382,16 +390,17 @@ router.delete(
       row.ref && !row.removed && row.uploader_config_id != null
         ? loadDriverForRef(row.uploader_config_id)
         : null;
-    if (!loaded || !loaded.driver.capabilities.supportsDelete || !loaded.driver.delete) {
+    if (!loaded || !deletableWith(loaded.driver, loaded.driverConfig)) {
       res.status(409).json({ error: 'this upload cannot be deleted' });
       return;
     }
     try {
-      await loaded.driver.delete(row.ref!, loaded.driverConfig);
+      await loaded.driver.delete!(row.ref!, loaded.driverConfig);
     } catch (err) {
       const e = err as { code?: string; message?: string };
-      const status = e.code === 'PROVIDER_AUTH' ? 401 : e.code === 'PROVIDER_CONFIG' ? 400 : 502;
-      res.status(status).json({ error: e.message || 'delete failed', provider: row.provider });
+      res
+        .status(providerErrorStatus(e))
+        .json({ error: e.message || 'delete failed', provider: row.provider });
       return;
     }
     deleteUpload(req.user!.id, id);

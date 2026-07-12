@@ -102,11 +102,23 @@ export async function upload(
   return { url: text, ...(name ? { ref: name } : {}) };
 }
 
+// A row is only deletable while the config still holds a userhash — declared
+// here so the shared deletability predicate (and thus the client's trash
+// button) tracks the config instead of offering a button that must fail.
+export function canDeleteWith(config: Record<string, string>): boolean {
+  return Boolean(config.userhash);
+}
+
+const FILE_BASE = 'https://files.catbox.moe';
+
 /** Delete a file by the served filename upload() captured. Catbox answers 200
  *  with a plain-text body for both outcomes, so success is sniffed from the
- *  text; "doesn't exist" counts as already-gone. Requires the userhash the
- *  upload was made with — if the config no longer has one, the delete fails
- *  loudly rather than pretending. */
+ *  text. A "doesn't exist" reply is AMBIGUOUS: catbox says the same thing for a
+ *  genuinely-deleted file and for one the current userhash doesn't own (e.g.
+ *  the user swapped accounts since uploading) — and the second case must NOT
+ *  count as success, or we'd drop the record while the file stays live. So the
+ *  ambiguity is resolved by probing the public URL: gone → already deleted;
+ *  still served → refuse. */
 async function deleteFile(ref: string, config: { userhash?: string } = {}): Promise<void> {
   if (!config.userhash) {
     throw Object.assign(new Error('catbox delete requires the uploader’s userhash'), {
@@ -139,13 +151,25 @@ async function deleteFile(ref: string, config: { userhash?: string } = {}): Prom
   }
 
   const text = (resp.text || '').trim();
-  // Already gone is the outcome the caller wanted.
-  if (/doesn'?t exist/i.test(text)) return;
-  if (resp.status < 200 || resp.status >= 300 || !/successful/i.test(text)) {
-    throw Object.assign(new Error(`catbox delete failed: ${text.slice(0, 200) || resp.status}`), {
-      code: 'PROVIDER_ERROR',
+  if (resp.status >= 200 && resp.status < 300 && /successful/i.test(text)) return;
+
+  // Not a clean success — check whether the file is actually gone before
+  // failing. If the public URL 404s the delete already happened (out of band or
+  // on a lost prior attempt) and the caller may safely drop the record; any
+  // other outcome keeps the record.
+  try {
+    const probe = await fetch(`${FILE_BASE}/${encodeURIComponent(ref)}`, {
+      method: 'HEAD',
+      headers: { 'User-Agent': USER_AGENT },
+      signal: AbortSignal.timeout(15_000),
     });
+    if (probe.status === 404 || probe.status === 410) return;
+  } catch {
+    // Probe failed → we can't prove the file is gone; fall through to the error.
   }
+  throw Object.assign(new Error(`catbox delete failed: ${text.slice(0, 200) || resp.status}`), {
+    code: 'PROVIDER_ERROR',
+  });
 }
 
 export { deleteFile as delete };

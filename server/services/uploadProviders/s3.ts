@@ -219,23 +219,6 @@ export function signObjectRequest(
   };
 }
 
-/** Backwards-compatible PUT wrapper around signObjectRequest. */
-export function signPutObject(
-  params: {
-    endpoint: string;
-    bucket: string;
-    key: string;
-    payload: Buffer;
-    contentType: string;
-    region: string;
-    accessKeyId: string;
-    secretAccessKey: string;
-  },
-  now: Date = new Date(),
-): SignedRequest {
-  return signObjectRequest({ method: 'PUT', ...params }, now);
-}
-
 function requireField(config: Record<string, string>, field: string): string {
   const value = (config[field] || '').trim();
   if (!value) {
@@ -258,7 +241,8 @@ export async function upload(
   const region = (config.region || '').trim() || 'auto';
 
   const key = buildObjectKey(filename, { kind, prefix: config.key_prefix });
-  const signed = signPutObject({
+  const signed = signObjectRequest({
+    method: 'PUT',
     endpoint,
     bucket,
     key,
@@ -286,8 +270,11 @@ export async function upload(
 }
 
 /** Remove one object by its key (the ref upload() returned). S3 DeleteObject is
- *  idempotent — deleting a key that's already gone returns 204 — so the
- *  "already deleted counts as success" contract needs no special-casing here. */
+ *  idempotent by protocol — deleting a key that's already gone returns 204 — so
+ *  the "already deleted counts as success" contract holds with NO 404
+ *  carve-out. Deliberately so: a 404 here means the request never reached a
+ *  real DeleteObject handler (repointed endpoint, wrong bucket), and swallowing
+ *  it would drop the record while the original object lives on. */
 async function deleteObject(ref: string, config: Record<string, string> = {}): Promise<void> {
   const endpoint = requireField(config, 'endpoint');
   const bucket = requireField(config, 'bucket');
@@ -305,8 +292,12 @@ async function deleteObject(ref: string, config: Record<string, string> = {}): P
     secretAccessKey,
   });
 
-  const resp = await fetch(signed.url, { method: 'DELETE', headers: signed.headers });
-  if (!resp.ok && resp.status !== 404) {
+  const resp = await fetch(signed.url, {
+    method: 'DELETE',
+    headers: signed.headers,
+    signal: AbortSignal.timeout(60_000),
+  });
+  if (!resp.ok) {
     const text = (await resp.text()).slice(0, 200);
     throw Object.assign(new Error(`s3 delete failed: ${resp.status} ${text}`), {
       code: resp.status === 401 || resp.status === 403 ? 'PROVIDER_AUTH' : 'PROVIDER_ERROR',

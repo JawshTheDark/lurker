@@ -183,14 +183,30 @@ describe('catbox provider', () => {
     expect(text).toContain('xyz.png');
   });
 
-  it('delete treats "doesn\'t exist" as already gone, other text as failure', async () => {
+  it('delete resolves a non-success reply only when the public URL proves the file is gone', async () => {
+    // Catbox says "doesn't exist" both for a genuinely-deleted file and for one
+    // the current userhash doesn't own. The driver probes the public URL to
+    // disambiguate: 404 → really gone (success)…
     vi.spyOn(multipart, 'postBuffer').mockResolvedValue({
       status: 200,
       headers: {},
       text: "File doesn't exist?",
     });
+    globalThis.fetch = vi.fn<typeof fetch>(async (url, init) => {
+      expect(String(url)).toBe('https://files.catbox.moe/gone.png');
+      expect(init?.method).toBe('HEAD');
+      return new Response(null, { status: 404 });
+    });
     await expect(catbox.delete('gone.png', { userhash: 'h' })).resolves.toBeUndefined();
 
+    // …but a file that's still being served must NOT count as deleted — that's
+    // the userhash-mismatch case, and dropping the record would strand the file.
+    globalThis.fetch = vi.fn<typeof fetch>(async () => new Response(null, { status: 200 }));
+    await expect(catbox.delete('gone.png', { userhash: 'h' })).rejects.toMatchObject({
+      code: 'PROVIDER_ERROR',
+    });
+
+    // An unrecognized error reply with a live file also fails.
     vi.spyOn(multipart, 'postBuffer').mockResolvedValue({
       status: 200,
       headers: {},
@@ -205,6 +221,11 @@ describe('catbox provider', () => {
     await expect(catbox.delete('xyz.png', {})).rejects.toMatchObject({
       code: 'PROVIDER_CONFIG',
     });
+  });
+
+  it('canDeleteWith tracks the presence of a userhash', () => {
+    expect(catbox.canDeleteWith({ userhash: 'abc' })).toBe(true);
+    expect(catbox.canDeleteWith({})).toBe(false);
   });
 });
 
@@ -549,9 +570,10 @@ describe('s3 provider', () => {
     expect(s3.buildObjectKey('evil.<scr>', {})).toMatch(/\.bin$/);
   });
 
-  it('signPutObject is deterministic for a pinned clock and shaped like SigV4', () => {
+  it('signObjectRequest is deterministic for a pinned clock and shaped like SigV4', () => {
     const now = new Date('2026-01-02T03:04:05.000Z');
     const args = {
+      method: 'PUT' as const,
       endpoint: SECRETS.endpoint,
       bucket: SECRETS.bucket,
       key: 'abc123.png',
@@ -561,8 +583,8 @@ describe('s3 provider', () => {
       accessKeyId: SECRETS.access_key_id,
       secretAccessKey: SECRETS.secret_access_key,
     };
-    const a = s3.signPutObject(args, now);
-    const b = s3.signPutObject(args, now);
+    const a = s3.signObjectRequest(args, now);
+    const b = s3.signObjectRequest(args, now);
     expect(a).toEqual(b);
     expect(a.url).toBe('http://minio.test:9000/lurker/abc123.png');
     expect(a.headers['x-amz-date']).toBe('20260102T030405Z');
@@ -570,7 +592,7 @@ describe('s3 provider', () => {
       /^AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE\/20260102\/auto\/s3\/aws4_request, SignedHeaders=cache-control;content-type;host;x-amz-content-sha256;x-amz-date, Signature=[0-9a-f]{64}$/,
     );
     // A different secret must change the signature.
-    const c = s3.signPutObject({ ...args, secretAccessKey: 'other' }, now);
+    const c = s3.signObjectRequest({ ...args, secretAccessKey: 'other' }, now);
     expect(c.headers.authorization).not.toBe(a.headers.authorization);
   });
 
@@ -649,7 +671,7 @@ describe('s3 provider', () => {
     );
   });
 
-  it('delete sends a signed DELETE for the ref; 204 and 404 both succeed', async () => {
+  it('delete sends a signed DELETE for the ref; 204 succeeds (S3 delete is idempotent)', async () => {
     let delUrl = '';
     let delMethod = '';
     globalThis.fetch = vi.fn<typeof fetch>(async (url, init) => {
@@ -660,9 +682,16 @@ describe('s3 provider', () => {
     await s3.delete('abc123.png', SECRETS);
     expect(delMethod).toBe('DELETE');
     expect(delUrl).toBe('http://minio.test:9000/lurker/abc123.png');
+  });
 
+  it('delete rejects on 404 — a real DeleteObject never 404s, so the target was wrong', async () => {
+    // S3 answers 204 even for a missing key; a 404 means the config points
+    // somewhere that isn't the object's home (repointed endpoint/bucket) and
+    // must NOT count as "already gone".
     globalThis.fetch = vi.fn<typeof fetch>(async () => new Response('NoSuchKey', { status: 404 }));
-    await expect(s3.delete('abc123.png', SECRETS)).resolves.toBeUndefined();
+    await expect(s3.delete('abc123.png', SECRETS)).rejects.toMatchObject({
+      code: 'PROVIDER_ERROR',
+    });
   });
 
   it('delete maps 403 to PROVIDER_AUTH and missing config to PROVIDER_CONFIG', async () => {

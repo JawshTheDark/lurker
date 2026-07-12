@@ -99,6 +99,7 @@ async function deleteFile(
   const resp = await fetch(`${base}/api/file/${encodeURIComponent(ref)}`, {
     method: 'DELETE',
     headers: { 'x-api-key': config.api_key, 'User-Agent': USER_AGENT },
+    signal: AbortSignal.timeout(60_000),
   });
   if (!resp.ok && resp.status !== 404) {
     const text = (await resp.text()).slice(0, 200);

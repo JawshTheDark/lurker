@@ -74,6 +74,17 @@ export interface UploadDriver {
   capabilities: DriverCapabilities;
   configSchema: ConfigField[];
   upload(buffer: Buffer, meta: UploadMeta, config: Record<string, string>): Promise<UploadResult>;
-  // Present iff capabilities.supportsDelete.
+  // Present iff capabilities.supportsDelete. CONTRACT: must be idempotent —
+  // "already gone" resolves rather than throws, because the route drops the DB
+  // row only after delete() succeeds, so a delete whose response was lost gets
+  // retried against bytes that are already destroyed. Failures throw with the
+  // PROVIDER_CONFIG / PROVIDER_AUTH / PROVIDER_ERROR code taxonomy; never
+  // resolve on an ambiguous outcome (a resolved delete() is the route's license
+  // to destroy the only record of the file).
   delete?(ref: string, config: Record<string, string>): Promise<void>;
+  // Optional per-config refinement of supportsDelete: can delete() work with
+  // THIS config right now? (catbox: only with a userhash.) Absent → yes.
+  // Deletability of a row = supportsDelete ∧ canDeleteWith(config) ∧ ref
+  // present — see deletableWith() in resolve.ts, the one shared predicate.
+  canDeleteWith?(config: Record<string, string>): boolean;
 }

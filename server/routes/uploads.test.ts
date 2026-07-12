@@ -151,13 +151,15 @@ describe('POST /api/uploads', () => {
     expect(res.status).toBe(200);
   });
 
-  it('maps PROVIDER_AUTH into 401', async () => {
+  it('maps PROVIDER_AUTH into 502 — provider auth is not session auth', async () => {
+    // A 401 here would trip the client's bounce-to-login handler and hard-reload
+    // the app over a bad *provider* credential while the Lurker session is fine.
     const err = Object.assign(new Error('bad creds'), { code: 'PROVIDER_AUTH' });
     stub.shouldThrow = err;
     const res = await agent
       .post('/api/uploads')
       .attach('image', smallPng, { filename: 'auth.png', contentType: 'image/png' });
-    expect(res.status).toBe(401);
+    expect(res.status).toBe(502);
     stub.shouldThrow = null;
   });
 
@@ -393,7 +395,9 @@ describe('DELETE /api/uploads/:id', () => {
     }
   });
 
-  it('maps a PROVIDER_AUTH delete failure to 401', async () => {
+  it('maps a PROVIDER_AUTH delete failure to 502, never 401', async () => {
+    // 401 would make the client treat a revoked provider token as a dead Lurker
+    // session and reload to the login page mid-click.
     stub.capabilities.supportsDelete = true;
     stub.nextResult = { url: 'https://stub.example/auth.png', ref: 'auth.png' };
     try {
@@ -406,9 +410,38 @@ describe('DELETE /api/uploads/:id', () => {
       };
       try {
         const del = await agent.delete(`/api/uploads/${up.body.id}`);
-        expect(del.status).toBe(401);
+        expect(del.status).toBe(502);
       } finally {
         stub.delete = origDelete;
+      }
+    } finally {
+      stub.capabilities.supportsDelete = false;
+      stub.nextResult = null;
+    }
+  });
+
+  it('409s (and hides the button) when the config no longer satisfies canDeleteWith', async () => {
+    // catbox-shaped case: the row captured a ref while a userhash existed, but
+    // the config has since lost it. The row must not advertise can_delete and
+    // the route must refuse — a button that always errors is not offered.
+    stub.capabilities.supportsDelete = true;
+    stub.nextResult = { url: 'https://stub.example/hash.png', ref: 'hash.png' };
+    try {
+      const up = await agent
+        .post('/api/uploads')
+        .attach('image', smallPng, { filename: 'hash.png', contentType: 'image/png' });
+      expect(up.body.can_delete).toBe(true);
+
+      (stub as { canDeleteWith?: (c: Record<string, string>) => boolean }).canDeleteWith = () =>
+        false;
+      try {
+        const list = await agent.get('/api/uploads');
+        const row = list.body.items.find((r: { id: number }) => r.id === up.body.id);
+        expect(row.can_delete).toBe(false);
+        const del = await agent.delete(`/api/uploads/${up.body.id}`);
+        expect(del.status).toBe(409);
+      } finally {
+        delete (stub as { canDeleteWith?: unknown }).canDeleteWith;
       }
     } finally {
       stub.capabilities.supportsDelete = false;
