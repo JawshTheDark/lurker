@@ -22,6 +22,9 @@ Lurker runs as an always-on server that stays connected to IRC on your behalf, k
 - **Customizable UI.** The beautiful retro terminal-style interface has 40+ settings to customize it how you want, and you can freely pin and rearrange channels and DMs.
 - **Installable.** Lurker is a PWA — install it as a native-feeling app on your phone, Mac, or PC straight from the browser.
 - **Built-in bouncer.** Opt-in, TLS-by-default IRC listener: attach any client — from mIRC to modern IRCv3 clients like Halloy, gamja, and Goguma — to your always-on connection. Speaks SASL, network discovery (`soju.im/bouncer-networks`), and on-demand scrollback (`draft/chathistory`) for capable clients, with history playback on attach for the rest. See the [self-hosting guide](docs/SELF_HOSTING.md#irc-bouncer-attach-from-other-irc-clients).
+- **DCC transfers.** Opt-in peer-to-peer file send/receive and DCC chat, active or passive/reverse (NAT-friendly), with per-user auto-accept, size caps, and a live Transfers panel. Start one from a nick's menu, the DM header, or `/dcc send`. See the [self-hosting guide](docs/SELF_HOSTING.md#dcc-file-transfers).
+- **File server (fserve).** Serve a directory of your own over DCC as a classic IRC fserve — peers browse with `dir`/`cd`/`get`, with a real send queue, access controls (open / allowlist / password), channel ads, file filters, and an opt-in `@find` search. See the [self-hosting guide](docs/SELF_HOSTING.md#file-server-fserve).
+- **Self-hosted uploads.** Beyond the anonymous image hosts, upload to your own Zipline, Chibisafe, or any S3-compatible bucket (Cloudflare R2, MinIO, Garage, AWS).
 
 # Screenshot (as macOS PWA)
 

@@ -21,6 +21,7 @@ If you know the command, you never need to reach for the mouse.
 - `/network` — view and manage your network connections.
 - `/set`, `/get` — read and change settings from the keyboard.
 - `/away` — set your away status (applies to every connection).
+- `/dcc send <nick>`, `/dcc chat <nick>`, `/dcc list` — send a file, open a direct DCC chat, or view transfers (when DCC is enabled). You can also start these from a nick's right-click menu or the DM header.
 
 ## Reference
 

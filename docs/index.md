@@ -28,4 +28,6 @@ features:
     details: Peer presence, automatic nick regain, join/part summarization, tab completion, drafts, saved messages, image uploads, and a searchable channel browser.
   - title: Customizable & installable
     details: A retro terminal-style interface with 40+ settings, installable as a PWA on your phone, Mac, or PC.
+  - title: Bouncer, DCC & fserve
+    details: An opt-in TLS bouncer to attach any IRC client, peer-to-peer DCC file transfers and chat, and a built-in file server (fserve) to share a directory the classic IRC way.
 ---

@@ -241,6 +241,49 @@ Playback replays the last 50 lines per joined channel (plus your 20 most recentl
 
 Known limitations (shared-connection bouncer semantics): replies to one attached client's WHOIS/LIST are visible to all attached clients on that network; Lurker-side ignore rules don't filter the live relay; and on end-to-end encrypted channels an attached client sees the wire ciphertext for incoming messages.
 
+### DCC file transfers
+
+DCC moves files (and opens direct DCC chats) peer-to-peer with other IRC users — the classic way files travel on IRC, and how XDCC/fserve bots serve them. It's **off by default** and gated twice: an instance master switch, plus a per-user capability grant (so turning it on for the instance doesn't hand every account the ability).
+
+```yaml
+environment:
+  - LURKER_DCC_ENABLED=true
+  - LURKER_DCC_DIR=/app/data/dcc            # where received files are written
+  - LURKER_DCC_EXTERNAL_HOST=203.0.113.7    # your PUBLIC IP (or a hostname resolving to it)
+  - LURKER_DCC_LISTEN_PORT_MIN=30000        # an inclusive port RANGE …
+  - LURKER_DCC_LISTEN_PORT_MAX=30019        # … published in docker-compose + firewalled
+ports:
+  - '30000-30019:30000-30019'
+```
+
+Those ports must be reachable from the internet for **active** DCC (the peer connects _to you_) — publish the range in docker-compose and open it in your firewall. If you can't open ports (behind NAT/CGNAT, or attaching via the bouncer), Lurker falls back to **passive/reverse** DCC, where the peer listens and Lurker dials out; a user can make that the default with **Settings → DCC transfers → Prefer passive DCC**.
+
+Optional knobs: `LURKER_DCC_MAX_FILE_MB` (hard cap on an accepted file), `LURKER_DCC_ALLOW_PRIVATE_HOSTS` (allow dialing LAN/loopback peers — off by default as an SSRF guard; turn on only to pull from a bot on your own network), and `LURKER_DCC_LISTEN_BIND` (bind interface inside the container, default `0.0.0.0`).
+
+Per user, **Settings → DCC transfers** adds: auto-accept from a trusted nick/hostmask allowlist, prefer-passive, a personal max-accept size (stacked under the operator cap), and a transfer-finished notification. Start a transfer from a user's right-click menu or the DM header, or with `/dcc send <nick>` and `/dcc chat <nick>`; everything shows in the **Transfers** panel.
+
+> Granting DCC to a user currently has no admin-panel toggle — set the per-user capability directly, e.g. `docker exec -i lurker` running a small `tsx` script that calls `setUserCapability(userId, 'dcc', true)`.
+
+### File server (fserve)
+
+Serve a directory of your own over DCC as a classic IRC **fserve**: other users open a DCC-CHAT session and browse it with `dir`/`cd`/`get` (plus `1d`/`2F` number-letter shorthand), downloading over DCC — the same way `#ELITEWAREZ`-style fserve bots work. It rides on the DCC subsystem above (DCC must be enabled for the serving user) and is **off by default**.
+
+```yaml
+environment:
+  - LURKER_FSERVE_ENABLED=true
+  - LURKER_FSERVE_DIR=/srv/archive   # the served root — also the sandbox ceiling
+volumes:
+  - /srv/archive:/srv/archive:ro     # mount it READ-ONLY; nothing is ever written here
+```
+
+Everything under `LURKER_FSERVE_DIR` is browsable, path-traversal-sandboxed so a peer can never escape the root — mount it **read-only**. Then enable it per user in **Settings → File server** and pick an access mode:
+
+- **open** — anyone who triggers it,
+- **allowlist** — only nicks / `nick!user@host` globs you list,
+- **password** — the session prompts for a password.
+
+Peers open the fserve with a CTCP (`/ctcp you FSERVE`) or a `/msg` trigger word you configure. The same settings pane exposes a welcome banner, a real send queue (`Sends:[x/N] Queues:[y/M]` with `queues`/`sends`/`stats`/`who`/`clr_queue` commands), an idle timeout, periodic channel ads, hidden-file / allowed-extension filters, and an opt-in `@find <query>` channel search across your archive (bounded + rate-limited).
+
 ---
 
 ## Troubleshooting
