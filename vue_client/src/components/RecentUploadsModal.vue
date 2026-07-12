@@ -47,7 +47,7 @@
             <button
               v-if="!u.removed && u.can_delete"
               class="link delete"
-              :disabled="deletingId === u.id"
+              :disabled="deletingId !== null"
               @click="onDelete(u)"
               title="delete file"
               aria-label="delete file"
@@ -135,6 +135,10 @@ async function onCopy(u: UploadRow) {
 }
 
 async function onDelete(u: UploadRow) {
+  // One delete at a time: a second in-flight delete would fight over the single
+  // deletingId ref (spinner/disabled state desync). All delete buttons are
+  // disabled while one runs; this guard covers the pre-render window.
+  if (deletingId.value !== null) return;
   if (!confirm(`Delete "${u.filename || u.url}"? The file is removed from storage.`)) return;
   deletingId.value = u.id;
   deleteError.value = '';

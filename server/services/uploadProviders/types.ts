@@ -29,7 +29,9 @@ export interface DriverCapabilities {
   // Can the driver remove stored bytes given a ref? Deletability of a specific
   // upload is decided at capture time: upload() returns a ref only when that
   // upload can actually be deleted later (e.g. catbox omits it for anonymous
-  // uploads), so "deletable row" = supportsDelete AND ref present. x0 has no
+  // uploads). The full row predicate is deletableWith() in resolve.ts —
+  // supportsDelete AND canDeleteWith(config) AND ref present — since a config
+  // can lose the credential delete() needs after refs were captured. x0 has no
   // delete API at all; hosted dropper deletion stays CP-mediated (CP #55).
   supportsDelete: boolean;
   // true only where WE construct the storage key (s3, local — none in P0). The
