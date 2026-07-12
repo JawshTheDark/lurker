@@ -26,8 +26,13 @@ export interface DriverCapabilities {
   // true → the driver returns a public URL on another origin (x0/catbox/hoarder/
   // s3). false → WE serve the bytes (local) and the route builds the URL.
   storesRemotely: boolean;
-  // Can the stored bytes be removed given a ref? All P0 drivers: false (external
-  // forwarders don't offer delete; hosted takedown stays CP/admin-key-only).
+  // Can the driver remove stored bytes given a ref? Deletability of a specific
+  // upload is decided at capture time: upload() returns a ref only when that
+  // upload can actually be deleted later (e.g. catbox omits it for anonymous
+  // uploads). The full row predicate is deletableWith() in resolve.ts —
+  // supportsDelete AND canDeleteWith(config) AND ref present — since a config
+  // can lose the credential delete() needs after refs were captured. x0 has no
+  // delete API at all; hosted dropper deletion stays CP-mediated (CP #55).
   supportsDelete: boolean;
   // true only where WE construct the storage key (s3, local — none in P0). The
   // preserve-original-filename option (#517) is a no-op where the remote host
@@ -71,6 +76,17 @@ export interface UploadDriver {
   capabilities: DriverCapabilities;
   configSchema: ConfigField[];
   upload(buffer: Buffer, meta: UploadMeta, config: Record<string, string>): Promise<UploadResult>;
-  // Present iff capabilities.supportsDelete.
+  // Present iff capabilities.supportsDelete. CONTRACT: must be idempotent —
+  // "already gone" resolves rather than throws, because the route drops the DB
+  // row only after delete() succeeds, so a delete whose response was lost gets
+  // retried against bytes that are already destroyed. Failures throw with the
+  // PROVIDER_CONFIG / PROVIDER_AUTH / PROVIDER_ERROR code taxonomy; never
+  // resolve on an ambiguous outcome (a resolved delete() is the route's license
+  // to destroy the only record of the file).
   delete?(ref: string, config: Record<string, string>): Promise<void>;
+  // Optional per-config refinement of supportsDelete: can delete() work with
+  // THIS config right now? (catbox: only with a userhash.) Absent → yes.
+  // Deletability of a row = supportsDelete ∧ canDeleteWith(config) ∧ ref
+  // present — see deletableWith() in resolve.ts, the one shared predicate.
+  canDeleteWith?(config: Record<string, string>): boolean;
 }

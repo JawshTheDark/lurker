@@ -39,6 +39,10 @@ export interface UploadItem {
   // True when the hosted operator has moderated the upload away. The row stays
   // as a tombstone; its bytes are gone from storage.
   removed?: boolean;
+  // True when deleting this row destroys the stored bytes. Rows without it get
+  // no delete affordance at all — there is no "remove the record but leave the
+  // file up" path (design decision 8).
+  can_delete?: boolean;
 }
 
 export const useUploadsStore = defineStore('uploads', {
@@ -89,6 +93,7 @@ export const useUploadsStore = defineStore('uploads', {
             url: result.url,
             filename,
             mime: file.type || null,
+            can_delete: !!result.can_delete,
             ...(thumbnail_url ? { thumbnail_url } : {}),
           });
         }

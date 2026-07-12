@@ -13,6 +13,7 @@ import type { ContentClass } from '../services/uploadProviders/index.js';
 import {
   resolveUploader,
   loadDriverForRef,
+  deletableWith,
   UploaderUnavailableError,
   UploaderNotConfiguredError,
   type ResolvedUploader,
@@ -88,6 +89,15 @@ function absolutizeUrl(url: string, storesRemotely: boolean, req: Request): stri
   }
   const base = (configured || requestOrigin(req)).replace(/\/+$/, '');
   return base ? base + url : url;
+}
+
+// Map a driver error onto an HTTP status. PROVIDER_AUTH deliberately does NOT
+// become 401: that's the provider rejecting the uploader's stored credential,
+// not the caller's Lurker session — and the client's api() treats any 401 as a
+// dead session and hard-reloads to the login page. Upstream failures of every
+// kind are 502; only a config the user can fix themselves is a 400.
+function providerErrorStatus(e: { code?: string }): number {
+  return e.code === 'PROVIDER_CONFIG' ? 400 : 502;
 }
 
 // multer needs configuring up-front, before we know the effective per-uploader
@@ -229,8 +239,7 @@ router.post(
         );
       } catch (err) {
         const e = err as { code?: string; message?: string };
-        const status = e.code === 'PROVIDER_AUTH' ? 401 : e.code === 'PROVIDER_CONFIG' ? 400 : 502;
-        res.status(status).json({ error: e.message, provider: resolved.driverId });
+        res.status(providerErrorStatus(e)).json({ error: e.message, provider: resolved.driverId });
         return;
       }
 
@@ -288,27 +297,60 @@ router.post(
         height: outHeight,
       });
 
-      res.json({ id, url: mainUrl, ...(thumbnailUrl ? { thumbnail_url: thumbnailUrl } : {}) });
+      // Deletability is decided at capture time (decision 8): the driver returned
+      // a ref only if this specific upload's bytes can be destroyed later.
+      const canDelete =
+        Boolean(result.ref) && deletableWith(resolved.driver, resolved.driverConfig);
+      res.json({
+        id,
+        url: mainUrl,
+        can_delete: canDelete,
+        ...(thumbnailUrl ? { thumbnail_url: thumbnailUrl } : {}),
+      });
     } catch (err) {
       next(err);
     }
   }),
 );
 
+// Can rows produced by this configured uploader have their bytes destroyed?
+// Same resolution the DELETE gate uses (loadDriverForRef → deletableWith), so
+// the list can never advertise a button the route would refuse. Memoized per
+// request — a page of history rows references very few configs.
+function configDeletableCheck(): (configId: number | null) => boolean {
+  const memo = new Map<number, boolean>();
+  return (configId) => {
+    if (configId == null) return false;
+    let known = memo.get(configId);
+    if (known === undefined) {
+      const loaded = loadDriverForRef(configId);
+      known = loaded != null && deletableWith(loaded.driver, loaded.driverConfig);
+      memo.set(configId, known);
+    }
+    return known;
+  };
+}
+
 router.get('/', (req: Request, res: Response) => {
   const before = req.query.before ? Number(req.query.before) : null;
   const limit = req.query.limit ? Number(req.query.limit) : 50;
   const rows: UploadListRow[] = listUploads(req.user!.id, { before, limit });
+  const configDeletable = configDeletableCheck();
   res.json({
     items: rows.map((r) => {
-      const { has_thumbnail, thumbnail_url, removed, ...rest } = r;
+      const { has_thumbnail, thumbnail_url, removed, uploader_config_id, has_ref, ...rest } = r;
       // A moderated-away upload keeps its row as a tombstone, but its bytes are
       // gone — advertise no thumbnail so the client renders the tombstone.
       if (removed) return { ...rest, removed: true };
+      // A row is deletable only when its bytes can actually be destroyed: the
+      // driver captured a delete handle at upload time AND its configured
+      // uploader still exists with a delete-capable driver. No ref (x0, anonymous
+      // catbox, pre-#541 rows) → the client never shows a delete button.
+      const can_delete = Boolean(has_ref) && configDeletable(uploader_config_id);
       // Prefer a remote CDN thumbnail; otherwise fall back to the local
       // BLOB-serving route when an inline thumbnail exists.
       const thumb = thumbnail_url || (has_thumbnail ? `/api/uploads/${r.id}/thumb` : null);
-      return thumb ? { ...rest, thumbnail_url: thumb } : rest;
+      return { ...rest, can_delete, ...(thumb ? { thumbnail_url: thumb } : {}) };
     }),
     providers: driverIds,
   });
@@ -327,34 +369,43 @@ router.get('/:id/thumb', (req: Request, res: Response) => {
   res.send(row.thumbnail);
 });
 
-router.delete('/:id', (req: Request, res: Response) => {
-  const id = Number(req.params.id);
-  // Capture the delete handle before dropping the row so we can reap the bytes
-  // for drivers that own their storage (local disk). Ownership is enforced by the
-  // user-scoped lookup — a caller can only reap their own upload.
-  const reap = getUploadForReap(req.user!.id, id);
-  const ok = deleteUpload(req.user!.id, id);
-  if (!ok) {
-    res.status(404).json({ error: 'not found' });
-    return;
-  }
-  // Best-effort, fire-and-forget: a failed unlink leaves an orphan file but must
-  // never fail the user's delete or block the response. Non-owning drivers
-  // (x0/catbox/hoarder) don't advertise delete, so this is a no-op for them.
-  if (reap && reap.ref && reap.uploader_config_id != null) {
-    void reapUploadBytes(reap.uploader_config_id, reap.ref);
-  }
-  res.json({ ok: true });
-});
-
-async function reapUploadBytes(configId: number, ref: string): Promise<void> {
-  try {
-    const loaded = loadDriverForRef(configId);
-    if (!loaded || !loaded.driver.capabilities.supportsDelete || !loaded.driver.delete) return;
-    await loaded.driver.delete(ref, loaded.driverConfig);
-  } catch (err) {
-    console.error('[lurker] upload byte reap failed:', err);
-  }
-}
+// Delete = destroy the bytes, then drop the row (decision 8, revised). There is
+// deliberately NO "remove the record but leave the file up" path: rows whose
+// bytes can't be destroyed (no ref, driver can't delete, config gone, moderation
+// tombstone) are refused — the client never offered a button for them, so a
+// request for one is forged or stale. Bytes go first so a driver failure keeps
+// the row and the user can retry; drivers treat "already gone" as success.
+router.delete(
+  '/:id',
+  asyncHandler(async (req: Request, res: Response) => {
+    const id = Number(req.params.id);
+    // Ownership is enforced by the user-scoped lookup — a caller can only
+    // delete their own upload.
+    const row = getUploadForReap(req.user!.id, id);
+    if (!row) {
+      res.status(404).json({ error: 'not found' });
+      return;
+    }
+    const loaded =
+      row.ref && !row.removed && row.uploader_config_id != null
+        ? loadDriverForRef(row.uploader_config_id)
+        : null;
+    if (!loaded || !deletableWith(loaded.driver, loaded.driverConfig)) {
+      res.status(409).json({ error: 'this upload cannot be deleted' });
+      return;
+    }
+    try {
+      await loaded.driver.delete!(row.ref!, loaded.driverConfig);
+    } catch (err) {
+      const e = err as { code?: string; message?: string };
+      res
+        .status(providerErrorStatus(e))
+        .json({ error: e.message || 'delete failed', provider: row.provider });
+      return;
+    }
+    deleteUpload(req.user!.id, id);
+    res.json({ ok: true });
+  }),
+);
 
 export default router;
