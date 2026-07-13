@@ -201,6 +201,11 @@ const uploadToDisk = (req: Request, res: Response, next: NextFunction): void => 
   const handler = multer({
     storage,
     limits: { fileSize: capMb * 1024 * 1024, files: 1 },
+    // busboy decodes multipart params as LATIN-1 unless told otherwise, so any
+    // non-ASCII filename arrives mangled — a macOS screen recording is named with a
+    // narrow no-break space (U+202F) before AM/PM, whose UTF-8 bytes (E2 80 AF) then
+    // show up in the uploads list as "â¯". Browsers send the header in UTF-8.
+    defParamCharset: 'utf8',
   }).single('image');
   handler(req, res, (err: unknown) => {
     // multer aborts the stream and unlinks its partial file once the cap is hit,

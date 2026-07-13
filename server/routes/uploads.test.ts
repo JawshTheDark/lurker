@@ -598,6 +598,26 @@ describe('temp-file lifecycle (#543)', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 // #515: media uploads. The route classifies from magic bytes and scrubs metadata
 // before dispatch — the two things that make "we accept video" safe to say.
+describe('filenames are UTF-8', () => {
+  it('round-trips a non-ASCII filename intact', async () => {
+    stub.shouldThrow = null;
+    // macOS puts a NARROW NO-BREAK SPACE (U+202F) between the time and AM/PM in
+    // screen-recording names. Its UTF-8 bytes are E2 80 AF, and busboy's DEFAULT is
+    // to decode multipart params as latin1 — which renders them as "â¯".
+    const name = 'Screen Recording 2026-07-12 at 8.10.56\u202fPM.mov';
+    const res = await agent
+      .post('/api/uploads')
+      .attach('image', smallPng, { filename: name, contentType: 'image/png' });
+    expect(res.status).toBe(200);
+
+    const list = await agent.get('/api/uploads');
+    const row = list.body.items.find((r: { id: number }) => r.id === res.body.id);
+    expect(row.filename).toBe(name);
+    expect(row.filename).not.toContain('â');
+    await waitForNoTemps();
+  });
+});
+
 describe('media uploads (#515)', () => {
   /** An mp4 carrying GPS in moov/udta/©xyz, exactly where a phone puts it. */
   const GPS = '+37.7749-122.4194/';
