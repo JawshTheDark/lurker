@@ -1816,6 +1816,7 @@ export const CATEGORIES: readonly SettingCategory[] = Object.freeze([
   { id: 'notifications', label: 'Notifications', kind: 'bespoke' },
   { id: 'highlights', label: 'Highlights', kind: 'bespoke' },
   { id: 'ignores', label: 'Ignores', kind: 'bespoke' },
+  { id: 'aliases', label: 'Aliases', kind: 'bespoke' },
   { id: 'away', label: 'Away', kind: 'registry' },
   { id: 'networks', label: 'Networks', kind: 'bespoke' },
   { id: 'account', label: 'Account', kind: 'bespoke' },

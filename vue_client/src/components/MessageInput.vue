@@ -147,6 +147,7 @@ import { splitSetArgs, coerceSettingValue, formatSettingValue } from '../lib/com
 import { parseRelayCommand } from '../lib/commands/relay.js';
 import { parseDccCommand } from '../lib/commands/dcc.js';
 import { formatColumns } from '../lib/commands/output.js';
+import { resolveAlias } from '../lib/commands/aliasResolver.js';
 import { REGISTRY, getOption, optionVisible, CATEGORIES } from '../utils/settingsRegistry.js';
 import type { SettingOption } from '../../../shared/settingsRegistry.js';
 import { useConfigStore } from '../stores/config.js';
@@ -160,6 +161,7 @@ import { useUploadsStore, onInsertUrl } from '../stores/uploads.js';
 import { useDccStore, percentReceived, type DccTransfer } from '../stores/dcc.js';
 import { useToastsStore } from '../stores/toasts.js';
 import { useIgnoresStore, type IgnoreEntry } from '../stores/ignores.js';
+import { useAliasesStore } from '../stores/aliases.js';
 import { useRelayBotsStore } from '../stores/relayBots.js';
 import { useHighlightRulesStore, type HighlightRule } from '../stores/highlightRules.js';
 import { parseIgnoreArgs } from '../../../shared/parseIgnore.js';
@@ -182,6 +184,7 @@ import {
 import { applySpoilerMarkup } from '../utils/spoilerMarkup.js';
 import { buildNickCandidates } from '../utils/nickCompletion.js';
 import { buildChannelCandidates } from '../utils/channelCompletion.js';
+import { buildCommandCandidates, isCommandToken } from '../utils/commandCompletion.js';
 import { ensureChannelPrefix } from '../utils/channelTarget.js';
 import {
   findActiveShortcode,
@@ -225,6 +228,7 @@ const uploads = useUploadsStore();
 const dcc = useDccStore();
 const toasts = useToastsStore();
 const ignores = useIgnoresStore();
+const aliases = useAliasesStore();
 const relayBots = useRelayBotsStore();
 const highlightRules = useHighlightRulesStore();
 const chanlist = useChanlistStore();
@@ -581,6 +585,9 @@ interface CompletionState {
   // trailing space, in-place completion doesn't, and a cycle seeded from the
   // picker has to keep the space it already put there.
   suffix: string;
+  // True when completing a /command (vs a nick/channel) — lets a completed
+  // /set or /get pop the settings-key suggester immediately.
+  isCommand: boolean;
   matches: string[];
   index: number;
   // Caret position after the last insertion, used to detect a session the user
@@ -1195,25 +1202,28 @@ function onKeydown(e: KeyboardEvent): void {
   if (!buf || !active.value) return;
   const networkId = active.value.networkId;
 
-  const isChannel = token.startsWith('#');
-  // Strip the sigil off both forms. '#' is part of a channel name so it stays in
-  // the *result*, but neither sigil belongs in the *prefix* we match on: asking
-  // buildNickCandidates for nicks starting with '@' matches nothing, which is
-  // how `@ali`+Tab used to silently do nothing once the picker had been
-  // dismissed with Escape (the picker owns Tab only while it's open).
+  // A leading /word at the start of a line completes command names (incl. the
+  // user's aliases); otherwise fall back to channel / nick completion. Strip the
+  // sigil off both forms — '#' stays in a channel result but neither '#'/'@'
+  // belongs in the *prefix* we match on (asking for nicks starting with '@'
+  // matches nothing).
+  const isCommand = isCommandToken(value, token, start);
+  const isChannel = !isCommand && token.startsWith('#');
   const stripped = isChannel || token.startsWith('@') ? token.slice(1) : token;
-  const matches = isChannel
-    ? buildChannelMatches(networkId, token)
-    : buildNickMatches(buf, networkId, stripped);
+  const matches = isCommand
+    ? buildCommandCandidates(token, aliases.names)
+    : isChannel
+      ? buildChannelMatches(networkId, token)
+      : buildNickMatches(buf, networkId, stripped);
   if (!matches.length) return;
 
   const prefix = value.slice(0, start);
   const tail = value.slice(end);
-  // A nick at line start is being *addressed* and wants an opening ': '.
-  // Channels never take one — the '#' is already part of the name.
-  const suffix = !isChannel && isAtLineStart(prefix) ? ': ' : '';
+  // Commands get a trailing space (ready for args); a nick at line start is being
+  // *addressed* and wants ': '. Channels never take one — '#' is part of the name.
+  const suffix = isCommand ? ' ' : !isChannel && isAtLineStart(prefix) ? ': ' : '';
 
-  completion = { prefix, tail, suffix, matches, index: 0, caret: 0 };
+  completion = { prefix, tail, suffix, isCommand, matches, index: 0, caret: 0 };
   applyCompletion();
 }
 
@@ -2155,6 +2165,7 @@ const COMMANDS_LINES = [
   '      revoke <nick>   ·   unrevoke <nick>   ·   reverify <nick>   ·   verify <nick>',
   '      rotate [#chan]   ·   forget [-all] <nick|handle>   ·   fingerprint   ·   status   ·   list [-all]',
   '      autotrust <list | add <scope> <pattern> | remove <pattern>>   ·   export   ·   import',
+  '  /alias [add|del]       — custom slash-command aliases (also Settings → Aliases)',
   '  /commands              — this list',
   '  //text                 — send literal "/text" as a message (escape)',
 ];
@@ -2744,9 +2755,26 @@ function runGet(argLine: string, networkId: number | null, target: string): void
 }
 
 function handleCommand(line: string, networkId: number | null, target: string): boolean {
-  const [cmd, ...rest] = line.slice(1).split(/\s+/);
-  const argLine = line.slice(1 + cmd.length).trim();
-  const verb = cmd.toLowerCase();
+  let [cmd, ...rest] = line.slice(1).split(/\s+/);
+  let argLine = line.slice(1 + cmd.length).trim();
+  let verb = cmd.toLowerCase();
+
+  // Expand a custom or built-in alias ONCE, before dispatch: `/j #x` → `join #x`,
+  // `/op bob` → `mode #chan +o bob`, etc. User aliases win over built-ins; the
+  // result is re-parsed into verb/args/line and never re-aliased (no loops).
+  const expanded = resolveAlias(verb, argLine, {
+    nick: networkId != null ? networks.states[networkId]?.nick : undefined,
+    target,
+    userAliases: aliases.map,
+  });
+  if (expanded != null && expanded !== '') {
+    line = `/${expanded}`;
+    const parts = expanded.split(/\s+/);
+    cmd = parts[0] ?? '';
+    rest = parts.slice(1);
+    argLine = expanded.slice(cmd.length).trim();
+    verb = cmd.toLowerCase();
+  }
 
   // Network-agnostic commands act on global / user-wide state (the local command
   // cheatsheet, the cross-network away flag, the per-user ignore list), so they
@@ -2794,6 +2822,53 @@ function handleCommand(line: string, networkId: number | null, target: string): 
       // the buffer when it settles.
       void runDcc(argLine, networkId, target);
       return true;
+    case 'alias': {
+      // Keyboard management of custom aliases (the Settings → Aliases pane is the
+      // GUI). /alias [list] · /alias add <name> <expansion> · /alias del <name>.
+      const trimmed = argLine.trim();
+      const sp = trimmed.indexOf(' ');
+      const sub = (sp === -1 ? trimmed : trimmed.slice(0, sp)).toLowerCase();
+      const subRest = sp === -1 ? '' : trimmed.slice(sp + 1).trim();
+      if (sub === '' || sub === 'list') {
+        if (!aliases.aliases.length) {
+          localInfo(networkId, target, 'no custom aliases. /alias add <name> <expansion>');
+        } else {
+          localInfo(networkId, target, `aliases (${aliases.aliases.length}):`);
+          for (const a of aliases.aliases) {
+            localInfo(networkId, target, `  /${a.name} → ${a.expansion}`);
+          }
+        }
+        return true;
+      }
+      if (sub === 'add' || sub === 'set') {
+        const si = subRest.indexOf(' ');
+        const name = (si === -1 ? subRest : subRest.slice(0, si)).replace(/^\/+/, '');
+        const expansion = si === -1 ? '' : subRest.slice(si + 1).trim();
+        if (!name || !expansion) {
+          localInfo(networkId, target, 'usage: /alias add <name> <expansion>');
+          return true;
+        }
+        aliases.add(name, expansion);
+        localInfo(networkId, target, `alias set: /${name} → ${expansion}`);
+        return true;
+      }
+      if (sub === 'del' || sub === 'delete' || sub === 'remove' || sub === 'rm') {
+        const name = subRest.replace(/^\/+/, '').trim();
+        if (!name) {
+          localInfo(networkId, target, 'usage: /alias del <name>');
+          return true;
+        }
+        aliases.removeByName(name);
+        localInfo(networkId, target, `removed alias /${name}`);
+        return true;
+      }
+      localInfo(
+        networkId,
+        target,
+        'usage: /alias [list] · /alias add <name> <expansion> · /alias del <name>',
+      );
+      return true;
+    }
   }
 
   // Everything else acts on a specific network/buffer.
