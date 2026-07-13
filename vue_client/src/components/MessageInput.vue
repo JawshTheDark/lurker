@@ -760,6 +760,17 @@ function applyCompletion() {
     if (!el) return;
     el.setSelectionRange(caret, caret);
     if (completion) completion.caret = caret;
+    // Completing `/set` / `/get` should pop the settings-key suggester right
+    // away. `cycling` suppressed the input handler while we rewrote the text, so
+    // refreshPicker never fired — drop the command-cycle state and re-evaluate
+    // the pickers against the new `/set ` text so the overlay opens immediately.
+    if (completion?.isCommand) {
+      const cmd = pick.replace(/^\/+/, '').toLowerCase();
+      if (cmd === 'set' || cmd === 'get') {
+        resetCompletion();
+        refreshPicker();
+      }
+    }
   });
 }
 
