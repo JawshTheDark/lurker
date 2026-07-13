@@ -47,12 +47,19 @@ export const driverIds = Object.keys(DRIVERS);
  * resolve to a driver or the user's uploads simply break. Keeping the alias means
  * the migration is a tidy-up, not a load-bearing dependency.
  */
-const DEPRECATED_DRIVER_IDS: Record<string, string> = {
+const DEPRECATED_DRIVER_IDS: Record<string, string | undefined> = {
   hoarder: 'dropper',
 };
 
 export function getDriver(id: string): UploadDriver | null {
-  return DRIVERS[id] ?? DRIVERS[DEPRECATED_DRIVER_IDS[id]] ?? null;
+  const direct = DRIVERS[id];
+  if (direct) return direct;
+  // Spelled out rather than chained: an id with no alias yields `undefined`, and
+  // `DRIVERS[undefined]` only misses because JS coerces the key to the string
+  // "undefined". Correct by accident is not a property to rely on in a lookup that
+  // decides whether a user's uploads resolve at all.
+  const alias = DEPRECATED_DRIVER_IDS[id];
+  return alias ? (DRIVERS[alias] ?? null) : null;
 }
 
 /**

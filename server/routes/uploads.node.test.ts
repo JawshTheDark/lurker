@@ -24,7 +24,7 @@ const ctx = setupTestDb('routes-uploads-node');
 // Same stub pattern as uploads.test.ts: capture the config the route hands the
 // driver so we can prove the hosted uploader sources its credentials from the
 // baked instance row (seeded from the operator env), never from the tenant's
-// per-user settings. The configSchema mirrors hoarder (url + api_key required) so
+// per-user settings. The configSchema mirrors dropper (url + api_key required) so
 // the resolver's "locked-but-unconfigured → 503" check has fields to test.
 const stub = {
   driver: 'dropper',
