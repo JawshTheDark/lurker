@@ -66,7 +66,19 @@ describe('buildSettingKeyCandidates', () => {
     expect(r[0]).toHaveProperty('type');
   });
 
-  it('empty query returns many (capped)', () => {
+  it('empty query returns EVERY setting (not just the first/largest category)', () => {
+    const all = buildSettingKeyCandidates('');
+    const prefixes = new Set(all.map((m) => m.key.split('.')[0]));
+    // Must reach past look.* into the other top-level groups.
+    expect(prefixes.has('look')).toBe(true);
+    expect(prefixes.has('chat')).toBe(true);
+    expect(prefixes.size).toBeGreaterThan(2);
+    // Sorted alphabetically by key (same comparator the builder uses).
+    const keys = all.map((m) => m.key);
+    expect(keys).toEqual([...keys].sort((a, b) => a.localeCompare(b)));
+  });
+
+  it('honors an explicit cap', () => {
     expect(buildSettingKeyCandidates('', 10)).toHaveLength(10);
   });
 
