@@ -123,6 +123,14 @@ fs.mkdirSync(TMP_DIR, { recursive: true, mode: 0o700 });
 // The registry's own ceiling; a per-user cap can't exceed it, so neither can multer.
 const MAX_CAP_MB = 200;
 
+/** The user's size cap. effectiveSettings() has already merged the registry default
+ *  in, so this reads it from ONE place — a second hardcoded default here would be a
+ *  duplicate that quietly disagrees the next time the registry's changes. */
+function userCapMb(settings: Record<string, unknown>): number {
+  const n = Number(settings['uploads.image.max_upload_mb']);
+  return Number.isFinite(n) && n > 0 ? n : MAX_CAP_MB;
+}
+
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, TMP_DIR),
   filename: (_req, _file, cb) => cb(null, `up-${randomId()}`),
@@ -137,7 +145,7 @@ const storage = multer.diskStorage({
  *  uploader, which is what catches an override with a tighter policy cap. */
 function capMbFor(userId: number, isAdmin: boolean): number {
   const settings = effectiveSettings(userId);
-  const userCap = Number(settings['uploads.image.max_upload_mb']) || 25;
+  const userCap = userCapMb(settings);
   let cap = userCap;
   try {
     cap = resolveUploader({ userId, isAdmin, requestedId: null }).policy.maxMb ?? userCap;
@@ -255,8 +263,7 @@ router.post(
       // Size cap: operator-baked policy (hosted locked uploader) wins; otherwise
       // the user's own setting. A tenant can't lift a policy cap because the
       // policy is on the instance row, not their settings.
-      const maxMb =
-        resolved.policy.maxMb ?? (Number(settings['uploads.image.max_upload_mb']) || 25);
+      const maxMb = resolved.policy.maxMb ?? userCapMb(settings);
       if (req.file.size > maxMb * 1024 * 1024) {
         res.status(413).json({ error: `file exceeds ${maxMb} MB` });
         return;
@@ -315,10 +322,16 @@ router.post(
             throw err;
           }
         }
-        outSource = fileSource(req.file.path, req.file.size);
+        // Re-stat rather than reuse req.file.size. The scrub is size-preserving by
+        // construction — that's the whole reason boxes are retyped to `free` instead
+        // of removed — but this size becomes the upload's Content-Length, and a
+        // wrong one truncates the body or hangs the request. Don't make a network
+        // framing invariant depend on a promise made in another module's comment.
+        const { size: bytesOnDisk } = await fs.promises.stat(req.file.path);
+        outSource = fileSource(req.file.path, bytesOnDisk);
         outMime = classified.mime;
         outExt = classified.ext;
-        outByteSize = req.file.size;
+        outByteSize = bytesOnDisk;
       } else {
         // imagePipeline is an untyped JS module — any is unavoidable here
         // eslint-disable-next-line @typescript-eslint/no-explicit-any

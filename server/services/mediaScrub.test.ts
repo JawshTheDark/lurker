@@ -128,6 +128,15 @@ describe('scrubMediaFile — ISO-BMFF', () => {
     // And it's still a playable-looking file: the audio payload is untouched.
     const mdatAt = before.indexOf(Buffer.from('mdat'));
     expect(after.subarray(mdatAt).equals(before.subarray(mdatAt))).toBe(true);
+
+    // The assertions above only prove the BYTES changed the way we intended. They
+    // cannot prove the file still parses. Hand it to an independent implementation —
+    // macOS CoreAudio — and make it tell us: same track, same format, same duration.
+    // Without this, a scrubber that quietly corrupts every video would pass its own
+    // test suite.
+    const info = execFileSync('afinfo', [p], { encoding: 'utf8' });
+    expect(info).toMatch(/Num Tracks:\s*1/);
+    expect(info).toMatch(/estimated duration:\s*[1-9]/); // non-zero, i.e. decodable
   });
 
   it('refuses a malformed container rather than passing the metadata through', async () => {

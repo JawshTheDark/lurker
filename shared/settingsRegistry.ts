@@ -997,7 +997,7 @@ export const REGISTRY: readonly SettingOption[] = Object.freeze([
       '"afk since 2026-05-09 15:30:00-0500".',
   },
 
-  // ─── Image uploads ────────────────────────────────────────────────────
+  // ─── Uploads ────────────────────────────────────────────────────
   //
   // WHERE a file goes is no longer a setting. The destination is a configured
   // uploader (a `uploader_config` row: driver + its own credentials), managed in
