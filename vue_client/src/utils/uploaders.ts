@@ -145,3 +145,21 @@ export function iconForMime(mime: string | null | undefined): string {
   if (m.startsWith('text/')) return 'fa-file-lines';
   return 'fa-file';
 }
+
+/**
+ * Is there an actual choice of upload destination to make?
+ *
+ * A picker with one option isn't a picker. On the hosted service there is exactly
+ * one uploader (the locked dropper) and personal ones are disabled, so the settings
+ * pane offered the SAME destination twice — once by name, and once as the "Server
+ * default" pseudo-row that resolves to it — and asked the user to choose between
+ * them.
+ *
+ * ⚠ `allowUserDefined` counts even when there's only one uploader: you can add a
+ * second, so the picker has a job to do. And a locked-down self-host that offers
+ * several instance uploaders also has one. The ONLY case with no choice is "a single
+ * destination that you cannot add to" — which is exactly the hosted cell.
+ */
+export function hasUploaderChoice(uploaderCount: number, allowUserDefined: boolean): boolean {
+  return allowUserDefined || uploaderCount > 1;
+}
