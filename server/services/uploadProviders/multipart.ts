@@ -6,7 +6,6 @@ import https from 'https';
 import http from 'http';
 import type { IncomingHttpHeaders } from 'http';
 import { Readable } from 'node:stream';
-import { pipeline } from 'node:stream/promises';
 import { sizeOf, streamOf, type UploadSource } from './source.js';
 
 // Multipart/form-data encoding + posting, on node's http/https rather than fetch.
@@ -24,6 +23,17 @@ import { sizeOf, streamOf, type UploadSource } from './source.js';
 //      come back to an upload path.
 
 const CRLF = '\r\n';
+
+/** Drop the named headers (case-insensitively) from a caller-supplied set, so a
+ *  header this module computes can't be shadowed by a case variant — node would
+ *  otherwise emit both and produce a malformed request. */
+function omitHeaders(headers: Record<string, string>, drop: string[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(headers)) {
+    if (!drop.includes(k.toLowerCase())) out[k] = v;
+  }
+  return out;
+}
 
 /** A text field or a file field in a multipart form. A file field's bytes come
  *  from an UploadSource, so the caller never has to know whether they live in a
@@ -130,30 +140,53 @@ function sendStreamed(
     const isHttps = url.protocol === 'https:';
     const lib = isHttps ? https : http;
 
+    let settled = false;
+    let gotResponse = false;
+    const done = (r: PostBufferResult): void => {
+      if (!settled) {
+        settled = true;
+        resolve(r);
+      }
+    };
+    const fail = (err: Error): void => {
+      if (!settled) {
+        settled = true;
+        reject(err);
+      }
+    };
+
     const req = lib.request(
       {
         method,
         hostname: url.hostname,
         port: url.port || (isHttps ? 443 : 80),
         path: `${url.pathname}${url.search}`,
+        // Content-Length and Connection are OURS: a caller that supplied either
+        // could silently corrupt the framing (a wrong Content-Length hangs the
+        // request or truncates the body). Strip any case-variant they passed so
+        // node can't emit the header twice.
         headers: {
+          ...omitHeaders(headers, ['content-length', 'connection']),
           'Content-Length': String(contentLength),
           Connection: 'close',
-          ...headers,
         },
       },
       (res) => {
+        gotResponse = true;
         // Provider responses are small (a URL or a little JSON), so buffering the
         // RESPONSE is fine — it's the request body that had to stop being buffered.
         const chunks: Buffer[] = [];
         res.on('data', (c: Buffer) => chunks.push(c));
-        res.on('end', () => {
-          resolve({
+        const finish = (): void =>
+          done({
             status: res.statusCode || 0,
             headers: res.headers,
             text: Buffer.concat(chunks).toString('utf8'),
           });
-        });
+        res.on('end', finish);
+        // A peer that answers early and hangs up may never deliver 'end'. Settle
+        // with what arrived rather than hanging until the timeout.
+        res.on('close', finish);
       },
     );
 
@@ -162,10 +195,30 @@ function sendStreamed(
         Object.assign(new Error(`request timed out after ${timeoutMs}ms`), { code: 'ETIMEDOUT' }),
       );
     });
-    req.on('error', reject);
-    // pipeline ends the request when the body is exhausted, and destroys it (so
-    // the socket doesn't leak) if reading the source fails partway.
-    pipeline(Readable.from(makeBody()), req).catch(reject);
+
+    // Deliberately NOT stream.pipeline, which rejects on a write error and destroys
+    // the request with it.
+    //
+    // A provider that rejects a big upload EARLY (catbox: "Files larger than 200MB
+    // are not allowed"; a 401 on a bad token) answers and hangs up while we are
+    // still pushing bytes, so our write then fails with EPIPE/ECONNRESET. That
+    // write error is the expected *consequence* of the rejection, not the outcome —
+    // the outcome is the status and message the server just sent. Streaming makes
+    // this window the whole upload rather than microseconds, so make the response
+    // authoritative whenever we got one, and let a write error only speak for
+    // itself when we didn't. (In practice a graceful close delivers the response
+    // first and an abortive one discards it, so this is belt-and-braces rather than
+    // a bug fix — but it removes the timing dependency either way.)
+    const body = Readable.from(makeBody());
+    body.on('error', (err: Error) => {
+      req.destroy();
+      fail(err);
+    });
+    req.on('error', (err: Error) => {
+      body.destroy();
+      if (!gotResponse) fail(err);
+    });
+    body.pipe(req);
   });
 }
 
@@ -221,9 +274,11 @@ export function postMultipart(
 
   return sendStreamed('POST', urlString, contentLength, body, {
     ...opts,
+    // Ours wins: a caller-supplied Content-Type would carry the wrong boundary (or
+    // none), and the server would fail to parse a body it can't find the parts in.
     headers: {
+      ...omitHeaders(opts.headers ?? {}, ['content-type']),
       'Content-Type': `multipart/form-data; boundary=${boundary}`,
-      ...opts.headers,
     },
   });
 }

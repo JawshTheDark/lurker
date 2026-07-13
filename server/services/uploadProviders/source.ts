@@ -89,9 +89,3 @@ export async function moveTo(source: UploadSource, dest: string): Promise<void> 
   }
   await fs.promises.chmod(dest, 0o644).catch(() => {});
 }
-
-/** The whole thing as a Buffer. For tests and for callers that genuinely need the
- *  bytes in memory — never on the upload hot path, which is the entire point. */
-export async function readAll(source: UploadSource): Promise<Buffer> {
-  return source.kind === 'buffer' ? source.data : fs.promises.readFile(source.path);
-}

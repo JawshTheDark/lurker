@@ -143,6 +143,49 @@ describe('postMultipart', () => {
     expect(last.body.includes(bytes)).toBe(true);
   });
 
+  // A provider rejecting an oversized upload is the most common error there is, and
+  // it arrives while we're still sending — so the response has to win over the
+  // EPIPE our own writes then take. NOTE: this passes against the old pipeline-based
+  // code too (a graceful close delivers the response before the write fails), so
+  // it's a behavior test, not a regression guard — it pins the contract that the
+  // provider's status/message is what surfaces, independent of write-error timing.
+  it('reports the provider’s answer when it rejects early and hangs up mid-upload', async () => {
+    const bytes = Buffer.alloc(24 * 1024 * 1024, 0x11); // big enough to still be sending
+    const f = writeTemp('rejected.bin', bytes);
+
+    // A server that answers 413 the moment bytes start arriving, then hangs up
+    // without draining the rest — what a provider does when you exceed its size
+    // limit. It closes GRACEFULLY (response, then FIN), so the answer is on the
+    // wire before our writes start failing; an RST would discard the response and
+    // a socket error really is all that's left, which is why this closes with
+    // socket.end() rather than destroy().
+    const rude = createServer((req, res) => {
+      req.once('data', () => {
+        res.writeHead(413, { 'content-type': 'text/plain', connection: 'close' });
+        res.end('Files larger than 200MB are not allowed.');
+        res.socket?.end();
+      });
+    });
+    await new Promise<void>((r) => rude.listen(0, '127.0.0.1', () => r()));
+    const rudeBase = `http://127.0.0.1:${(rude.address() as AddressInfo).port}/`;
+
+    try {
+      const resp = await postMultipart(rudeBase, [
+        {
+          name: 'fileToUpload',
+          filename: 'rejected.bin',
+          contentType: 'application/octet-stream',
+          source: fileSource(f.path, f.size),
+        },
+      ]);
+      // The status and the message survive — not an EPIPE rejection.
+      expect(resp.status).toBe(413);
+      expect(resp.text).toContain('Files larger than 200MB');
+    } finally {
+      rude.close();
+    }
+  });
+
   it('surfaces a non-2xx as a status, and a dead socket as a rejection', async () => {
     respondWith = { status: 413, text: 'too big' };
     const resp = await postMultipart(base, [{ name: 'a', value: 'b' }]);

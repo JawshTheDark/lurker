@@ -109,8 +109,11 @@ function providerErrorStatus(e: { code?: string }): number {
 // hold the whole file, and the drivers then copied it again (and fetch copied it a
 // third time) — a 200 MB upload cost ~1 GB of RSS. See services/uploadProviders/
 // source.ts for the measurements. Everything downstream takes an UploadSource.
+// 0o700: an in-flight upload is the user's private data and must not be readable
+// by other local users on a shared host. Matches routes/exports.ts's staged-import
+// posture.
 const TMP_DIR = path.join(resolveDataDir(), 'tmp', 'uploads');
-fs.mkdirSync(TMP_DIR, { recursive: true });
+fs.mkdirSync(TMP_DIR, { recursive: true, mode: 0o700 });
 
 // The registry's own ceiling; a per-user cap can't exceed it, so neither can multer.
 const MAX_CAP_MB = 200;
