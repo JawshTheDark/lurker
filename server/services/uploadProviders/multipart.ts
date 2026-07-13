@@ -228,9 +228,13 @@ function sendStreamed(
       body.destroy();
     });
     req.on('close', () => {
-      // A response already resolved us (done() is idempotent). Otherwise the
-      // connection died without one, and the write error is the real story — dressed
-      // up so the user sees a cause rather than an errno.
+      // The SUCCESS path lands here too, having already resolved via done(). Bail
+      // before building an error: fail() would discard it anyway, but constructing
+      // one captures a V8 stack trace on every successful upload, and it reads like
+      // we're erroring on a request that worked.
+      if (settled) return;
+      // The connection died without an answer, so the write error is the real story
+      // — dressed up so the user sees a cause rather than an errno.
       fail(hangupError(writeError));
     });
     body.pipe(req);
