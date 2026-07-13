@@ -14,7 +14,12 @@ import { getUserSettings } from '../db/settings.js';
 import { defaultsAsObject } from '../services/settingsRegistry.js';
 import * as imagePipeline from '../services/imagePipeline.js';
 import { driverIds } from '../services/uploadProviders/index.js';
-import type { ContentClass } from '../services/uploadProviders/index.js';
+import {
+  classifyUpload,
+  UnsupportedTypeError,
+  type Classification,
+} from '../services/contentClass.js';
+import { scrubMediaFile, MediaScrubError } from '../services/mediaScrub.js';
 import {
   resolveUploader,
   loadDriverForRef,
@@ -118,6 +123,14 @@ fs.mkdirSync(TMP_DIR, { recursive: true, mode: 0o700 });
 // The registry's own ceiling; a per-user cap can't exceed it, so neither can multer.
 const MAX_CAP_MB = 200;
 
+/** The user's size cap. effectiveSettings() has already merged the registry default
+ *  in, so this reads it from ONE place — a second hardcoded default here would be a
+ *  duplicate that quietly disagrees the next time the registry's changes. */
+function userCapMb(settings: Record<string, unknown>): number {
+  const n = Number(settings['uploads.image.max_upload_mb']);
+  return Number.isFinite(n) && n > 0 ? n : MAX_CAP_MB;
+}
+
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, TMP_DIR),
   filename: (_req, _file, cb) => cb(null, `up-${randomId()}`),
@@ -132,7 +145,7 @@ const storage = multer.diskStorage({
  *  uploader, which is what catches an override with a tighter policy cap. */
 function capMbFor(userId: number, isAdmin: boolean): number {
   const settings = effectiveSettings(userId);
-  const userCap = Number(settings['uploads.image.max_upload_mb']) || 25;
+  const userCap = userCapMb(settings);
   let cap = userCap;
   try {
     cap = resolveUploader({ userId, isAdmin, requestedId: null }).policy.maxMb ?? userCap;
@@ -188,6 +201,11 @@ const uploadToDisk = (req: Request, res: Response, next: NextFunction): void => 
   const handler = multer({
     storage,
     limits: { fileSize: capMb * 1024 * 1024, files: 1 },
+    // busboy decodes multipart params as LATIN-1 unless told otherwise, so any
+    // non-ASCII filename arrives mangled — a macOS screen recording is named with a
+    // narrow no-break space (U+202F) before AM/PM, whose UTF-8 bytes (E2 80 AF) then
+    // show up in the uploads list as "â¯". Browsers send the header in UTF-8.
+    defParamCharset: 'utf8',
   }).single('image');
   handler(req, res, (err: unknown) => {
     // multer aborts the stream and unlinks its partial file once the cap is hit,
@@ -250,24 +268,36 @@ router.post(
       // Size cap: operator-baked policy (hosted locked uploader) wins; otherwise
       // the user's own setting. A tenant can't lift a policy cap because the
       // policy is on the instance row, not their settings.
-      const maxMb =
-        resolved.policy.maxMb ?? (Number(settings['uploads.image.max_upload_mb']) || 25);
+      const maxMb = resolved.policy.maxMb ?? userCapMb(settings);
       if (req.file.size > maxMb * 1024 * 1024) {
         res.status(413).json({ error: `file exceeds ${maxMb} MB` });
         return;
       }
 
-      // Long-message → .txt upload bypasses the sharp pipeline: the bytes go
-      // straight through with a .txt extension and no thumbnail.
-      const isText = req.file.mimetype === 'text/plain';
-      const contentClass: ContentClass = isText ? 'text' : 'image';
+      // Classify from the MAGIC BYTES, never the client's claimed MIME (#515). The
+      // claim used to decide this, which was survivable only while the alternative
+      // branch was the image pipeline — the moment a class means "passthrough", a
+      // claimed MIME is a route around imagePipeline.optimize(), and that's where
+      // the EXIF scrub lives. See services/contentClass.ts.
+      let classified: Classification;
+      try {
+        classified = await classifyUpload(req.file.path, req.file.mimetype);
+      } catch (err) {
+        if (err instanceof UnsupportedTypeError) {
+          res.status(415).json({ error: err.message });
+          return;
+        }
+        throw err;
+      }
+      const contentClass = classified.contentClass;
 
-      // Validate stage: the resolved driver must accept this content class. In P0
-      // every driver accepts image + text, so this never rejects — but it makes
-      // acceptsContentClasses a real gate (defense-in-depth) once binary-capable
-      // drivers land, rather than a declared-but-unused capability.
+      // Validate stage: the resolved driver must accept this class. This is what
+      // makes hosted (whose dropper takes images + text only) refuse media, without
+      // a policy flag anywhere.
       if (!resolved.driver.capabilities.acceptsContentClasses.includes(contentClass)) {
-        res.status(415).json({ error: `this uploader does not accept ${contentClass} files` });
+        res.status(415).json({
+          error: `${resolved.driver.label} does not accept ${contentClass} files`,
+        });
         return;
       }
 
@@ -279,13 +309,34 @@ router.post(
       let outHeight: number | null = null;
       let thumb: Buffer | null = null;
 
-      if (isText) {
+      if (contentClass === 'text' || contentClass === 'media') {
         // Passthrough: the bytes go out of the temp file exactly as they came in.
-        // Nothing reads them into memory — the driver streams the file.
-        outSource = fileSource(req.file.path, req.file.size);
-        outMime = 'text/plain';
-        outExt = 'txt';
-        outByteSize = req.file.size;
+        // Nothing reads them into memory — the driver streams the file (#543).
+        if (contentClass === 'media') {
+          // …except the metadata, which is stripped in place first. A phone's MP4
+          // carries GPS in moov/udta; passing it through untouched would re-open
+          // exactly the leak #516 closed for photos. The scrub is size-preserving,
+          // so req.file.size stays correct.
+          try {
+            await scrubMediaFile(req.file.path, classified.mime);
+          } catch (err) {
+            if (err instanceof MediaScrubError) {
+              res.status(415).json({ error: err.message });
+              return;
+            }
+            throw err;
+          }
+        }
+        // Re-stat rather than reuse req.file.size. The scrub is size-preserving by
+        // construction — that's the whole reason boxes are retyped to `free` instead
+        // of removed — but this size becomes the upload's Content-Length, and a
+        // wrong one truncates the body or hangs the request. Don't make a network
+        // framing invariant depend on a promise made in another module's comment.
+        const { size: bytesOnDisk } = await fs.promises.stat(req.file.path);
+        outSource = fileSource(req.file.path, bytesOnDisk);
+        outMime = classified.mime;
+        outExt = classified.ext;
+        outByteSize = bytesOnDisk;
       } else {
         // imagePipeline is an untyped JS module — any is unavoidable here
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -400,6 +451,10 @@ router.post(
       res.json({
         id,
         url: mainUrl,
+        // The REAL mime, derived from the bytes — the client builds its optimistic
+        // history row from this rather than from what the browser guessed, so the
+        // row's type icon isn't a lie until the next refetch.
+        mime: outMime,
         can_delete: canDelete,
         ...(thumbnailUrl ? { thumbnail_url: thumbnailUrl } : {}),
       });

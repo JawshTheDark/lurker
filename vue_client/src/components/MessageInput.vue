@@ -1670,7 +1670,10 @@ onMounted(() => {
 });
 
 function blobFromClipboardItem(item: DataTransferItem): File | null {
-  if (!item || !item.type || !item.type.startsWith('image/')) return null;
+  // Same gate as drop, from the same definition — pasting a video file from Finder
+  // used to silently do nothing. `kind === 'file'` keeps pasted rich text from being
+  // hijacked into an upload; the server has the final say on the type.
+  if (!item || item.kind !== 'file' || !isUploadableType(item.type)) return null;
   const file = item.getAsFile();
   return file || null;
 }
