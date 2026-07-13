@@ -466,15 +466,19 @@ describe('DELETE /api/uploads/:id', () => {
 describe('temp-file lifecycle (#543)', () => {
   const tmpDir = (): string => path.join(resolveDataDir(), 'tmp', 'uploads');
 
-  // The handler unlinks the temp file in a `finally`, which runs AFTER the
-  // response is sent — so the client can observe the reply before the unlink has
-  // landed. Poll rather than assert on the next line: a same-tick assertion passes
-  // locally and loses the race on a slower CI runner.
-  const waitForTempCount = async (n: number, timeoutMs = 2000): Promise<void> => {
+  // The handler unlinks the temp file in a `finally`, which runs AFTER the response
+  // is sent — so the client can observe the reply before the unlink has landed.
+  // Two consequences, both of which bit this test in CI:
+  //   1. Assert by polling, not on the next line (same-tick passes locally, loses
+  //      the race on a slower runner).
+  //   2. Assert the ABSOLUTE invariant — the temp dir drains to empty — not a
+  //      delta against a `before` count, because a previous test's pending unlink
+  //      makes that baseline itself a race.
+  const waitForNoTemps = async (timeoutMs = 3000): Promise<void> => {
     const start = Date.now();
-    while (tempFiles().length !== n) {
+    while (tempFiles().length > 0) {
       if (Date.now() - start > timeoutMs) {
-        throw new Error(`temp files: expected ${n}, still ${tempFiles().length}`);
+        throw new Error(`temp files not cleaned up: ${tempFiles().join(', ')}`);
       }
       await new Promise((r) => setTimeout(r, 5));
     }
@@ -504,27 +508,26 @@ describe('temp-file lifecycle (#543)', () => {
       .post('/api/uploads')
       .attach('image', smallPng, { filename: 'pic.png', contentType: 'image/png' });
     expect(stub.capturedSource!.kind).toBe('buffer');
+    await waitForNoTemps();
   });
 
   it('removes the temp file after a successful upload', async () => {
     stub.shouldThrow = null;
-    const before = tempFiles().length;
     const res = await agent
       .post('/api/uploads')
       .attach('image', smallPng, { filename: 'clean.png', contentType: 'image/png' });
     expect(res.status).toBe(200);
-    await waitForTempCount(before);
+    await waitForNoTemps();
   });
 
   it('removes the temp file when the driver fails', async () => {
-    const before = tempFiles().length;
     stub.shouldThrow = Object.assign(new Error('upstream down'), { code: 'PROVIDER_ERROR' });
     const res = await agent
       .post('/api/uploads')
       .attach('image', smallPng, { filename: 'boom.png', contentType: 'image/png' });
     expect(res.status).toBe(502);
     // A failed upload must not strand its bytes on disk.
-    await waitForTempCount(before);
+    await waitForNoTemps();
     stub.shouldThrow = null;
   });
 
@@ -532,14 +535,13 @@ describe('temp-file lifecycle (#543)', () => {
     const { setUserSetting } = await import('../db/settings.js');
     setUserSetting(user.id, 'uploads.image.max_upload_mb', 1);
     try {
-      const before = tempFiles().length;
       const big = Buffer.alloc(2 * 1024 * 1024, 0x7a); // 2 MB against a 1 MB cap
       const res = await agent
         .post('/api/uploads')
         .attach('image', big, { filename: 'big.bin', contentType: 'text/plain' });
       expect(res.status).toBe(413);
       // multer aborts and unlinks its own partial file when the limit trips.
-      await waitForTempCount(before);
+      await waitForNoTemps();
     } finally {
       setUserSetting(user.id, 'uploads.image.max_upload_mb', 25);
     }
