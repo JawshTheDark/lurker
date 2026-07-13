@@ -7,6 +7,7 @@
 // unit-tested, mirroring channelCompletion / nickCompletion.
 
 import { KNOWN_COMMANDS, BUILTIN_ALIASES } from '../lib/commands/catalog.js';
+import { REGISTRY } from './settingsRegistry.js';
 
 /**
  * Candidates for a `/prefix` token, each returned WITH a leading slash so it can
@@ -31,4 +32,32 @@ export function buildCommandCandidates(token: string, userAliasNames: string[] =
 export function isCommandToken(value: string, token: string, start: number): boolean {
   if (!token.startsWith('/') || token.startsWith('//')) return false;
   return /(^|\n)\s*$/.test(value.slice(0, start));
+}
+
+export interface SettingKeyMatch {
+  key: string;
+  label: string;
+  type: string;
+}
+
+/** Registry setting keys whose key starts with `query` (case-insensitive), for
+ *  `/set`/`/get` argument completion — the suggester amiantos asked for: type
+ *  `chat.` and see every setting under it. Prefix-then-substring so `chat.` lists
+ *  the chat.* group, and a bare `color` still surfaces `look.nick.color`. */
+export function buildSettingKeyCandidates(query: string, limit = 50): SettingKeyMatch[] {
+  const q = query.toLowerCase();
+  const starts: SettingKeyMatch[] = [];
+  const contains: SettingKeyMatch[] = [];
+  for (const o of REGISTRY) {
+    const k = o.key.toLowerCase();
+    if (k.startsWith(q)) starts.push({ key: o.key, label: o.label, type: o.type });
+    else if (q && k.includes(q)) contains.push({ key: o.key, label: o.label, type: o.type });
+  }
+  return [...starts, ...contains].slice(0, limit);
+}
+
+/** True when the text before the token is exactly `/set ` or `/get ` at a line
+ *  start — i.e. the token under the cursor is the setting-key argument. */
+export function isSettingKeyArg(before: string): boolean {
+  return /(?:^|\n)\/(?:set|get)\s+$/i.test(before);
 }
