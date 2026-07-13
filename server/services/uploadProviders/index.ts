@@ -8,7 +8,7 @@
 
 import * as x0 from './x0.js';
 import * as catbox from './catbox.js';
-import * as hoarder from './hoarder.js';
+import * as dropper from './dropper.js';
 import * as local from './local.js';
 import * as zipline from './zipline.js';
 import * as chibisafe from './chibisafe.js';
@@ -27,7 +27,7 @@ export type {
 const DRIVERS: Record<string, UploadDriver> = {
   [x0.driver]: x0,
   [catbox.driver]: catbox,
-  [hoarder.driver]: hoarder,
+  [dropper.driver]: dropper,
   [local.driver]: local,
   [zipline.driver]: zipline,
   [chibisafe.driver]: chibisafe,
@@ -36,8 +36,23 @@ const DRIVERS: Record<string, UploadDriver> = {
 
 export const driverIds = Object.keys(DRIVERS);
 
+/**
+ * Driver ids that used to be written to the database and may still arrive from
+ * data we don't control.
+ *
+ * `hoarder` → `dropper` (#537). The id is PERSISTED — in `uploader_config.driver`
+ * and inside old `.lurk` export archives — so a boot migration rewriting our own
+ * rows isn't enough on its own: an export taken before the rename can be imported
+ * at any time, and until the next boot's migration sweeps it up, that row has to
+ * resolve to a driver or the user's uploads simply break. Keeping the alias means
+ * the migration is a tidy-up, not a load-bearing dependency.
+ */
+const DEPRECATED_DRIVER_IDS: Record<string, string> = {
+  hoarder: 'dropper',
+};
+
 export function getDriver(id: string): UploadDriver | null {
-  return DRIVERS[id] ?? null;
+  return DRIVERS[id] ?? DRIVERS[DEPRECATED_DRIVER_IDS[id]] ?? null;
 }
 
 /**

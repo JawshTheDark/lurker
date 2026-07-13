@@ -82,7 +82,7 @@ describe('GET /api/uploaders', () => {
     const migrated = createUploaderConfig({
       scope: 'user',
       ownerUserId: user.id,
-      driver: 'hoarder', // what the legacy-settings migration produces
+      driver: 'dropper', // what the legacy-settings migration produces
       label: 'Hoarder',
       values: { url: 'https://hoard.example', api_key: 'k' },
     });
@@ -92,7 +92,7 @@ describe('GET /api/uploaders', () => {
     expect(row.editable).toBe(true);
 
     // …so a descriptor for its driver MUST be present, or the form can't render.
-    const hoarder = res.body.drivers.find((d: any) => d.driver === 'hoarder');
+    const hoarder = res.body.drivers.find((d: any) => d.driver === 'dropper');
     expect(hoarder).toBeDefined();
     expect(hoarder.creatable).toBe(false); // but still not offered in the add menu
     expect(hoarder.configSchema.map((f: any) => f.key)).toEqual(['url', 'api_key']);
