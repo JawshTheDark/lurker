@@ -21,6 +21,7 @@ import * as systemLog from './systemLog.js';
 import * as pushService from './pushService.js';
 import { evaluateIgnores, type IgnoreVerdict } from './ignoreMatch.js';
 import ignoreRulesService from './ignoreRulesService.js';
+import aliasesService from './aliasesService.js';
 import { parseIgnoreInput, maskToRuleInput } from './ignoreRuleInput.js';
 import { findSession } from '../db/sessions.js';
 import { findUserById, touchUserLastSeen } from '../db/users.js';
@@ -929,6 +930,11 @@ export function fanOutIgnoreList(userId: number, networkId: number | null): void
   });
 }
 
+// Push the user's full custom-alias list to all their tabs after a change.
+export function fanOutAliasList(userId: number): void {
+  fanOut(userId, { kind: 'alias-list-updated', aliases: aliasesService.list(userId) });
+}
+
 // One sweep of the liveness heartbeat over a batch of sockets. A socket that
 // hasn't ponged since the previous sweep (isAlive still false) is terminated —
 // firing its 'close' handler → removeSocket → evaluatePresence, which lets
@@ -1606,6 +1612,7 @@ export function attachWsHub(httpServer: HttpServer, sessionSecret: string) {
       kind: 'snapshot',
       networks,
       globalIgnores: ircManager.listGlobalIgnoresFor(userId),
+      aliases: aliasesService.list(userId),
       ...(isFreshConnect ? { cursor } : {}),
     });
     // Drafts ship once per snapshot, separate from per-buffer backlog frames —
@@ -2463,6 +2470,24 @@ export function attachWsHub(httpServer: HttpServer, sessionSecret: string) {
         } else {
           fanOutIgnoreList(userId, networkId);
         }
+        break;
+      }
+      // Custom slash-command aliases (global, per-user). Add is an upsert by
+      // name; remove takes an id or a name. Either way the full list fans out to
+      // the user's tabs so every device stays in sync.
+      case 'add-alias': {
+        const result = aliasesService.add(userId, msg.name, msg.expansion);
+        if (!result.ok) break;
+        fanOutAliasList(userId);
+        break;
+      }
+      case 'remove-alias': {
+        const id = typeof msg.id === 'number' ? msg.id : undefined;
+        const name = typeof msg.name === 'string' && msg.name.trim() ? msg.name.trim() : undefined;
+        if (id === undefined && name === undefined) break;
+        if (id !== undefined) aliasesService.removeById(userId, id);
+        else if (name !== undefined) aliasesService.removeByName(userId, name);
+        fanOutAliasList(userId);
         break;
       }
       case 'history': {

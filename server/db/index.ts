@@ -492,6 +492,21 @@ function migrate() {
     CREATE INDEX IF NOT EXISTS idx_user_nick_notes_user_net
       ON user_nick_notes(user_id, network_id);
 
+    -- Per-user custom slash-command aliases (global, not per-network). name is
+    -- the alias word (typed as /name); expansion is the command-line template it
+    -- resolves to, with mIRC-style $1/$*/$me/$chan params. Client-side only --
+    -- the server just stores + syncs them across the user's tabs/devices.
+    CREATE TABLE IF NOT EXISTS user_aliases (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      name TEXT NOT NULL COLLATE NOCASE,
+      expansion TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE (user_id, name),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_user_aliases_user ON user_aliases(user_id);
+
     -- Per-(user, network, nick) relay-bot marks (#277). A marked nick is a
     -- relay / bridge bot; the client re-attributes its messages to the speaker
     -- embedded in the envelope, e.g. [Discord] <alice> hi. Row presence is the

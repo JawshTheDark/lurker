@@ -56,6 +56,7 @@ import RegistryPane from '../components/settings-panes/RegistryPane.vue';
 import NotificationsPane from '../components/settings-panes/NotificationsPane.vue';
 import HighlightsPane from '../components/settings-panes/HighlightsPane.vue';
 import IgnoresPane from '../components/settings-panes/IgnoresPane.vue';
+import AliasesPane from '../components/settings-panes/AliasesPane.vue';
 import UsersPane from '../components/settings-panes/UsersPane.vue';
 import NetworksPane from '../components/settings-panes/NetworksPane.vue';
 import AccountPane from '../components/settings-panes/AccountPane.vue';
@@ -81,6 +82,7 @@ const BESPOKE_PANES: Record<string, Component> = {
   notifications: NotificationsPane,
   highlights: HighlightsPane,
   ignores: IgnoresPane,
+  aliases: AliasesPane,
   users: UsersPane,
   networks: NetworksPane,
   account: AccountPane,
