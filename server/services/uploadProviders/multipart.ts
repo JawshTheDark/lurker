@@ -141,7 +141,6 @@ function sendStreamed(
     const lib = isHttps ? https : http;
 
     let settled = false;
-    let gotResponse = false;
     const done = (r: PostBufferResult): void => {
       if (!settled) {
         settled = true;
@@ -172,7 +171,6 @@ function sendStreamed(
         },
       },
       (res) => {
-        gotResponse = true;
         // Provider responses are small (a URL or a little JSON), so buffering the
         // RESPONSE is fine — it's the request body that had to stop being buffered.
         const chunks: Buffer[] = [];
@@ -201,25 +199,60 @@ function sendStreamed(
     //
     // A provider that rejects a big upload EARLY (catbox: "Files larger than 200MB
     // are not allowed"; a 401 on a bad token) answers and hangs up while we are
-    // still pushing bytes, so our write then fails with EPIPE/ECONNRESET. That
-    // write error is the expected *consequence* of the rejection, not the outcome —
-    // the outcome is the status and message the server just sent. Streaming makes
-    // this window the whole upload rather than microseconds, so make the response
-    // authoritative whenever we got one, and let a write error only speak for
-    // itself when we didn't. (In practice a graceful close delivers the response
-    // first and an abortive one discards it, so this is belt-and-braces rather than
-    // a bug fix — but it removes the timing dependency either way.)
+    // still pushing bytes — so our write then fails with EPIPE/ECONNRESET. That
+    // write error is the expected *consequence* of the rejection, not the outcome:
+    // the outcome is the status and message the server just sent, and streaming
+    // widens the window from microseconds to the whole upload.
+    //
+    // ⚠ A write error must therefore NEVER settle this promise on its own: the error
+    // is only REMEMBERED, and we settle on the request's 'close', by which point any
+    // response the parser could surface HAS been surfaced. That removes the ordering
+    // dependency (it showed up as a rare load-dependent flaky test).
+    //
+    // But it does not always save the answer, and pretending otherwise would be a
+    // lie: when the peer hangs up abruptly, node's socket takes the EPIPE and
+    // DESTROYS itself, discarding response bytes already sitting in the receive
+    // buffer. The 413 is then genuinely unrecoverable — it's the same reason an
+    // nginx `client_max_body_size` rejection so often reaches a client as
+    // "connection reset" rather than as the 413 it sent. So: surface the response
+    // whenever it parsed, and otherwise fail with something that NAMES the likely
+    // cause instead of a bare `write EPIPE` that tells a user nothing.
+    let writeError: Error | null = null;
     const body = Readable.from(makeBody());
     body.on('error', (err: Error) => {
+      writeError = err;
       req.destroy();
-      fail(err);
     });
     req.on('error', (err: Error) => {
+      writeError = err;
       body.destroy();
-      if (!gotResponse) fail(err);
+    });
+    req.on('close', () => {
+      // A response already resolved us (done() is idempotent). Otherwise the
+      // connection died without one, and the write error is the real story — dressed
+      // up so the user sees a cause rather than an errno.
+      fail(hangupError(writeError));
     });
     body.pipe(req);
   });
+}
+
+/** The peer went away mid-upload. Almost always this means it rejected the file and
+ *  closed rather than draining the rest of it — a size limit, or an auth failure it
+ *  didn't want to keep reading through. Say so: `write EPIPE` on its own leaves the
+ *  user (and the provider column in the uploads list) with nothing to act on. */
+function hangupError(cause: Error | null): Error {
+  const code = (cause as NodeJS.ErrnoException | null)?.code;
+  if (code === 'EPIPE' || code === 'ECONNRESET') {
+    return Object.assign(
+      new Error(
+        'the provider closed the connection while the file was still uploading — ' +
+          'it most likely rejected the file (too large, or a bad credential)',
+      ),
+      { code, cause },
+    );
+  }
+  return cause ?? new Error('connection closed before a response');
 }
 
 /** POST a pre-serialized body. For small payloads only. */
