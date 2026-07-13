@@ -3,9 +3,8 @@
 
 // Shared candidate builder for channel completion — used by both Tab-completion
 // in MessageInput and the `#`-triggered ChannelPicker. Returns the targets of
-// joined channels matching `prefix` (case-insensitive), sorted alphabetically,
-// except the channel you're currently in is hoisted to the front when it
-// matches (see `activeTarget`).
+// joined channels matching `prefix` (case-insensitive), most-recently-visited
+// first, with never-visited channels alphabetical behind them.
 //
 // `prefix` includes the leading '#' (it's the raw token under the cursor), and
 // the '#' stays in every result — unlike nicks' '@' sugar, '#' is part of the
@@ -22,28 +21,40 @@ interface ChannelBuffer {
   target?: string;
 }
 
-// `activeTarget` is the buffer the composer is in. When it's a channel that
-// also matches `prefix`, it's moved to the front so `#`+Tab offers the channel
-// you're currently in FIRST — the standard IRC-client behavior. The rest keep
-// their alphabetical order behind it. A nick target (a DM) or an unset value
-// leaves the list purely alphabetical.
+// `rank` is recency: 0 = most recent … Infinity = unvisited this session — i.e.
+// the recentBuffers store's `rank` getter (#393), composed with bufferKey() by
+// the caller. Injected rather than imported so this stays Pinia-free and the
+// ordering edge cases are unit-testable in isolation.
+//
+// Ordering by recency gets the standard IRC `#`+Tab behavior for free:
+// recentBuffers move-to-fronts on every activation, so the channel you're
+// currently in is always rank 0 and therefore always offered first. Repeat-Tab
+// then walks back through the channels you were just in before reaching the
+// alphabetical tail — better than hoisting only the active channel and
+// alphabetizing the rest, where the second Tab hands you whatever sorts first
+// rather than where you actually were.
+//
+// The recency trail is in-memory and per-session, so on a cold load everything
+// except the buffer you land on is unvisited and this degrades to exactly
+// current-channel-first, then alphabetical.
+//
+// `rank` is required, not optional: a caller that forgets to pass an ordering
+// source produces a plausible-looking alphabetical list rather than any visible
+// failure, so it's worth a type error at the call site instead.
 export function buildChannelCandidates(
   buffers: ChannelBuffer[],
   prefix: string,
-  activeTarget?: string | null,
+  rank: (target: string) => number,
 ): string[] {
   const lower = prefix.toLowerCase();
-  const matches = buffers
+  return buffers
     .map((b) => b.target ?? '')
     .filter((t) => t.startsWith('#') && t.toLowerCase().startsWith(lower))
-    .toSorted((a, b) => a.localeCompare(b));
-  if (activeTarget && activeTarget.startsWith('#')) {
-    const activeLower = activeTarget.toLowerCase();
-    const idx = matches.findIndex((t) => t.toLowerCase() === activeLower);
-    if (idx > 0) {
-      const [current] = matches.splice(idx, 1);
-      matches.unshift(current);
-    }
-  }
-  return matches;
+    .toSorted((a, b) => {
+      const ra = rank(a);
+      const rb = rank(b);
+      // Equality first: two unvisited channels are both Infinity, and
+      // Infinity - Infinity is NaN — which would silently corrupt the sort.
+      return ra === rb ? a.localeCompare(b) : ra - rb;
+    });
 }

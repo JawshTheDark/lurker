@@ -143,7 +143,8 @@ import { formatColumns } from '../lib/commands/output.js';
 import { REGISTRY, getOption, optionVisible, CATEGORIES } from '../utils/settingsRegistry.js';
 import type { SettingOption } from '../../../shared/settingsRegistry.js';
 import { useConfigStore } from '../stores/config.js';
-import { useBuffersStore } from '../stores/buffers.js';
+import { bufferKey, useBuffersStore } from '../stores/buffers.js';
+import { useRecentBuffersStore } from '../stores/recentBuffers.js';
 import { useAuthStore } from '../stores/auth.js';
 import { useInputHistoryStore } from '../stores/inputHistory.js';
 import { useDraftStore } from '../stores/drafts.js';
@@ -205,6 +206,7 @@ import type { Buffer } from '../stores/buffers.js';
 
 const networks = useNetworksStore();
 const buffers = useBuffersStore();
+const recentBuffers = useRecentBuffersStore();
 const auth = useAuthStore();
 const inputHistory = useInputHistoryStore();
 const drafts = useDraftStore();
@@ -681,11 +683,14 @@ function buildNickStripItems(buf: Buffer, networkId: number, prefix: string): Ni
     .map((c) => ({ nick: c.nick, color: nickColors.color(c.nick) }));
 }
 
+// Same recency ordering the ChannelPicker uses, so in-place Tab-completion and
+// the popover can't disagree about which channel leads. The buffer you're in is
+// rank 0, so `#`+Tab offers the current channel first (standard IRC behavior)
+// and repeat-Tab walks back through recently-visited channels.
 function buildChannelMatches(networkId: number, prefix: string): string[] {
-  // Pass the active buffer's target so the channel you're currently in sorts
-  // first (standard IRC `#`+Tab behavior); a DM target is ignored by the
-  // builder, leaving the list alphabetical.
-  return buildChannelCandidates(buffers.forNetwork(networkId), prefix, active.value?.target);
+  return buildChannelCandidates(buffers.forNetwork(networkId), prefix, (target) =>
+    recentBuffers.rank(bufferKey(networkId, target)),
+  );
 }
 
 function applyCompletion() {

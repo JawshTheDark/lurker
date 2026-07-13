@@ -32,7 +32,8 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue';
-import { useBuffersStore } from '../stores/buffers.js';
+import { bufferKey, useBuffersStore } from '../stores/buffers.js';
+import { useRecentBuffersStore } from '../stores/recentBuffers.js';
 import { buildChannelCandidates } from '../utils/channelCompletion.js';
 import VerticalPopover from './VerticalPopover.vue';
 import type { PopoverNav } from './popoverNav.js';
@@ -44,16 +45,12 @@ const props = withDefaults(
     // both the match filter and the inserted result.
     query?: string;
     networkId?: number | null;
-    // The composer's current buffer target, so the channel you're in is
-    // offered first (matches the Tab-completion order in MessageInput).
-    activeTarget?: string | null;
     anchor?: HTMLElement | null;
   }>(),
   {
     open: false,
     query: '',
     networkId: null,
-    activeTarget: null,
     anchor: null,
   },
 );
@@ -64,16 +61,20 @@ const emit = defineEmits<{
 }>();
 
 const buffers = useBuffersStore();
+const recentBuffers = useRecentBuffersStore();
 
 const rows = computed<string[]>(() => {
   // Bail before touching the buffers store while closed so the candidate list
   // doesn't rebuild on every buffer mutation behind a closed picker. The
   // popover hides when closed anyway, so returning [] here is behavior-neutral.
-  if (!props.open || props.networkId == null) return [];
-  return buildChannelCandidates(
-    buffers.forNetwork(props.networkId),
-    props.query,
-    props.activeTarget,
+  const networkId = props.networkId;
+  if (!props.open || networkId == null) return [];
+  // Recency ordering (so the channel you're in leads) is read from the store
+  // here rather than passed in as a prop: the picker and MessageInput's
+  // Tab-completion have to agree on the order, and a prop the parent can forget
+  // to bind fails silently as a plausible alphabetical list.
+  return buildChannelCandidates(buffers.forNetwork(networkId), props.query, (target) =>
+    recentBuffers.rank(bufferKey(networkId, target)),
   ).slice(0, 50);
 });
 
