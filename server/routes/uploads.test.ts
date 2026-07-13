@@ -465,6 +465,20 @@ describe('DELETE /api/uploads/:id', () => {
 // outlives the request — an orphan per upload is a slow disk leak.
 describe('temp-file lifecycle (#543)', () => {
   const tmpDir = (): string => path.join(resolveDataDir(), 'tmp', 'uploads');
+
+  // The handler unlinks the temp file in a `finally`, which runs AFTER the
+  // response is sent — so the client can observe the reply before the unlink has
+  // landed. Poll rather than assert on the next line: a same-tick assertion passes
+  // locally and loses the race on a slower CI runner.
+  const waitForTempCount = async (n: number, timeoutMs = 2000): Promise<void> => {
+    const start = Date.now();
+    while (tempFiles().length !== n) {
+      if (Date.now() - start > timeoutMs) {
+        throw new Error(`temp files: expected ${n}, still ${tempFiles().length}`);
+      }
+      await new Promise((r) => setTimeout(r, 5));
+    }
+  };
   const tempFiles = (): string[] => {
     try {
       return fs.readdirSync(tmpDir()).filter((f) => f.startsWith('up-'));
@@ -499,7 +513,7 @@ describe('temp-file lifecycle (#543)', () => {
       .post('/api/uploads')
       .attach('image', smallPng, { filename: 'clean.png', contentType: 'image/png' });
     expect(res.status).toBe(200);
-    expect(tempFiles().length).toBe(before);
+    await waitForTempCount(before);
   });
 
   it('removes the temp file when the driver fails', async () => {
@@ -510,7 +524,7 @@ describe('temp-file lifecycle (#543)', () => {
       .attach('image', smallPng, { filename: 'boom.png', contentType: 'image/png' });
     expect(res.status).toBe(502);
     // A failed upload must not strand its bytes on disk.
-    expect(tempFiles().length).toBe(before);
+    await waitForTempCount(before);
     stub.shouldThrow = null;
   });
 
@@ -525,7 +539,7 @@ describe('temp-file lifecycle (#543)', () => {
         .attach('image', big, { filename: 'big.bin', contentType: 'text/plain' });
       expect(res.status).toBe(413);
       // multer aborts and unlinks its own partial file when the limit trips.
-      expect(tempFiles().length).toBe(before);
+      await waitForTempCount(before);
     } finally {
       setUserSetting(user.id, 'uploads.image.max_upload_mb', 25);
     }
