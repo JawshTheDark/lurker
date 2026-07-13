@@ -92,6 +92,16 @@
       @select="onChannelPickerSelect"
       @close="closeChannelPicker"
     />
+    <!-- `/set`/`/get` settings-key suggester (issue: amiantos request). Same
+         popover pattern as the channel picker; opens on the key argument. -->
+    <SettingPicker
+      ref="settingPickerEl"
+      :open="settingPickerOpen"
+      :query="settingPickerQuery"
+      :anchor="formEl"
+      @select="onSettingPickerSelect"
+      @close="closeSettingPicker"
+    />
     <!-- Previous-input recall menu, opened by tapping the `>` prompt — the
          pointer path to history for mobile, where Up-arrow is unreachable
          (issue #204). Anchored to the form like the pickers above; `toggle-el`
@@ -174,7 +184,11 @@ import {
 import { applySpoilerMarkup } from '../utils/spoilerMarkup.js';
 import { buildNickCandidates } from '../utils/nickCompletion.js';
 import { buildChannelCandidates } from '../utils/channelCompletion.js';
-import { buildCommandCandidates, isCommandToken } from '../utils/commandCompletion.js';
+import {
+  buildCommandCandidates,
+  isCommandToken,
+  isSettingKeyArg,
+} from '../utils/commandCompletion.js';
 import { ensureChannelPrefix } from '../utils/channelTarget.js';
 import {
   findActiveShortcode,
@@ -184,6 +198,7 @@ import {
 import type { EmojiMatch } from '../utils/emojiData.js';
 import NickPicker from './NickPicker.vue';
 import ChannelPicker from './ChannelPicker.vue';
+import SettingPicker from './SettingPicker.vue';
 import HistoryPicker from './HistoryPicker.vue';
 import EmojiPicker from './EmojiPicker.vue';
 import LongMessageUploadModal from './LongMessageUploadModal.vue';
@@ -275,6 +290,13 @@ const channelPickerQuery = ref('');
 const channelPickerEl = ref<InstanceType<typeof ChannelPicker> | null>(null);
 let channelPickerTokenStart = -1;
 let channelPickerTokenEnd = -1;
+// `/set` / `/get` settings-key suggester (same popover pattern as the channel
+// picker). Opens when the token under the cursor is the key argument.
+const settingPickerOpen = ref(false);
+const settingPickerQuery = ref('');
+const settingPickerEl = ref<InstanceType<typeof SettingPicker> | null>(null);
+let settingPickerTokenStart = -1;
+let settingPickerTokenEnd = -1;
 // Previous-input recall menu (issue #204). Unlike the nick/channel pickers it
 // isn't tied to a token under the cursor — it's a tap on the `>` prompt that
 // lists the whole buffer history. `promptBtnEl` is that toggle, kept here so
@@ -893,6 +915,20 @@ function onKeydown(e: KeyboardEvent): void {
       return;
     }
   }
+  // The `/set` settings-key suggester takes the same nav keys while open.
+  if (settingPickerOpen.value && !e.isComposing && settingPickerEl.value?.hasCandidates()) {
+    if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+      if (!e.altKey && !e.metaKey && !e.ctrlKey) {
+        e.preventDefault();
+        settingPickerEl.value.moveActive(e.key === 'ArrowUp' ? -1 : 1);
+        return;
+      }
+    } else if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
+      e.preventDefault();
+      settingPickerEl.value.confirmActive();
+      return;
+    }
+  }
   // The mobile/compact nick strip owns navigation keys while open with
   // candidates. All four arrows cycle the highlight (Down/Right next, Up/Left
   // previous), Tab confirms the active chip, Escape closes the strip.
@@ -1162,6 +1198,13 @@ function closeChannelPicker() {
   channelPickerTokenEnd = -1;
 }
 
+function closeSettingPicker() {
+  settingPickerOpen.value = false;
+  settingPickerQuery.value = '';
+  settingPickerTokenStart = -1;
+  settingPickerTokenEnd = -1;
+}
+
 function closeHistoryPicker() {
   historyPickerOpen.value = false;
 }
@@ -1288,6 +1331,7 @@ function refreshPicker() {
     closeStrip();
     closeEmojiStrip();
     closeChannelPicker();
+    closeSettingPicker();
     return;
   }
   const value = text.value;
@@ -1305,6 +1349,7 @@ function refreshPicker() {
     closePicker();
     closeStrip();
     closeChannelPicker();
+    closeSettingPicker();
     if (emojiOnStrip) {
       closeEmojiPicker();
       void showEmojiStrip();
@@ -1331,6 +1376,7 @@ function refreshPicker() {
   if (token.startsWith('#')) {
     closePicker();
     closeStrip();
+    closeSettingPicker();
     channelPickerOpen.value = true;
     channelPickerQuery.value = token;
     channelPickerTokenStart = start;
@@ -1340,6 +1386,20 @@ function refreshPicker() {
   // Any other token means a channel isn't being edited — tear down a picker the
   // previous keystroke may have opened before routing to the nick UIs below.
   closeChannelPicker();
+
+  // `/set <key>` / `/get <key>` → the settings-key suggester. The token under the
+  // cursor is the key argument (its preceding text is exactly `/set `/`/get `),
+  // so open the popover of matching registry keys and skip nick completion.
+  if (isSettingKeyArg(value.slice(0, start))) {
+    closePicker();
+    closeStrip();
+    settingPickerOpen.value = true;
+    settingPickerQuery.value = token;
+    settingPickerTokenStart = start;
+    settingPickerTokenEnd = end;
+    return;
+  }
+  closeSettingPicker();
 
   // Slash commands never trigger nick completion in either UI.
   if (token.startsWith('/')) {
@@ -1417,6 +1477,28 @@ function onPickerSelect(nick: string): void {
     const el = inputEl.value;
     if (!el) return;
     const caret = before.length + nick.length + suffix.length;
+    el.focus();
+    el.setSelectionRange(caret, caret);
+  });
+}
+
+function onSettingPickerSelect(key: string): void {
+  const value = text.value;
+  if (settingPickerTokenStart < 0) {
+    closeSettingPicker();
+    return;
+  }
+  const before = value.slice(0, settingPickerTokenStart);
+  const after = value.slice(settingPickerTokenEnd);
+  // Insert the key + a trailing space, ready for the value (or Enter for /get).
+  cycling = true;
+  text.value = before + key + ' ' + after;
+  cycling = false;
+  closeSettingPicker();
+  queueMicrotask(() => {
+    const el = inputEl.value;
+    if (!el) return;
+    const caret = before.length + key.length + 1;
     el.focus();
     el.setSelectionRange(caret, caret);
   });
