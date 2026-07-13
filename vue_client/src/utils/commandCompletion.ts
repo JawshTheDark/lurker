@@ -43,8 +43,11 @@ export interface SettingKeyMatch {
 /** Registry setting keys whose key starts with `query` (case-insensitive), for
  *  `/set`/`/get` argument completion — the suggester amiantos asked for: type
  *  `chat.` and see every setting under it. Prefix-then-substring so `chat.` lists
- *  the chat.* group, and a bare `color` still surfaces `look.nick.color`. */
-export function buildSettingKeyCandidates(query: string, limit = 50): SettingKeyMatch[] {
+ *  the chat.* group, and a bare `color` still surfaces `look.nick.color`. Each
+ *  bucket is sorted alphabetically by key, and the cap defaults high enough to
+ *  hold the whole registry so a broad/empty query (`/set `) surfaces ALL settings
+ *  (the popover scrolls), not just the first, largest category. */
+export function buildSettingKeyCandidates(query: string, limit = 500): SettingKeyMatch[] {
   const q = query.toLowerCase();
   const starts: SettingKeyMatch[] = [];
   const contains: SettingKeyMatch[] = [];
@@ -53,6 +56,9 @@ export function buildSettingKeyCandidates(query: string, limit = 50): SettingKey
     if (k.startsWith(q)) starts.push({ key: o.key, label: o.label, type: o.type });
     else if (q && k.includes(q)) contains.push({ key: o.key, label: o.label, type: o.type });
   }
+  const byKey = (a: SettingKeyMatch, b: SettingKeyMatch) => a.key.localeCompare(b.key);
+  starts.sort(byKey);
+  contains.sort(byKey);
   return [...starts, ...contains].slice(0, limit);
 }
 
