@@ -806,6 +806,8 @@ function commitCompletion(opts: {
     prefix: value.slice(0, start),
     tail: value.slice(end),
     suffix,
+    // A picker-committed completion (nick/channel) is never a command.
+    isCommand: false,
     // Fall back to the pick alone when it isn't in the rebuilt list (no network,
     // a member parting mid-keystroke): the insertion still lands, there's just
     // nothing to cycle through.
@@ -980,12 +982,6 @@ function onKeydown(e: KeyboardEvent): void {
   // listener. Shift+Enter still newlines. Gated on hasCandidates() so a no-match
   // `#zzz` lets Enter/Tab fall through. refreshPicker keeps this and the nick
   // picker from being open at once, so the two blocks can't both fire.
-  //
-  // Tab is deliberately NOT a picker-confirm here: it closes the popover and
-  // falls through to the in-place Tab-completion cycle below, so `#`+Tab
-  // inserts the current channel (candidates are current-channel-first) and
-  // *repeated* Tab rotates through the other joined channels in place — the
-  // standard IRC tab-cycle, which a confirm-and-close can't do.
   if (channelPickerOpen.value && !e.isComposing && channelPickerEl.value?.hasCandidates()) {
     if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
       if (!e.altKey && !e.metaKey && !e.ctrlKey) {
@@ -993,13 +989,10 @@ function onKeydown(e: KeyboardEvent): void {
         channelPickerEl.value.moveActive(e.key === 'ArrowUp' ? -1 : 1);
         return;
       }
-    } else if (e.key === 'Enter' && !e.shiftKey) {
+    } else if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
       e.preventDefault();
       channelPickerEl.value.confirmActive();
       return;
-    } else if (e.key === 'Tab') {
-      // Close the popover and let the in-place cycle take over (no return).
-      closeChannelPicker();
     }
   }
   // The `/set` settings-key suggester takes the same nav keys while open.
