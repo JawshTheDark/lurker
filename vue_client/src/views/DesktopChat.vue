@@ -360,6 +360,7 @@ import { useNicklistCollapseStore } from '../stores/nicklistCollapse.js';
 import { useNickNotesStore } from '../stores/nickNotes.js';
 import { useFriendsStore } from '../stores/friends.js';
 import { useDccStore } from '../stores/dcc.js';
+import { useConfigStore } from '../stores/config.js';
 import { useWhoisStore } from '../stores/whois.js';
 import { useChannelListModal } from '../composables/useChannelListModal.js';
 import { useJoinChannelModal } from '../composables/useJoinChannelModal.js';
@@ -406,6 +407,7 @@ const nickNotes = useNickNotesStore();
 const friends = useFriendsStore();
 const friendCount = computed(() => friends.contacts.length);
 const dcc = useDccStore();
+const config = useConfigStore();
 const dccTitle = computed(() =>
   dcc.pendingCount > 0 ? `DCC transfers — ${dcc.pendingCount} awaiting approval` : 'DCC transfers',
 );
