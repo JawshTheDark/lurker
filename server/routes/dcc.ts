@@ -115,7 +115,6 @@ router.post('/:id/cancel', (req: Request, res: Response) => {
  */
 router.post(
   '/send',
-  blockWritesWhenPaused,
   (req: Request, res: Response, next) => {
     sendUpload.single('file')(req, res, (err: unknown) => {
       if (err) {
@@ -202,7 +201,7 @@ function chatTarget(req: Request, res: Response): { networkId: number; nick: str
 }
 
 /** POST /api/dcc/chat — offer a DCC chat to a peer. Body: {networkId, nick}. */
-router.post('/chat', blockWritesWhenPaused, (req: Request, res: Response) => {
+router.post('/chat', (req: Request, res: Response) => {
   const t = chatTarget(req, res);
   if (!t) return;
   if (!ircManager.dccChatOpen(req.user!.id, t.networkId, t.nick)) {
@@ -213,7 +212,7 @@ router.post('/chat', blockWritesWhenPaused, (req: Request, res: Response) => {
 });
 
 /** POST /api/dcc/chat/close — close a live DCC chat. Body: {networkId, nick}. */
-router.post('/chat/close', blockWritesWhenPaused, (req: Request, res: Response) => {
+router.post('/chat/close', (req: Request, res: Response) => {
   const t = chatTarget(req, res);
   if (!t) return;
   ircManager.dccChatClose(req.user!.id, t.networkId, t.nick);
