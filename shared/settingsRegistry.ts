@@ -1116,10 +1116,10 @@ export const REGISTRY: readonly SettingOption[] = Object.freeze([
     group: 'pipeline',
     type: 'int',
     min: 1,
-    max: 200,
-    // 100, not 25: a 30-second phone video clears 25 MB instantly, and media
-    // uploads (#515) make that the common case rather than the exotic one.
-    default: 100,
+    // Effectively unlimited on this instance (1 TiB). Uploads stage on disk,
+    // not in the heap, so the only real bound is storage.
+    max: 1048576,
+    default: 1048576,
     selfHostedOnly: true,
     description:
       'Hard cap on the raw upload size in megabytes. Anything larger is ' +
