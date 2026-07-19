@@ -123,8 +123,10 @@ function providerErrorStatus(e: { code?: string }): number {
 const TMP_DIR = path.join(resolveDataDir(), 'tmp', 'uploads');
 fs.mkdirSync(TMP_DIR, { recursive: true, mode: 0o700 });
 
-// The registry's own ceiling; a per-user cap can't exceed it, so neither can multer.
-const MAX_CAP_MB = 200;
+// The registry's own ceiling; a per-user cap can't exceed it, so neither can
+// multer. 1 TiB = "no practical limit" on this instance while keeping every
+// downstream size computation finite.
+const MAX_CAP_MB = 1_048_576;
 
 /** The user's size cap. effectiveSettings() has already merged the registry default
  *  in, so this reads it from ONE place — a second hardcoded default here would be a
