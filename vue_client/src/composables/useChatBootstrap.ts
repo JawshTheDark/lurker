@@ -8,6 +8,7 @@ import { useBuffersStore } from '../stores/buffers.js';
 import { useToastsStore } from '../stores/toasts.js';
 import { useOnboarding } from './useOnboarding.js';
 import { startPresenceReporter, reportNow } from './usePresence.js';
+import { startActiveBufferReporter } from './useActiveBufferReporter.js';
 import { registerSW, onSWPushMessage } from './usePush.js';
 import { onJumpIntent } from './useJumpIntent.js';
 import { connected } from './useSocket.js';
@@ -233,6 +234,9 @@ export function useChatBootstrap({ onJump }: ChatBootstrapOptions = {}): void {
     // send failures (idempotent module singleton, like the presence reporter —
     // survives the Desktop<->Mobile shell swap without double-registering).
     startBufferHydration();
+    // Report the focused buffer to the server so notice.msgbuffer 'active' mode
+    // (mIRC "show in active window") can route to the window you're looking at.
+    startActiveBufferReporter();
     // Mirror the unread-highlight total onto the PWA app icon (#451). Idempotent
     // and feature-detected — a no-op where the Badging API is unavailable.
     startAppBadge();

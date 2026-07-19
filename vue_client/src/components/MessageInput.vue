@@ -112,9 +112,20 @@
       :open="channelPickerOpen"
       :query="channelPickerQuery"
       :network-id="active?.networkId ?? null"
+      :active-target="active?.target ?? null"
       :anchor="formEl"
       @select="onChannelPickerSelect"
       @close="closeChannelPicker"
+    />
+    <!-- `/set`/`/get` settings-key suggester (issue: amiantos request). Same
+         popover pattern as the channel picker; opens on the key argument. -->
+    <SettingPicker
+      ref="settingPickerEl"
+      :open="settingPickerOpen"
+      :query="settingPickerQuery"
+      :anchor="formEl"
+      @select="onSettingPickerSelect"
+      @close="closeSettingPicker"
     />
     <!-- Previous-input recall menu, opened by tapping the `>` prompt — the
          pointer path to history for mobile, where Up-arrow is unreachable
@@ -152,6 +163,8 @@
         @cancel="onLongMessageCancel"
       />
     </Teleport>
+    <!-- Hidden picker for `/dcc send <nick>` — click()ed programmatically. -->
+    <input ref="dccFileInput" type="file" style="display: none" @change="onDccFileChosen" />
   </form>
 </template>
 
@@ -168,6 +181,7 @@ import { useThemesStore } from '../stores/themes.js';
 import { foldThemeName, themeNameError } from '../../../shared/themePresets.js';
 import type { ThemePreset } from '../../../shared/themePresets.js';
 import { formatColumns } from '../lib/commands/output.js';
+import { resolveAlias } from '../lib/commands/aliasResolver.js';
 import { REGISTRY, getOption, optionVisible, CATEGORIES } from '../utils/settingsRegistry.js';
 import type { SettingOption } from '../../../shared/settingsRegistry.js';
 import { useConfigStore } from '../stores/config.js';
@@ -181,6 +195,7 @@ import { useUploadsStore, onInsertUrl } from '../stores/uploads.js';
 import { useDccStore, percentReceived, type DccTransfer } from '../stores/dcc.js';
 import { useToastsStore } from '../stores/toasts.js';
 import { useIgnoresStore, type IgnoreEntry } from '../stores/ignores.js';
+import { useAliasesStore } from '../stores/aliases.js';
 import { useRelayBotsStore } from '../stores/relayBots.js';
 import { useHighlightRulesStore, type HighlightRule } from '../stores/highlightRules.js';
 import { isChannelTarget } from '../../../shared/channels.js';
@@ -206,6 +221,11 @@ import { shouldRepinOnSend } from '../utils/sendScroll.js';
 import { applySpoilerMarkup } from '../utils/spoilerMarkup.js';
 import { buildNickCandidates } from '../utils/nickCompletion.js';
 import { buildChannelCandidates } from '../utils/channelCompletion.js';
+import {
+  buildCommandCandidates,
+  isCommandToken,
+  isSettingKeyArg,
+} from '../utils/commandCompletion.js';
 import { ensureChannelPrefix } from '../utils/channelTarget.js';
 import {
   findActiveShortcode,
@@ -215,6 +235,7 @@ import {
 import type { EmojiMatch } from '../utils/emojiData.js';
 import NickPicker from './NickPicker.vue';
 import ChannelPicker from './ChannelPicker.vue';
+import SettingPicker from './SettingPicker.vue';
 import HistoryPicker from './HistoryPicker.vue';
 import EmojiPicker from './EmojiPicker.vue';
 import LongMessageUploadModal from './LongMessageUploadModal.vue';
@@ -250,6 +271,7 @@ const uploads = useUploadsStore();
 const dcc = useDccStore();
 const toasts = useToastsStore();
 const ignores = useIgnoresStore();
+const aliases = useAliasesStore();
 const relayBots = useRelayBotsStore();
 const highlightRules = useHighlightRulesStore();
 const chanlist = useChanlistStore();
@@ -308,6 +330,13 @@ const channelPickerQuery = ref('');
 const channelPickerEl = ref<InstanceType<typeof ChannelPicker> | null>(null);
 let channelPickerTokenStart = -1;
 let channelPickerTokenEnd = -1;
+// `/set` / `/get` settings-key suggester (same popover pattern as the channel
+// picker). Opens when the token under the cursor is the key argument.
+const settingPickerOpen = ref(false);
+const settingPickerQuery = ref('');
+const settingPickerEl = ref<InstanceType<typeof SettingPicker> | null>(null);
+let settingPickerTokenStart = -1;
+let settingPickerTokenEnd = -1;
 // Previous-input recall menu (issue #204). Unlike the nick/channel pickers it
 // isn't tied to a token under the cursor — it's a tap on the `>` prompt that
 // lists the whole buffer history. `promptBtnEl` is that toggle, kept here so
@@ -660,6 +689,9 @@ interface CompletionState {
   // trailing space, in-place completion doesn't, and a cycle seeded from the
   // picker has to keep the space it already put there.
   suffix: string;
+  // True when completing a /command (vs a nick/channel) — lets a completed
+  // /set or /get pop the settings-key suggester immediately.
+  isCommand: boolean;
   matches: string[];
   index: number;
   // Caret position after the last insertion, used to detect a session the user
@@ -860,6 +892,17 @@ function applyCompletion() {
     if (!el) return;
     el.setSelectionRange(caret, caret);
     if (completion) completion.caret = caret;
+    // Completing `/set` / `/get` should pop the settings-key suggester right
+    // away. `cycling` suppressed the input handler while we rewrote the text, so
+    // refreshPicker never fired — drop the command-cycle state and re-evaluate
+    // the pickers against the new `/set ` text so the overlay opens immediately.
+    if (completion?.isCommand) {
+      const cmd = pick.replace(/^\/+/, '').toLowerCase();
+      if (cmd === 'set' || cmd === 'get') {
+        resetCompletion();
+        refreshPicker();
+      }
+    }
   });
 }
 
@@ -895,6 +938,8 @@ function commitCompletion(opts: {
     prefix: value.slice(0, start),
     tail: value.slice(end),
     suffix,
+    // A picker-committed completion (nick/channel) is never a command.
+    isCommand: false,
     // Fall back to the pick alone when it isn't in the rebuilt list (no network,
     // a member parting mid-keystroke): the insertion still lands, there's just
     // nothing to cycle through.
@@ -1084,11 +1129,11 @@ function onKeydown(e: KeyboardEvent): void {
     }
   }
   // The `#`-channel picker mirrors the nick picker above: while open with
-  // candidates it owns arrows (move highlight) and Tab/Enter (confirm), and
-  // Escape is left to ChannelPicker's own document listener. `#` is an explicit
-  // prefix, so Enter accepts here too (issue #221); Shift+Enter still newlines.
-  // Gated on hasCandidates() so a no-match `#zzz` lets Enter/Tab fall through to
-  // send / in-place completion below. refreshPicker keeps this and the nick
+  // candidates it owns arrows (move highlight) and Enter (confirm — inserts the
+  // highlighted channel + trailing space, for referencing a channel mid-message
+  // per issue #154), and Escape is left to ChannelPicker's own document
+  // listener. Shift+Enter still newlines. Gated on hasCandidates() so a no-match
+  // `#zzz` lets Enter/Tab fall through. refreshPicker keeps this and the nick
   // picker from being open at once, so the two blocks can't both fire.
   if (channelPickerOpen.value && channelPickerEl.value?.hasCandidates()) {
     if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
@@ -1100,6 +1145,20 @@ function onKeydown(e: KeyboardEvent): void {
     } else if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
       e.preventDefault();
       channelPickerEl.value.confirmActive();
+      return;
+    }
+  }
+  // The `/set` settings-key suggester takes the same nav keys while open.
+  if (settingPickerOpen.value && !e.isComposing && settingPickerEl.value?.hasCandidates()) {
+    if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+      if (!e.altKey && !e.metaKey && !e.ctrlKey) {
+        e.preventDefault();
+        settingPickerEl.value.moveActive(e.key === 'ArrowUp' ? -1 : 1);
+        return;
+      }
+    } else if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
+      e.preventDefault();
+      settingPickerEl.value.confirmActive();
       return;
     }
   }
@@ -1333,28 +1392,35 @@ function onKeydown(e: KeyboardEvent): void {
   if (!buf || !active.value) return;
   const networkId = active.value.networkId;
 
+  // A leading /word at the start of a line completes command names (incl. the
+  // user's aliases); otherwise fall back to channel / nick completion.
+  //
   // ⚠ `#`-only on purpose (#724): this asks what SIGIL the user typed, not whether a target is
   // a channel. Tab after `&loc` completes nicks, which is the lesser evil — widening it would
   // make a leading `+` or `!` in ordinary prose start completing channel names.
-  const isChannel = token.startsWith('#');
+  //
   // Strip the sigil off both forms. '#' is part of a channel name so it stays in
   // the *result*, but neither sigil belongs in the *prefix* we match on: asking
   // buildNickCandidates for nicks starting with '@' matches nothing, which is
   // how `@ali`+Tab used to silently do nothing once the picker had been
   // dismissed with Escape (the picker owns Tab only while it's open).
+  const isCommand = isCommandToken(value, token, start);
+  const isChannel = !isCommand && token.startsWith('#');
   const stripped = isChannel || token.startsWith('@') ? token.slice(1) : token;
-  const matches = isChannel
-    ? buildChannelMatches(networkId, token)
-    : buildNickMatches(buf, networkId, stripped);
+  const matches = isCommand
+    ? buildCommandCandidates(token, aliases.names)
+    : isChannel
+      ? buildChannelMatches(networkId, token)
+      : buildNickMatches(buf, networkId, stripped);
   if (!matches.length) return;
 
   const prefix = value.slice(0, start);
   const tail = value.slice(end);
-  // A nick at line start is being *addressed* and wants an opening ': '.
-  // Channels never take one — the '#' is already part of the name.
-  const suffix = !isChannel && isAtLineStart(prefix) ? ': ' : '';
+  // Commands get a trailing space (ready for args); a nick at line start is being
+  // *addressed* and wants ': '. Channels never take one — '#' is part of the name.
+  const suffix = isCommand ? ' ' : !isChannel && isAtLineStart(prefix) ? ': ' : '';
 
-  completion = { prefix, tail, suffix, matches, index: 0, caret: 0 };
+  completion = { prefix, tail, suffix, isCommand, matches, index: 0, caret: 0 };
   applyCompletion();
 }
 
@@ -1370,6 +1436,13 @@ function closeChannelPicker() {
   channelPickerQuery.value = '';
   channelPickerTokenStart = -1;
   channelPickerTokenEnd = -1;
+}
+
+function closeSettingPicker() {
+  settingPickerOpen.value = false;
+  settingPickerQuery.value = '';
+  settingPickerTokenStart = -1;
+  settingPickerTokenEnd = -1;
 }
 
 function closeHistoryPicker() {
@@ -1498,6 +1571,7 @@ function refreshPicker() {
     closeStrip();
     closeEmojiStrip();
     closeChannelPicker();
+    closeSettingPicker();
     return;
   }
   const value = text.value;
@@ -1515,6 +1589,7 @@ function refreshPicker() {
     closePicker();
     closeStrip();
     closeChannelPicker();
+    closeSettingPicker();
     if (emojiOnStrip) {
       closeEmojiPicker();
       void showEmojiStrip();
@@ -1543,6 +1618,7 @@ function refreshPicker() {
   if (token.startsWith('#')) {
     closePicker();
     closeStrip();
+    closeSettingPicker();
     channelPickerOpen.value = true;
     channelPickerQuery.value = token;
     channelPickerTokenStart = start;
@@ -1552,6 +1628,20 @@ function refreshPicker() {
   // Any other token means a channel isn't being edited — tear down a picker the
   // previous keystroke may have opened before routing to the nick UIs below.
   closeChannelPicker();
+
+  // `/set <key>` / `/get <key>` → the settings-key suggester. The token under the
+  // cursor is the key argument (its preceding text is exactly `/set `/`/get `),
+  // so open the popover of matching registry keys and skip nick completion.
+  if (isSettingKeyArg(value.slice(0, start))) {
+    closePicker();
+    closeStrip();
+    settingPickerOpen.value = true;
+    settingPickerQuery.value = token;
+    settingPickerTokenStart = start;
+    settingPickerTokenEnd = end;
+    return;
+  }
+  closeSettingPicker();
 
   // Slash commands never trigger nick completion in either UI.
   if (token.startsWith('/')) {
@@ -1630,6 +1720,28 @@ function onPickerSelect(nick: string): void {
     pick: nick,
     suffix,
     matches: buf && networkId != null ? buildNickMatches(buf, networkId, pickerQuery.value) : [],
+  });
+}
+
+function onSettingPickerSelect(key: string): void {
+  const value = text.value;
+  if (settingPickerTokenStart < 0) {
+    closeSettingPicker();
+    return;
+  }
+  const before = value.slice(0, settingPickerTokenStart);
+  const after = value.slice(settingPickerTokenEnd);
+  // Insert the key + a trailing space, ready for the value (or Enter for /get).
+  cycling = true;
+  text.value = before + key + ' ' + after;
+  cycling = false;
+  closeSettingPicker();
+  queueMicrotask(() => {
+    const el = inputEl.value;
+    if (!el) return;
+    const caret = before.length + key.length + 1;
+    el.focus();
+    el.setSelectionRange(caret, caret);
   });
 }
 
@@ -2402,6 +2514,7 @@ const COMMANDS_LINES = [
   '      revoke <nick>   ·   unrevoke <nick>   ·   reverify <nick>   ·   verify <nick>',
   '      rotate [#chan]   ·   forget [-all] <nick|handle>   ·   fingerprint   ·   status   ·   list [-all]',
   '      autotrust <list | add <scope> <pattern> | remove <pattern>>   ·   export   ·   import',
+  '  /alias [add|del]       — custom slash-command aliases (also Settings → Aliases)',
   '  /commands              — this list',
   '  //text                 — send literal "/text" as a message (escape)',
 ];
@@ -2592,6 +2705,39 @@ async function runDcc(argLine: string, networkId: number | null, target: string)
     }
     return;
   }
+  // DCC chat + file send are per-network (they ride that network's connection),
+  // so they need a network context — refuse from the network-agnostic system view.
+  if (cmd.kind === 'chat' || cmd.kind === 'chatClose' || cmd.kind === 'send') {
+    if (networkId == null) {
+      localInfo(
+        networkId,
+        target,
+        `/dcc ${cmd.kind === 'chatClose' ? 'close' : cmd.kind}: run this from a network buffer`,
+      );
+      return;
+    }
+    if (cmd.kind === 'chat') {
+      try {
+        await dcc.openChat(networkId, cmd.nick);
+        buffers.activate(networkId, `=${cmd.nick}`);
+      } catch (e: any) {
+        localInfo(networkId, target, `/dcc chat: ${e?.message || 'failed'}`);
+      }
+      return;
+    }
+    if (cmd.kind === 'chatClose') {
+      try {
+        await dcc.closeChat(networkId, cmd.nick);
+        localInfo(networkId, target, `/dcc: closed DCC chat with ${cmd.nick}`);
+      } catch (e: any) {
+        localInfo(networkId, target, `/dcc close: ${e?.message || 'failed'}`);
+      }
+      return;
+    }
+    // send — open the file picker; the actual upload fires on file selection.
+    openDccSendPicker(networkId, cmd.nick);
+    return;
+  }
   // accept / reject / cancel — the parser guarantees a numeric id here. They all
   // route through the store's shared act() path.
   const verb = cmd.kind;
@@ -2710,6 +2856,43 @@ async function runTheme(argLine: string, networkId: number | null, target: strin
     return reply(`${cmd.slot}-mode theme set to ${t.name}.${hint}`);
   } catch (e: any) {
     reply(`/theme: ${e?.message || 'failed'}`);
+  }
+}
+
+// `/dcc send <nick>` opens the OS file picker; the upload fires once a file is
+// chosen (onDccFileChosen). The hidden <input> lives in the template.
+const dccFileInput = ref<HTMLInputElement | null>(null);
+let dccSendCtx: { networkId: number; nick: string } | null = null;
+function openDccSendPicker(networkId: number, nick: string): void {
+  dccSendCtx = { networkId, nick };
+  const el = dccFileInput.value;
+  if (!el) return;
+  el.value = ''; // allow re-picking the same file
+  el.click();
+}
+async function onDccFileChosen(e: Event): Promise<void> {
+  const input = e.target as HTMLInputElement;
+  const file = input.files?.[0];
+  const ctx = dccSendCtx;
+  dccSendCtx = null;
+  if (!file || !ctx) return;
+  const sys = active.value;
+  try {
+    const t = await dcc.sendFile(ctx.networkId, ctx.nick, file);
+    localInfo(
+      sys?.networkId ?? ctx.networkId,
+      sys?.target ?? '',
+      t
+        ? `/dcc send: offering "${t.filename}" to ${ctx.nick} — ${t.state}`
+        : `/dcc send: offered to ${ctx.nick}`,
+    );
+    dcc.panelOpen = true;
+  } catch (err: any) {
+    localInfo(
+      sys?.networkId ?? ctx.networkId,
+      sys?.target ?? '',
+      `/dcc send: ${err?.message || 'failed'}`,
+    );
   }
 }
 
@@ -3077,9 +3260,26 @@ function runGet(argLine: string, networkId: number | null, target: string): void
 }
 
 function handleCommand(line: string, networkId: number | null, target: string): boolean {
-  const [cmd, ...rest] = line.slice(1).split(/\s+/);
-  const argLine = line.slice(1 + cmd.length).trim();
-  const verb = cmd.toLowerCase();
+  let [cmd, ...rest] = line.slice(1).split(/\s+/);
+  let argLine = line.slice(1 + cmd.length).trim();
+  let verb = cmd.toLowerCase();
+
+  // Expand a custom or built-in alias ONCE, before dispatch: `/j #x` → `join #x`,
+  // `/op bob` → `mode #chan +o bob`, etc. User aliases win over built-ins; the
+  // result is re-parsed into verb/args/line and never re-aliased (no loops).
+  const expanded = resolveAlias(verb, argLine, {
+    nick: networkId != null ? networks.states[networkId]?.nick : undefined,
+    target,
+    userAliases: aliases.map,
+  });
+  if (expanded != null && expanded !== '') {
+    line = `/${expanded}`;
+    const parts = expanded.split(/\s+/);
+    cmd = parts[0] ?? '';
+    rest = parts.slice(1);
+    argLine = expanded.slice(cmd.length).trim();
+    verb = cmd.toLowerCase();
+  }
 
   // Network-agnostic commands act on global / user-wide state (the local command
   // cheatsheet, the cross-network away flag, the per-user ignore list), so they
@@ -3131,6 +3331,53 @@ function handleCommand(line: string, networkId: number | null, target: string): 
       // Theme presets. App-scoped like /set; async like /dcc.
       void runTheme(argLine, networkId, target);
       return true;
+    case 'alias': {
+      // Keyboard management of custom aliases (the Settings → Aliases pane is the
+      // GUI). /alias [list] · /alias add <name> <expansion> · /alias del <name>.
+      const trimmed = argLine.trim();
+      const sp = trimmed.indexOf(' ');
+      const sub = (sp === -1 ? trimmed : trimmed.slice(0, sp)).toLowerCase();
+      const subRest = sp === -1 ? '' : trimmed.slice(sp + 1).trim();
+      if (sub === '' || sub === 'list') {
+        if (!aliases.aliases.length) {
+          localInfo(networkId, target, 'no custom aliases. /alias add <name> <expansion>');
+        } else {
+          localInfo(networkId, target, `aliases (${aliases.aliases.length}):`);
+          for (const a of aliases.aliases) {
+            localInfo(networkId, target, `  /${a.name} → ${a.expansion}`);
+          }
+        }
+        return true;
+      }
+      if (sub === 'add' || sub === 'set') {
+        const si = subRest.indexOf(' ');
+        const name = (si === -1 ? subRest : subRest.slice(0, si)).replace(/^\/+/, '');
+        const expansion = si === -1 ? '' : subRest.slice(si + 1).trim();
+        if (!name || !expansion) {
+          localInfo(networkId, target, 'usage: /alias add <name> <expansion>');
+          return true;
+        }
+        aliases.add(name, expansion);
+        localInfo(networkId, target, `alias set: /${name} → ${expansion}`);
+        return true;
+      }
+      if (sub === 'del' || sub === 'delete' || sub === 'remove' || sub === 'rm') {
+        const name = subRest.replace(/^\/+/, '').trim();
+        if (!name) {
+          localInfo(networkId, target, 'usage: /alias del <name>');
+          return true;
+        }
+        aliases.removeByName(name);
+        localInfo(networkId, target, `removed alias /${name}`);
+        return true;
+      }
+      localInfo(
+        networkId,
+        target,
+        'usage: /alias [list] · /alias add <name> <expansion> · /alias del <name>',
+      );
+      return true;
+    }
   }
 
   // Everything else acts on a specific network/buffer.

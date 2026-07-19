@@ -23,6 +23,7 @@ import { useFavoritesStore, type FavoriteEntry } from '../stores/favorites.js';
 import { useNicklistCollapseStore } from '../stores/nicklistCollapse.js';
 import { useChannelNotifyStore } from '../stores/channelNotify.js';
 import { useIgnoresStore } from '../stores/ignores.js';
+import { useAliasesStore } from '../stores/aliases.js';
 import { useNickNotesStore } from '../stores/nickNotes.js';
 import { useRelayBotsStore } from '../stores/relayBots.js';
 import { useWhoisStore } from '../stores/whois.js';
@@ -561,7 +562,7 @@ export function resetPreviewToggleWiring(): void {
   previewTogglesWired = false;
 }
 
-function applySnapshot(snapshot: any[], globalIgnores: any[] = []): void {
+function applySnapshot(snapshot: any[], globalIgnores: any[] = [], aliases: any[] = []): void {
   const networks = useNetworksStore();
   const buffers = useBuffersStore();
   const pins = usePinsStore();
@@ -577,6 +578,7 @@ function applySnapshot(snapshot: any[], globalIgnores: any[] = []): void {
   ignores.applySnapshot(snapshot, globalIgnores);
   nickNotes.applySnapshot(snapshot);
   relayBots.applySnapshot(snapshot);
+  useAliasesStore().applySnapshot(aliases);
   // Highlight rules aren't in the snapshot; load them now so client-side
   // render-time highlight evaluation (#349) works app-wide, not just after the
   // settings pane has been opened.
@@ -646,7 +648,7 @@ function handleMessage(raw: string): void {
   }
 
   if (payload.kind === 'snapshot') {
-    applySnapshot(payload.networks, payload.globalIgnores || []);
+    applySnapshot(payload.networks, payload.globalIgnores || [], payload.aliases || []);
     // Fresh connect ships channel/DM buffers as empty shells (no message rows),
     // so their ids never advance our cursor. The server hands us the current
     // global max here as our "caught up to now" mark, so the next reconnect's
@@ -893,6 +895,10 @@ function handleMessage(raw: string): void {
   if (payload.kind === 'ignore-list-updated') {
     const ignores = useIgnoresStore();
     ignores.applyUpdate(payload.networkId, payload.masks || []);
+    return;
+  }
+  if (payload.kind === 'alias-list-updated') {
+    useAliasesStore().applyUpdate(payload.aliases || []);
     return;
   }
   if (payload.kind === 'nick-note-updated') {
