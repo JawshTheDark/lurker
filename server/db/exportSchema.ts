@@ -411,6 +411,15 @@ export const EXPORT_TABLES = Object.freeze({
     columns: ['user_id', 'network_id', 'nick', 'pattern', 'created_at'],
   },
 
+  user_aliases: {
+    mode: 'export',
+    scope: 'user_id',
+    section: 'data',
+    pk: 'id',
+    fkRekey: { user_id: 'users' },
+    columns: ['id', 'user_id', 'name', 'expansion', 'created_at'],
+  },
+
   user_bookmarks: {
     mode: 'export',
     scope: 'user_id',
@@ -666,6 +675,7 @@ export const IMPORT_ORDER = Object.freeze([
   'ignored_masks',
   'user_nick_notes',
   'user_relay_bots',
+  'user_aliases',
   'pinned_buffers',
   'favorite_buffers',
   'nicklist_collapsed',
