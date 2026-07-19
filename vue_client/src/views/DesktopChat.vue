@@ -218,6 +218,26 @@
             >
               <i class="fa-solid fa-note-sticky"></i>
             </button>
+            <button
+              v-if="dccAvailable"
+              type="button"
+              class="link"
+              title="Send file (DCC)"
+              aria-label="Send file (DCC)"
+              @click="dmDccSend"
+            >
+              <i class="fa-solid fa-file-arrow-up"></i>
+            </button>
+            <button
+              v-if="dccAvailable"
+              type="button"
+              class="link"
+              title="Start DCC chat"
+              aria-label="Start DCC chat"
+              @click="dmDccChat"
+            >
+              <i class="fa-solid fa-comments"></i>
+            </button>
           </template>
           <template v-else-if="isChannel">
             <button
@@ -354,6 +374,7 @@ import { useNicklistCollapseStore } from '../stores/nicklistCollapse.js';
 import { useNickNotesStore } from '../stores/nickNotes.js';
 import { useFriendsStore } from '../stores/friends.js';
 import { useDccStore } from '../stores/dcc.js';
+import { useConfigStore } from '../stores/config.js';
 import { useWhoisStore } from '../stores/whois.js';
 import { useChannelListModal } from '../composables/useChannelListModal.js';
 import { useJoinChannelModal } from '../composables/useJoinChannelModal.js';
@@ -400,6 +421,7 @@ const nickNotes = useNickNotesStore();
 const friends = useFriendsStore();
 const friendCount = computed(() => friends.contacts.length);
 const dcc = useDccStore();
+const config = useConfigStore();
 const dccTitle = computed(() =>
   dcc.pendingCount > 0 ? `DCC transfers — ${dcc.pendingCount} awaiting approval` : 'DCC transfers',
 );
@@ -548,6 +570,19 @@ const dmNoteLabel = computed(() =>
 function openDmNote() {
   if (!active.value) return;
   nickNotes.openEditor(active.value.networkId, active.value.target);
+}
+
+// DCC actions in the DM header. Self-hosted-only (hosted cells have DCC dark),
+// so only shown in the standalone edition; they degrade gracefully if DCC is off
+// on the instance (the server rejects with an error surfaced on the transfer).
+const dccAvailable = computed(() => !config.isNode);
+function dmDccSend() {
+  if (!active.value) return;
+  dcc.promptSendFile(active.value.networkId, active.value.target);
+}
+function dmDccChat() {
+  if (!active.value) return;
+  dcc.openChat(active.value.networkId, active.value.target).catch(() => {});
 }
 
 // Channel notification level (always/highlights/nothing/muted) now lives in the
