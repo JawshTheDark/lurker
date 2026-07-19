@@ -30,7 +30,7 @@ import {
 import { createIdentdServer, unregisterIdent } from './identd.js';
 import { getRecent } from './systemLog.js';
 import { createUser } from '../db/users.js';
-import { createNetwork } from '../db/networks.js';
+import { createNetwork, upsertChannel, listChannels } from '../db/networks.js';
 import { getPeerPresence } from '../db/peerPresence.js';
 import { setUserSetting, deleteUserSetting } from '../db/settings.js';
 
@@ -1966,5 +1966,80 @@ describe('join key forwarding', () => {
     conn.client.join = join;
     conn.join('#open');
     expect(join).toHaveBeenCalledWith('#open', undefined);
+  });
+});
+
+describe('ERR_LINKCHANNEL (470) forward cleanup', () => {
+  function makeConn(networkId: number): IrcConnection {
+    return new IrcConnection({
+      network: {
+        id: networkId,
+        user_id: 1,
+        name: 'n',
+        host: 'irc.example.test',
+        port: 6697,
+        tls: 1,
+        trusted_certificates: 1,
+        nick: 'me',
+        username: null,
+        realname: null,
+        server_password: null,
+        autoconnect: 1,
+        sasl_account: null,
+        sasl_password: null,
+        connect_commands: null,
+        position: 0,
+        created_at: new Date().toISOString(),
+      },
+      onEvent: () => {},
+    });
+  }
+
+  it('clears the source channel autojoin + phantom membership on a 470 forward', () => {
+    const user = createUser('link470-test');
+    const network = createNetwork(user.id, {
+      name: 'n',
+      host: 'irc.example.test',
+      port: 6697,
+      tls: 1,
+      trusted_certificates: 1,
+      nick: 'me',
+      username: null,
+      realname: null,
+      server_password: null,
+      autoconnect: 1,
+      sasl_account: null,
+      sasl_password: null,
+      connect_commands: null,
+    })!;
+    const conn = makeConn(network.id);
+    // The stuck state: an autojoin row (joined=1) + a phantom live membership for
+    // the source channel, with no real membership (it forwards). This is what
+    // re-JOINs every reconnect and resurrects the ghost buffer.
+    upsertChannel(network.id, '#apple', true);
+    conn.channels.set('#apple', {
+      name: '#apple',
+      topic: null,
+      members: new Map(),
+      modes: new Set(),
+    });
+    conn.publish = vi.fn<(event: unknown) => void>();
+
+    // :server 470 me #apple ##apple :Forwarding to another channel
+    conn.client.emit('unknown command', {
+      command: '470',
+      params: ['me', '#apple', '##apple', 'Forwarding to another channel'],
+    });
+
+    expect(conn.channels.has('#apple')).toBe(false); // phantom membership dropped
+    expect(listChannels(network.id).find((c) => c.name === '#apple')?.joined).toBe(0); // autojoin cleared
+    expect(conn.publish).toHaveBeenCalledWith({ type: 'channel-parted', target: '#apple' });
+  });
+
+  it('ignores a malformed 470 with no source channel', () => {
+    const conn = makeConn(1);
+    conn.publish = vi.fn<(event: unknown) => void>();
+    conn.client.emit('unknown command', { command: '470', params: ['me'] });
+    expect(conn.publish).not.toHaveBeenCalled();
   });
 });

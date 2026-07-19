@@ -786,6 +786,30 @@ export class IrcConnection {
     c.on('unknown command', (cmd: { command?: string; params?: string[] }) => {
       const command = (cmd?.command || '').toString();
       const params = Array.isArray(cmd?.params) ? (cmd.params as string[]) : [];
+      // ERR_LINKCHANNEL (470): the IRCd forwarded our JOIN of one channel to a
+      // different one — [nick, sourceChannel, targetChannel, reason], e.g.
+      // "#apple ##apple". We land in the target via the JOIN that follows, but the
+      // SOURCE is a channel we can never actually be in. If its autojoin flag stays
+      // set we re-JOIN it every reconnect, get forwarded again, and a phantom
+      // buffer for the source resurrects on every client (a channels row with
+      // joined=1 but no real membership — the #apple ghost loop). Clear it: drop
+      // any phantom membership, persist joined=false so it isn't auto-rejoined, and
+      // publish channel-parted so clients holding a ghost drop it (the client's
+      // guard ignores a part for a buffer it doesn't hold, so this can't spawn one).
+      if (command === '470') {
+        const source = typeof params[1] === 'string' ? params[1] : '';
+        if (source) {
+          const canonical = canonicalChannelTarget(source, this.channels) ?? source;
+          this.channels.delete(source.toLowerCase());
+          try {
+            upsertChannel(this.network.id, canonical, false);
+          } catch (_) {
+            /* ignore */
+          }
+          this.publish({ type: 'channel-parted', target: canonical });
+        }
+        return;
+      }
       // These numerics arrive as [nick, #channel, reason].
       const channel = typeof params[1] === 'string' ? params[1] : '';
       const reason = params[params.length - 1] || null;
