@@ -601,6 +601,9 @@ export class IrcConnection {
   useMonitor: boolean;
   monitorLimit: number;
   pendingMonitorSeed: boolean;
+  // One-shot guard so the ISUPPORT `server-info` frame is emitted once per
+  // registration; reset in the 'close' handler so a reconnect re-emits.
+  serverInfoSent = false;
   disposed: boolean;
   connectCommandTimer: ReturnType<typeof setTimeout> | null;
   lagMs: number | null;
@@ -1306,6 +1309,8 @@ export class IrcConnection {
       this.useMonitor = false;
       this.monitorLimit = 0;
       this.pendingMonitorSeed = false;
+      // Re-emit the ISUPPORT `server-info` frame after the next registration.
+      this.serverInfoSent = false;
       // Safety-net presence sweep. The primary one runs in 'socket close',
       // which fires on every disconnect (including auto-reconnect blips), so it
       // has almost always swept already by the time this terminal 'close'
@@ -1370,6 +1375,9 @@ export class IrcConnection {
     // this guard we'd send `MONITOR +` blind and trigger 421 on older
     // ircds, which our 'irc error' path surfaces to the user.
     c.on('server options', () => {
+      // Forward the ISUPPORT mode vocabulary (CHANMODES/PREFIX/CHANTYPES) to
+      // clients once per registration, before the MONITOR early-return below.
+      this.publishServerInfo();
       // 005 lines arrive in multiple bursts; this handler fires once per
       // line as irc-framework accumulates options. The MONITOR token isn't
       // necessarily in the first line, so only act when we transition
@@ -3555,6 +3563,49 @@ export class IrcConnection {
       target: ch.name,
       modes: [...ch.modes].join(''),
     });
+  }
+
+  // ISUPPORT mode vocabulary forwarded to clients so a channel/user mode UI can
+  // match the actual ircd instead of a hardcoded guess. irc-framework parses
+  // CHANMODES into its 4 comma-groups (string[]) and PREFIX into {symbol,mode}[];
+  // we rebuild the verbatim ISUPPORT forms ("eIbq,k,flj,..." and "(qaohv)~&@%+")
+  // the client contract expects, so the client owns all parsing/labelling.
+  // Returns null until ISUPPORT lands: CHANMODES has no pre-005 default (PREFIX
+  // does), so a populated CHANMODES is the reliable "landed" signal.
+  serverInfoPayload(): {
+    software: string;
+    network: string;
+    chanModes: string;
+    prefix: string;
+    chanTypes: string;
+  } | null {
+    const net = this.client?.network;
+    const opts = net?.options || {};
+    const chanModesArr = opts.CHANMODES as unknown as string[] | undefined;
+    if (!chanModesArr || chanModesArr.length === 0) return null; // ISUPPORT not landed yet
+    const prefixArr =
+      (opts.PREFIX as unknown as Array<{ symbol: string; mode: string }> | undefined) || [];
+    const prefix = prefixArr.length
+      ? `(${prefixArr.map((p) => p.mode).join('')})${prefixArr.map((p) => p.symbol).join('')}`
+      : '';
+    return {
+      software: net?.ircd || '',
+      network: net?.name || '',
+      chanModes: chanModesArr.join(','),
+      prefix,
+      chanTypes: opts.CHANTYPES || '#',
+    };
+  }
+
+  // Emit the ISUPPORT `server-info` frame once per registration (ephemeral —
+  // never persisted). No-op until ISUPPORT has landed. The same payload also
+  // rides every snapshot() so reconnecting/late-attaching clients get it too.
+  publishServerInfo(): void {
+    if (this.serverInfoSent) return;
+    const si = this.serverInfoPayload();
+    if (!si) return;
+    this.serverInfoSent = true;
+    this.publishEphemeral({ type: 'server-info', target: this.serverTarget(), ...si });
   }
 
   // List-type channel modes (CHANMODES group A) carry a mask param — bans,
@@ -6384,6 +6435,9 @@ export class IrcConnection {
       // bar after a taken-nick fallback (#362).
       nick: this.currentNick || this.network.nick,
       userModes: [...this.userModes].join(''),
+      // ISUPPORT mode vocabulary (or null pre-registration) so a reconnecting or
+      // late-attaching client renders a mode UI matching the actual ircd.
+      serverInfo: this.serverInfoPayload(),
       lagMs: this.lagMs,
       // Negotiated draft/multiline limits (or null) so the composer can gate its
       // split/flood hint and upload-as-.txt prompt on what will actually go on

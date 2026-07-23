@@ -3064,3 +3064,124 @@ describe('probePresence intent gate', () => {
     expect(tracked).toEqual([]);
   });
 });
+
+describe('server-info (ISUPPORT mode vocabulary forwarding)', () => {
+  function makeConn(): IrcConnection {
+    return new IrcConnection({
+      network: {
+        id: 1,
+        user_id: 1,
+        name: 'n',
+        host: 'irc.example.test',
+        port: 6697,
+        tls: 1,
+        trusted_certificates: 1,
+        nick: 'nick',
+        username: null,
+        realname: null,
+        server_password: null,
+        autoconnect: 1,
+        sasl_account: null,
+        sasl_password: null,
+        connect_commands: null,
+        position: 0,
+        created_at: new Date().toISOString(),
+        // 2.0 (#707) captures the ircd's declared CASEMAPPING on the network row.
+        // Null is "not declared", which is what a bare test connection has.
+        casemapping: null,
+      },
+      onEvent: () => {},
+    });
+  }
+
+  // Overwrite the framework's parsed network state the way irc-framework shapes
+  // it at runtime: CHANMODES as the 4 comma-groups (string[]), PREFIX as
+  // {symbol,mode}[]. The d.ts types options loosely, hence the cast.
+  function setNetwork(conn: IrcConnection, net: Record<string, unknown>): void {
+    (conn.client as unknown as { network: unknown }).network = net;
+  }
+
+  const liberaLike = {
+    ircd: 'solanum-1.0',
+    name: 'Libera.Chat',
+    options: {
+      CHANMODES: ['eIbq', 'k', 'flj', 'CFLMPQScgimnprstuz'],
+      PREFIX: [
+        { symbol: '@', mode: 'o' },
+        { symbol: '+', mode: 'v' },
+      ],
+      CHANTYPES: '#',
+    },
+  };
+
+  it('returns null before ISUPPORT (no CHANMODES), even though PREFIX has a default', () => {
+    const conn = makeConn();
+    setNetwork(conn, {
+      ircd: '',
+      name: 'Network',
+      // PREFIX defaults to the full ladder pre-005; CHANMODES does not exist yet.
+      options: { PREFIX: [{ symbol: '@', mode: 'o' }] },
+    });
+    expect(conn.serverInfoPayload()).toBeNull();
+  });
+
+  it('rebuilds the verbatim ISUPPORT forms once landed', () => {
+    const conn = makeConn();
+    setNetwork(conn, liberaLike);
+    expect(conn.serverInfoPayload()).toEqual({
+      software: 'solanum-1.0',
+      network: 'Libera.Chat',
+      chanModes: 'eIbq,k,flj,CFLMPQScgimnprstuz',
+      prefix: '(ov)@+',
+      chanTypes: '#',
+    });
+  });
+
+  it('defaults CHANTYPES to "#" when the ircd omits it', () => {
+    const conn = makeConn();
+    setNetwork(conn, {
+      ircd: '',
+      name: 'n',
+      options: { CHANMODES: ['b', 'k', 'l', 'imnpst'], PREFIX: [] },
+    });
+    const si = conn.serverInfoPayload();
+    expect(si?.chanTypes).toBe('#');
+    expect(si?.prefix).toBe(''); // empty PREFIX → empty ladder, not a crash
+  });
+
+  it('emits exactly one ephemeral server-info frame per registration, re-arming after disconnect reset', () => {
+    const conn = makeConn();
+    setNetwork(conn, liberaLike);
+    const publishEphemeral = vi.fn<(event: unknown) => void>();
+    conn.publishEphemeral = publishEphemeral;
+
+    conn.publishServerInfo();
+    conn.publishServerInfo(); // guarded — no second frame
+    expect(publishEphemeral).toHaveBeenCalledTimes(1);
+    expect(publishEphemeral).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'server-info',
+        software: 'solanum-1.0',
+        network: 'Libera.Chat',
+        chanModes: 'eIbq,k,flj,CFLMPQScgimnprstuz',
+        prefix: '(ov)@+',
+        chanTypes: '#',
+      }),
+    );
+
+    // The 'close' handler resets the guard so the next registration re-emits.
+    conn.serverInfoSent = false;
+    conn.publishServerInfo();
+    expect(publishEphemeral).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not emit before ISUPPORT has landed', () => {
+    const conn = makeConn();
+    setNetwork(conn, { ircd: '', name: 'n', options: { PREFIX: [] } });
+    const publishEphemeral = vi.fn<(event: unknown) => void>();
+    conn.publishEphemeral = publishEphemeral;
+    conn.publishServerInfo();
+    expect(publishEphemeral).not.toHaveBeenCalled();
+    expect(conn.serverInfoSent).toBe(false);
+  });
+});
