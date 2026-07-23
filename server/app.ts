@@ -133,6 +133,18 @@ export function buildApp(sessionSecret: string): Express {
   // reports a confusing module-type refusal instead of a plain 404 — and the
   // client can't cleanly tell "chunk is gone" from "page is fine" (#571).
   const clientDist = path.join(import.meta.dirname, '../vue_client/dist');
+
+  // OAuth discovery probes from mcp-remote (Claude Desktop's stdio bridge).
+  // Lurker's /mcp is static-bearer, not OAuth — a 404 here tells the client
+  // "no OAuth advertised" so it falls back to the bearer header instead of
+  // JSON-parsing index.html (served by the SPA fallback below) and crashing.
+  // Covers the RFC 8414 / RFC 9728 variants and their path-suffixed (/mcp)
+  // forms; scoped to oauth|openid so other .well-known paths (acme-challenge,
+  // handled by the reverse proxy) are untouched.
+  app.get(/^\/\.well-known\/(oauth|openid)/, (_req, res) => {
+    res.status(404).json({ error: 'no_oauth', detail: 'this server uses static bearer auth' });
+  });
+
   app.use(express.static(clientDist));
   app.get(/^\/(?!api|ws|mcp|assets).*/, (_req, res, next) => {
     res.sendFile(path.join(clientDist, 'index.html'), (err) => {
