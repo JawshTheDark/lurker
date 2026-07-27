@@ -203,11 +203,20 @@ router.post(
           }
         }
       } catch (e) {
-        res.status(500).json({ error: e instanceof Error ? e.message : 'could not stage the file' });
+        res
+          .status(500)
+          .json({ error: e instanceof Error ? e.message : 'could not stage the file' });
         return;
       }
       const filename = path.basename(destPath);
-      const id = ircManager.sendDccFile(req.user!.id, networkId, nick, destPath, filename, file.size);
+      const id = ircManager.sendDccFile(
+        req.user!.id,
+        networkId,
+        nick,
+        destPath,
+        filename,
+        file.size,
+      );
       if (id == null) {
         // Network offline — drop the staged file so it doesn't orphan.
         try {
