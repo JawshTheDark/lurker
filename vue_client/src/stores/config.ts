@@ -31,6 +31,10 @@ export const useConfigStore = defineStore('config', {
     // failure must not conjure a feature the server may not have: guessing "on" here would show
     // the two settings and then have every resolve 404.
     features: { linkPreviews: false } as Features,
+    // Whether this instance offers voice calls (operator opt-in + a configured
+    // LiveKit SFU). Defaults false so a fetch failure hides the call UI rather
+    // than surfacing a button that can only 503.
+    voiceEnabled: false,
     checked: false,
   }),
   getters: {
@@ -45,9 +49,14 @@ export const useConfigStore = defineStore('config', {
       if (inflight) return inflight; // a fetch is in flight — share its result
       inflight = (async () => {
         try {
-          const data = await api<{ edition?: string; features?: Partial<Features> }>('/api/config');
+          const data = await api<{
+            edition?: string;
+            features?: Partial<Features>;
+            voiceEnabled?: boolean;
+          }>('/api/config');
           this.edition = data.edition === 'node' ? 'node' : 'standalone';
           this.features = { linkPreviews: data.features?.linkPreviews === true };
+          this.voiceEnabled = data.voiceEnabled === true;
           // Latch `checked` ONLY on success. A transient failure must not wedge
           // the session on the safe defaults — leaving it false lets the next
           // caller retry and self-heal. That second caller is the router guard,

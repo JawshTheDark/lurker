@@ -6,6 +6,7 @@ import type { Request, Response } from 'express';
 import { getEdition } from '../utils/edition.js';
 import { PROTOCOL_VERSION, MIN_PROTOCOL_VERSION } from '../protocol.js';
 import { previewsEnabled } from '../utils/previews.js';
+import { voiceEnabled } from '../services/voice.js';
 
 const router = Router();
 
@@ -29,6 +30,9 @@ router.get('/', (_req: Request, res: Response) => {
     features: {
       linkPreviews: previewsEnabled(),
     },
+    // Whether this instance offers voice/video calls (operator opt-in + a
+    // configured LiveKit SFU). The native client hides all call UI when false.
+    voiceEnabled: voiceEnabled(),
   });
 });
 
