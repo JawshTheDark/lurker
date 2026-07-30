@@ -14,6 +14,7 @@ import { onJumpIntent } from './useJumpIntent.js';
 import { connected } from './useSocket.js';
 import { startAppBadge } from './useAppBadge.js';
 import { startBufferHydration } from './useBufferHydration.js';
+import { startCallPresenceHydration } from './useCallPresenceHydration.js';
 import type { JumpTarget } from './useJumpToMessage.js';
 
 // How long to wait for the app to become able to honor a cold-start deep link
@@ -70,7 +71,12 @@ export function consumeColdStartJump(
   const parsed = msg != null && msg !== '' ? Number(msg) : null;
   const messageId = parsed != null && Number.isFinite(parsed) ? parsed : null;
 
-  const payload: JumpPayload = { kind: 'jump', networkId, target: buf, messageId };
+  const payload: JumpPayload = {
+    kind: 'jump',
+    networkId,
+    target: buf,
+    messageId,
+  };
   const ready = (): boolean => connected.value && buffers.isOpen(networkId, buf);
   if (ready()) {
     onJump(payload);
@@ -159,6 +165,9 @@ export function useChatBootstrap({ onJump }: ChatBootstrapOptions = {}): void {
     // Report the focused buffer to the server so notice.msgbuffer 'active' mode
     // (mIRC "show in active window") can route to the window you're looking at.
     startActiveBufferReporter();
+    // Re-snapshot voice-call presence on each connect edge, so badges show for
+    // calls that began while this client was away (webhooks only push deltas).
+    startCallPresenceHydration();
     // Mirror the unread-highlight total onto the PWA app icon (#451). Idempotent
     // and feature-detected — a no-op where the Badging API is unavailable.
     startAppBadge();
