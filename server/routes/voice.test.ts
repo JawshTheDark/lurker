@@ -79,3 +79,30 @@ describe('POST /api/voice/token', () => {
     expect(res.status).toBe(404);
   });
 });
+
+describe('GET /api/voice/presence', () => {
+  it('401 when unauthenticated', async () => {
+    enableVoice();
+    const res = await testRequest(app).get('/api/voice/presence?networkId=1');
+    expect(res.status).toBe(401);
+  });
+
+  it('503 when voice is not enabled on the server', async () => {
+    delete process.env.LURKER_VOICE_ENABLED;
+    delete process.env.LIVEKIT_WS_URL;
+    const res = await agent.get('/api/voice/presence?networkId=1');
+    expect(res.status).toBe(503);
+  });
+
+  it('400 for a missing/invalid networkId', async () => {
+    enableVoice();
+    const res = await agent.get('/api/voice/presence');
+    expect(res.status).toBe(400);
+  });
+
+  it('404 for a network the caller does not own (ownership gate)', async () => {
+    enableVoice();
+    const res = await agent.get('/api/voice/presence?networkId=999999');
+    expect(res.status).toBe(404);
+  });
+});
