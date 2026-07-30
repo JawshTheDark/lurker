@@ -6,12 +6,7 @@ import type { Request, Response } from 'express';
 import { requireAuth } from '../middleware/auth.js';
 import { getNetwork } from '../db/networks.js';
 import ircManager from '../services/ircManager.js';
-import {
-  isChannelTarget,
-  mintVoiceToken,
-  roomFor,
-  voiceEnabled,
-} from '../services/voice.js';
+import { isChannelTarget, mintVoiceToken, roomFor, voiceEnabled } from '../services/voice.js';
 
 // The write path for voice: mint a LiveKit access token scoped to one call room.
 // Lurker is the token authority only — it never carries media. Authenticated by

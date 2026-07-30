@@ -46,7 +46,9 @@ afterAll(() => ctx.cleanup());
 describe('POST /api/voice/token', () => {
   it('401 when unauthenticated', async () => {
     enableVoice();
-    const res = await testRequest(app).post('/api/voice/token').send({ networkId: 1, target: '#dev' });
+    const res = await testRequest(app)
+      .post('/api/voice/token')
+      .send({ networkId: 1, target: '#dev' });
     expect(res.status).toBe(401);
   });
 
