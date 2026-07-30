@@ -9,7 +9,12 @@
 -->
 
 <template>
-  <div v-if="voice.active || voice.connecting" class="call-bar" role="dialog" aria-label="Voice call">
+  <div
+    v-if="voice.active || voice.connecting"
+    class="call-bar"
+    role="dialog"
+    aria-label="Voice call"
+  >
     <div class="call-head">
       <i class="fa-solid fa-phone"></i>
       <span class="call-title">{{ voice.label || 'Voice call' }}</span>
@@ -17,7 +22,11 @@
     </div>
 
     <ul v-if="voice.participants.length" class="call-parts">
-      <li v-for="id in voice.participants" :key="id" :class="{ talking: voice.speaking.includes(id) }">
+      <li
+        v-for="id in voice.participants"
+        :key="id"
+        :class="{ talking: voice.speaking.includes(id) }"
+      >
         <i v-if="voice.speaking.includes(id)" class="fa-solid fa-volume-high"></i>
         <span>{{ id }}</span>
       </li>
