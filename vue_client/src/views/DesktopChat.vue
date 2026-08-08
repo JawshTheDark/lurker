@@ -451,13 +451,32 @@ function popOutActive(): void {
 }
 
 async function tileWindows(): Promise<void> {
-  const n = await tilePopouts();
-  if (n === 0) {
+  // Always report. A tile action that quietly does nothing — because no window
+  // answered, or because the browser ignored the move — is indistinguishable
+  // from a broken button, which is exactly how this landed the first time.
+  try {
+    const n = await tilePopouts();
+    useToastsStore().push(
+      n === 0
+        ? {
+            kind: 'info',
+            title: 'Nothing to tile',
+            body: 'No pop-out windows responded. Open one with the pop-out button, then try again.',
+            ttlMs: 6000,
+          }
+        : {
+            kind: 'info',
+            title: `Tiled ${n} window${n === 1 ? '' : 's'}`,
+            body: '',
+            ttlMs: 3000,
+          },
+    );
+  } catch (e) {
     useToastsStore().push({
-      kind: 'info',
-      title: 'Nothing to tile',
-      body: 'Pop a channel out into its own window first.',
-      ttlMs: 5000,
+      kind: 'error',
+      title: "Couldn't tile the windows",
+      body: e instanceof Error ? e.message : 'Unknown error',
+      ttlMs: 8000,
     });
   }
 }

@@ -26,6 +26,8 @@ import { computed, ref } from 'vue';
 const CHANNEL = 'lurker:popouts';
 /** How long to wait for pop-outs to answer a census before tiling what replied. */
 const CENSUS_MS = 300;
+/** Cap on the multi-screen probe — see the warning in tileArea(). */
+const SCREEN_DETAILS_MS = 1500;
 
 type Msg =
   | { t: 'hello'; id: string; key: string }
@@ -209,13 +211,25 @@ async function tileArea(): Promise<TileRect> {
   };
   if (typeof api.getScreenDetails === 'function') {
     try {
-      const s = (await api.getScreenDetails()).currentScreen;
-      return {
-        left: s.availLeft ?? s.left ?? 0,
-        top: s.availTop ?? s.top ?? 0,
-        width: s.availWidth ?? s.width ?? window.screen.availWidth,
-        height: s.availHeight ?? s.height ?? window.screen.availHeight,
-      };
+      // ⚠ MUST be time-boxed. This call raises a permission prompt, and a prompt
+      // the user never answers (or that the browser declines to settle) leaves
+      // the promise pending FOREVER — which took the whole tile action down with
+      // it: no placement, no error, no toast, a dead-looking button. Multi-screen
+      // awareness is a nice-to-have; never let it block tiling.
+      const s = (
+        await Promise.race([
+          api.getScreenDetails(),
+          new Promise<null>((r) => setTimeout(() => r(null), SCREEN_DETAILS_MS)),
+        ])
+      )?.currentScreen;
+      if (s) {
+        return {
+          left: s.availLeft ?? s.left ?? 0,
+          top: s.availTop ?? s.top ?? 0,
+          width: s.availWidth ?? s.width ?? window.screen.availWidth,
+          height: s.availHeight ?? s.height ?? window.screen.availHeight,
+        };
+      }
     } catch {
       /* denied/unsupported — single-screen path below */
     }
@@ -244,24 +258,38 @@ export async function tilePopouts(): Promise<number> {
   await new Promise((r) => setTimeout(r, CENSUS_MS));
 
   const ids = [...live.keys()].sort(); // stable order → stable placement
-  if (ids.length === 0) return 0;
+  // Windows THIS document opened, as a fallback path: if the broadcast route
+  // fails (a pop-out on older code with no channel listener, or a browser that
+  // ignores a self-move), we can still place these directly. Belt and braces —
+  // the two sets usually overlap completely and a double-placement is harmless.
+  const direct = [...handles.entries()].filter(([, w]) => !w.closed);
+  const count = Math.max(ids.length, direct.length);
+  if (count === 0) return 0;
 
-  const cols = Math.ceil(Math.sqrt(ids.length));
-  const rows = Math.ceil(ids.length / cols);
+  const cols = Math.ceil(Math.sqrt(count));
+  const rows = Math.ceil(count / cols);
   const w = Math.floor(area.width / cols);
   const h = Math.floor(area.height / rows);
-
-  ids.forEach((id, i) => {
-    post({
-      t: 'place',
-      id,
-      rect: {
-        left: area.left + (i % cols) * w,
-        top: area.top + Math.floor(i / cols) * h,
-        width: w,
-        height: h,
-      },
-    });
+  const rectAt = (i: number): TileRect => ({
+    left: area.left + (i % cols) * w,
+    top: area.top + Math.floor(i / cols) * h,
+    width: w,
+    height: h,
   });
-  return ids.length;
+
+  ids.forEach((id, i) => post({ t: 'place', id, rect: rectAt(i) }));
+
+  // Only place directly for slots the broadcast didn't cover, so a window that
+  // already moved itself isn't yanked to a different cell.
+  direct.forEach(([, win], i) => {
+    if (i < ids.length) return;
+    const r = rectAt(i);
+    try {
+      win.moveTo(Math.round(r.left), Math.round(r.top));
+      win.resizeTo(Math.round(r.width), Math.round(r.height));
+    } catch {
+      /* not scriptable */
+    }
+  });
+  return count;
 }
