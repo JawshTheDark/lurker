@@ -3,93 +3,186 @@
 
 // "Pop out" a buffer into its own OS window, and tile the ones that are open.
 //
-// Why this is cheap: a browser window is its own JS context, so a pop-out gets
-// its own Pinia store and its own `networks.activeKey`. views/BufferWindow.vue
-// just activates its buffer on mount and the existing conversation components
-// resolve to it unchanged — no buffer-prop refactor anywhere.
+// Why the pop-out itself is cheap: a browser window is its own JS context, so it
+// gets its own Pinia store and its own `networks.activeKey`. views/BufferWindow
+// activates its buffer on mount and the existing conversation components resolve
+// to it unchanged — no buffer-prop refactor anywhere.
 //
-// Window NAMES are load-bearing. `window.open(url, name)` targets an existing
-// window with that name instead of spawning a duplicate, and names outlive the
-// opener: after the main window reloads (which drops the handles below) a
-// re-click still finds and focuses the pop-out that's already on screen rather
-// than opening a second copy of the same channel.
+// ⚠ TILING IS NOT DONE WITH WINDOW HANDLES, and that's the whole design.
+// The obvious version — keep the WindowProxy that `window.open` returned and
+// call moveTo/resizeTo on it — only works for windows THIS document opened, and
+// those handles die on every reload of the opener. Reload the main window and
+// your existing pop-outs are still on screen but permanently untileable, so
+// "Tile" silently moves whichever one happened to be opened most recently.
+//
+// Instead every pop-out MOVES ITSELF: the opener broadcasts a rectangle over a
+// BroadcastChannel and each pop-out applies it to its own window. A window can
+// always move/resize itself, so this survives opener reloads, works for windows
+// opened in a previous session, and lets a pop-out spawned from another pop-out
+// join in. The channel doubles as the liveness registry behind the indicator.
 
 import { computed, ref } from 'vue';
 
-/** Live handles for windows THIS context opened. Lost on reload — the window
- *  name is what makes re-opening idempotent, not this map. */
-const handles = new Map<string, Window>();
-// Bumped whenever the set changes so `poppedOut` recomputes; a Map isn't deeply
-// reactive and a WindowProxy must not be wrapped in a Vue proxy anyway.
+const CHANNEL = 'lurker:popouts';
+/** How long to wait for pop-outs to answer a census before tiling what replied. */
+const CENSUS_MS = 300;
+
+type Msg =
+  | { t: 'hello'; id: string; key: string }
+  | { t: 'bye'; id: string }
+  | { t: 'census' }
+  | { t: 'here'; id: string; key: string }
+  | { t: 'place'; id: string; rect: TileRect }
+  | { t: 'focus'; key: string };
+
+export interface TileRect {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
+let channel: BroadcastChannel | null = null;
+/** Set in a pop-out window by registerAsPopout(); null in the opener. */
+let selfId: string | null = null;
+let selfKey: string | null = null;
+
+/** id → buffer key, for every pop-out that has announced itself. */
+const live = new Map<string, string>();
 const version = ref(0);
+/** Handles for windows this context opened — used ONLY to focus on re-click. */
+const handles = new Map<string, Window>();
 
 export function bufferPopoutKey(networkId: number | string, target: string): string {
   return `${networkId}::${target.toLowerCase()}`;
 }
 
-/** A DOM window name for this buffer. Restricted to a conservative charset —
- *  a channel name can hold characters (`#`, `[`, `|`) that are legal in a name
- *  but make debugging and `window.open` feature strings needlessly fragile. */
 function windowNameFor(networkId: number | string, target: string): string {
   const safe = target.toLowerCase().replace(/[^a-z0-9_-]/g, '_');
   return `lurker_b_${networkId}_${safe}`;
 }
 
-function prune(): void {
-  let changed = false;
-  for (const [key, win] of handles) {
-    if (win.closed) {
-      handles.delete(key);
-      changed = true;
-    }
-  }
-  if (changed) version.value++;
+function post(msg: Msg): void {
+  ensureChannel()?.postMessage(msg);
 }
 
-/** Keys of buffers currently popped out (best-effort: only windows this context
- *  opened and that are still open). Drives the sidebar/topic indicator. */
+function ensureChannel(): BroadcastChannel | null {
+  if (channel) return channel;
+  if (typeof BroadcastChannel === 'undefined') return null;
+  channel = new BroadcastChannel(CHANNEL);
+  channel.onmessage = (ev: MessageEvent<Msg>) => {
+    const m = ev.data;
+    if (!m || typeof m !== 'object') return;
+    switch (m.t) {
+      case 'hello':
+      case 'here':
+        live.set(m.id, m.key);
+        version.value++;
+        break;
+      case 'bye':
+        live.delete(m.id);
+        version.value++;
+        break;
+      case 'census':
+        // Only pop-outs answer; the opener has nothing to declare.
+        if (selfId && selfKey) post({ t: 'here', id: selfId, key: selfKey });
+        break;
+      case 'place':
+        if (selfId && m.id === selfId) applyRect(m.rect);
+        break;
+      case 'focus':
+        if (selfKey && m.key === selfKey) window.focus();
+        break;
+    }
+  };
+  return channel;
+}
+
+function applyRect(r: TileRect): void {
+  try {
+    // Move before sizing: resizing while still on another display can get the
+    // dimensions clamped to that display's bounds.
+    window.moveTo(Math.round(r.left), Math.round(r.top));
+    window.resizeTo(Math.round(r.width), Math.round(r.height));
+  } catch {
+    /* window no longer scriptable */
+  }
+}
+
+/**
+ * Called by views/BufferWindow.vue so this window joins the registry and will
+ * answer census + place messages. Returns a disposer.
+ */
+export function registerAsPopout(key: string): () => void {
+  selfId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  selfKey = key;
+  ensureChannel();
+  post({ t: 'hello', id: selfId, key });
+  const bye = (): void => {
+    if (selfId) post({ t: 'bye', id: selfId });
+  };
+  window.addEventListener('pagehide', bye);
+  return () => {
+    bye();
+    window.removeEventListener('pagehide', bye);
+    selfId = null;
+    selfKey = null;
+  };
+}
+
+/** Buffer keys currently popped out, per the live registry. */
 export const poppedOut = computed<ReadonlySet<string>>(() => {
   void version.value;
-  const live = new Set<string>();
-  for (const [key, win] of handles) if (!win.closed) live.add(key);
-  return live;
+  return new Set(live.values());
 });
 
 export function isPoppedOut(networkId: number | string, target: string): boolean {
   return poppedOut.value.has(bufferPopoutKey(networkId, target));
 }
 
+export const popoutCount = computed(() => {
+  void version.value;
+  return live.size;
+});
+
+/** Ask any already-open pop-outs to announce themselves — call once on mount so
+ *  the indicator/Tile button are correct after the opener reloads. */
+export function refreshPopoutRegistry(): void {
+  live.clear();
+  version.value++;
+  post({ t: 'census' });
+}
+
 /**
- * Open (or focus) a pop-out window for a buffer.
- *
- * MUST be called from a user gesture or the popup blocker eats it. Returns the
- * window, or null when it was blocked — callers surface that to the user rather
- * than failing silently, because a blocked popup is invisible by definition.
+ * Open (or focus) a pop-out for a buffer. MUST run inside a user gesture or the
+ * popup blocker eats it; null means it was blocked, which callers surface —
+ * a blocked popup is invisible by definition.
  */
 export function popOutBuffer(networkId: number | string, target: string): Window | null {
-  prune();
   const key = bufferPopoutKey(networkId, target);
   const existing = handles.get(key);
   if (existing && !existing.closed) {
     existing.focus();
     return existing;
   }
+  // Already open from a previous session (no handle here): ask it to focus
+  // itself rather than re-opening. Window names make the open idempotent
+  // anyway, but this avoids a pointless navigation.
+  if (poppedOut.value.has(key)) {
+    post({ t: 'focus', key });
+    // Non-null so the caller doesn't report a blocked popup: nothing failed,
+    // the window is already open and has been asked to raise itself.
+    return window;
+  }
 
   // encodeURIComponent: '#' is a fragment delimiter and would truncate the path.
   const url = `/b/${encodeURIComponent(String(networkId))}/${encodeURIComponent(target)}`;
-  // Explicit width/height (plus popup=yes) is what makes Chrome open a WINDOW
-  // rather than a tab. Sized to a readable column; tile() resizes from here.
-  const features = 'popup=yes,noopener=no,width=520,height=760';
-  const win = window.open(url, windowNameFor(networkId, target), features);
+  // Explicit width/height (plus popup=yes) is what makes Chromium open a WINDOW
+  // rather than a tab — and a popup window is one the script may move/resize.
+  const win = window.open(url, windowNameFor(networkId, target), 'popup=yes,width=520,height=760');
   if (!win) return null;
-
   handles.set(key, win);
   version.value++;
-  win.addEventListener?.('pagehide', () => {
-    // Fires on close AND on navigation; prune() re-checks `closed`, so a
-    // navigating window isn't dropped from the registry by mistake.
-    setTimeout(prune, 0);
-  });
   return win;
 }
 
@@ -101,31 +194,22 @@ export function closePopout(networkId: number | string, target: string): void {
   version.value++;
 }
 
-export interface TileArea {
-  left: number;
-  top: number;
-  width: number;
-  height: number;
-}
-
 /**
  * The rectangle to tile into.
  *
- * `getScreenDetails()` (Window Management API, Chromium) is consulted ONLY to
- * learn about a multi-monitor setup; it prompts for permission the first time.
- * When it's unavailable or denied we fall back to `window.screen.avail*`, which
- * still tiles correctly on the current display — moveTo/resizeTo need no
- * permission for script-opened windows. So tiling degrades to "this monitor"
- * rather than to "doesn't work".
+ * getScreenDetails() (Window Management API, Chromium) is consulted ONLY to
+ * learn about a multi-monitor setup, and prompts for permission the first time.
+ * Where it's unavailable or denied we fall back to `window.screen.avail*`, which
+ * still tiles correctly on the current display — self-moves need no permission.
+ * So tiling degrades to "this monitor", not to "doesn't work".
  */
-async function tileArea(): Promise<TileArea> {
+async function tileArea(): Promise<TileRect> {
   const api = window as unknown as {
     getScreenDetails?: () => Promise<{ currentScreen: Record<string, number> }>;
   };
   if (typeof api.getScreenDetails === 'function') {
     try {
-      const details = await api.getScreenDetails();
-      const s = details.currentScreen;
+      const s = (await api.getScreenDetails()).currentScreen;
       return {
         left: s.availLeft ?? s.left ?? 0,
         top: s.availTop ?? s.top ?? 0,
@@ -133,7 +217,7 @@ async function tileArea(): Promise<TileArea> {
         height: s.availHeight ?? s.height ?? window.screen.availHeight,
       };
     } catch {
-      /* denied or unsupported — fall through to the single-screen path */
+      /* denied/unsupported — single-screen path below */
     }
   }
   const s = window.screen as Screen & { availLeft?: number; availTop?: number };
@@ -146,37 +230,38 @@ async function tileArea(): Promise<TileArea> {
 }
 
 /**
- * Arrange every open pop-out into a grid on the current screen.
- *
- * Near-square grid (cols = ceil(sqrt(n))) so 2 windows split side-by-side, 3–4
- * make a 2×2, and so on. Returns how many were placed — 0 means nothing was
- * open, which the caller reports instead of looking like a no-op button.
+ * Arrange every live pop-out into a near-square grid: 2 split side-by-side,
+ * 3–4 make a 2×2, and so on. Returns how many were placed — 0 means none
+ * answered, which the caller reports rather than looking like a dead button.
  */
 export async function tilePopouts(): Promise<number> {
-  prune();
-  const wins = [...handles.values()].filter((w) => !w.closed);
-  if (wins.length === 0) return 0;
-
+  // Re-census first: this is what makes tiling work on pop-outs this document
+  // never opened (e.g. opened before the opener last reloaded).
+  live.clear();
+  version.value++;
+  post({ t: 'census' });
   const area = await tileArea();
-  const cols = Math.ceil(Math.sqrt(wins.length));
-  const rows = Math.ceil(wins.length / cols);
+  await new Promise((r) => setTimeout(r, CENSUS_MS));
+
+  const ids = [...live.keys()].sort(); // stable order → stable placement
+  if (ids.length === 0) return 0;
+
+  const cols = Math.ceil(Math.sqrt(ids.length));
+  const rows = Math.ceil(ids.length / cols);
   const w = Math.floor(area.width / cols);
   const h = Math.floor(area.height / rows);
 
-  wins.forEach((win, i) => {
-    const x = area.left + (i % cols) * w;
-    const y = area.top + Math.floor(i / cols) * h;
-    try {
-      // Order matters: move first, then size. Resizing a window that is still
-      // positioned on another display can get clamped to that display's bounds.
-      win.moveTo(x, y);
-      win.resizeTo(w, h);
-    } catch {
-      /* a window we no longer control (user moved it to another profile) */
-    }
+  ids.forEach((id, i) => {
+    post({
+      t: 'place',
+      id,
+      rect: {
+        left: area.left + (i % cols) * w,
+        top: area.top + Math.floor(i / cols) * h,
+        width: w,
+        height: h,
+      },
+    });
   });
-  return wins.length;
+  return ids.length;
 }
-
-/** Count of live pop-outs — for enabling/labelling the Tile action. */
-export const popoutCount = computed(() => poppedOut.value.size);

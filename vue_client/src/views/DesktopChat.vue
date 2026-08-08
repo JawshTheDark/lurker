@@ -392,6 +392,7 @@ import {
   tilePopouts,
   isPoppedOut,
   popoutCount,
+  refreshPopoutRegistry,
 } from '../composables/usePopoutWindows.js';
 
 const networks = useNetworksStore();
@@ -409,6 +410,10 @@ useSocket();
 // push-jump that set a buffer first still wins.
 onMounted(() => {
   if (networks.activeKey == null) buffers.activate(null, SYSTEM_KEY);
+  // Pop-outs opened before this document loaded (or before it last reloaded)
+  // are invisible to us until they answer a census — without this the Tile
+  // button stays hidden and the pop-out indicator is wrong after a refresh.
+  refreshPopoutRegistry();
 });
 const {
   active,

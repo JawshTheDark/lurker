@@ -54,6 +54,7 @@ import { useBuffersStore } from '../stores/buffers.js';
 import { useActiveBuffer } from '../composables/useActiveBuffer.js';
 import { useChatBootstrap } from '../composables/useChatBootstrap.js';
 import { connected, useSocket } from '../composables/useSocket.js';
+import { registerAsPopout, bufferPopoutKey } from '../composables/usePopoutWindows.js';
 
 const route = useRoute();
 const buffers = useBuffersStore();
@@ -79,6 +80,13 @@ const target = computed(() => String(route.params.target ?? ''));
 const { topic, bufferLabel, hasInput, hasNicklist } = useActiveBuffer();
 const showMembers = ref(true);
 const ready = ref(false);
+
+// Join the pop-out registry so "Tile" can place THIS window. Tiling works by
+// broadcasting a rectangle that each pop-out applies to itself — the opener's
+// window handles die on its reload, so self-placement is what makes tiling
+// survive that (and work for windows it never opened).
+const unregister = registerAsPopout(bufferPopoutKey(networkId.value, target.value));
+onBeforeUnmount(unregister);
 
 // Activate once the socket is up AND the buffer registry has landed — the
 // buffer list arrives in the connect-burst snapshot, so activating before that
