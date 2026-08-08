@@ -455,22 +455,30 @@ async function tileWindows(): Promise<void> {
   // answered, or because the browser ignored the move — is indistinguishable
   // from a broken button, which is exactly how this landed the first time.
   try {
-    const n = await tilePopouts();
-    useToastsStore().push(
-      n === 0
-        ? {
-            kind: 'info',
-            title: 'Nothing to tile',
-            body: 'No pop-out windows responded. Open one with the pop-out button, then try again.',
-            ttlMs: 6000,
-          }
-        : {
-            kind: 'info',
-            title: `Tiled ${n} window${n === 1 ? '' : 's'}`,
-            body: '',
-            ttlMs: 3000,
-          },
-    );
+    const r = await tilePopouts();
+    const toasts = useToastsStore();
+    if (r.total === 0) {
+      toasts.push({
+        kind: 'info',
+        title: 'Nothing to tile',
+        body: 'No pop-out windows responded. Open one with the pop-out button, then try again.',
+        ttlMs: 6000,
+      });
+    } else if (r.moved === r.total) {
+      toasts.push({ kind: 'info', title: `Tiled ${r.total} windows`, body: '', ttlMs: 3000 });
+    } else {
+      // Partial or total failure — say which layer gave out rather than
+      // claiming success. `handled` separates "couldn't reach the window" from
+      // "reached it and the browser ignored the move".
+      toasts.push({
+        kind: 'warn',
+        title: `Tiled ${r.moved} of ${r.total}`,
+        body:
+          `Reached ${r.handled}/${r.total} windows; ${r.moved} actually moved.` +
+          (r.sample ? ` (${r.sample})` : ''),
+        ttlMs: 12000,
+      });
+    }
   } catch (e) {
     useToastsStore().push({
       kind: 'error',

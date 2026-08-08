@@ -248,7 +248,18 @@ async function tileArea(): Promise<TileRect> {
  * 3–4 make a 2×2, and so on. Returns how many were placed — 0 means none
  * answered, which the caller reports rather than looking like a dead button.
  */
-export async function tilePopouts(): Promise<number> {
+export interface TileResult {
+  /** Pop-outs we know about (census answers ∪ handles we hold). */
+  total: number;
+  /** How many we could get a live window handle to. */
+  handled: number;
+  /** How many verifiably ended up where we put them (position read back). */
+  moved: number;
+  /** First thing that went wrong, for the toast. */
+  sample: string;
+}
+
+export async function tilePopouts(): Promise<TileResult> {
   // Re-census first: this is what makes tiling work on pop-outs this document
   // never opened (e.g. opened before the opener last reloaded).
   live.clear();
@@ -261,10 +272,17 @@ export async function tilePopouts(): Promise<number> {
   // opener and the pop-out know, so the direct and broadcast paths below agree
   // on which window belongs in which cell and can safely both fire.
   const keys = [...new Set([...live.values(), ...handles.keys()])].sort();
-  if (keys.length === 0) return 0;
+  if (keys.length === 0) return { total: 0, handled: 0, moved: 0, sample: '' };
 
   const idByKey = new Map<string, string>();
   for (const [id, key] of live) idByKey.set(key, id);
+
+  // Diagnostics: how many we could get a handle to, how many verifiably moved,
+  // and one example of what went wrong. Reported to the user so a silent
+  // failure can't masquerade as success.
+  let handled = 0;
+  let moved = 0;
+  let sample = '';
 
   const cols = Math.ceil(Math.sqrt(keys.length));
   const rows = Math.ceil(keys.length / cols);
@@ -297,11 +315,24 @@ export async function tilePopouts(): Promise<number> {
       }
     }
     if (win && !win.closed) {
+      handled++;
       try {
         win.moveTo(Math.round(rect.left), Math.round(rect.top));
         win.resizeTo(Math.round(rect.width), Math.round(rect.height));
-      } catch {
-        /* fall through to the broadcast below */
+        // Read the position back. moveTo/resizeTo fail SILENTLY when the
+        // browser declines them (Brave's fingerprinting protection, a
+        // non-popup window, a re-acquired handle we don't really control), and
+        // a tile action that reports success while nothing moves is worse than
+        // one that admits it couldn't. Tolerance covers window-chrome padding
+        // and the browser clamping to a minimum size.
+        const dx = Math.abs(win.screenX - Math.round(rect.left));
+        const dy = Math.abs(win.screenY - Math.round(rect.top));
+        if (dx <= 40 && dy <= 40) moved++;
+        else if (!sample) {
+          sample = `wanted ${Math.round(rect.left)},${Math.round(rect.top)} · got ${win.screenX},${win.screenY}`;
+        }
+      } catch (e) {
+        if (!sample) sample = e instanceof Error ? e.message : String(e);
       }
     }
 
@@ -312,5 +343,5 @@ export async function tilePopouts(): Promise<number> {
   });
 
   version.value++;
-  return keys.length;
+  return { total: keys.length, handled, moved, sample };
 }
