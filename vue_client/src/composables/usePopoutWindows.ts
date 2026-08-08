@@ -8,18 +8,20 @@
 // activates its buffer on mount and the existing conversation components resolve
 // to it unchanged — no buffer-prop refactor anywhere.
 //
-// ⚠ TILING IS NOT DONE WITH WINDOW HANDLES, and that's the whole design.
-// The obvious version — keep the WindowProxy that `window.open` returned and
-// call moveTo/resizeTo on it — only works for windows THIS document opened, and
-// those handles die on every reload of the opener. Reload the main window and
-// your existing pop-outs are still on screen but permanently untileable, so
-// "Tile" silently moves whichever one happened to be opened most recently.
+// ⚠ TILING USES BOTH ROUTES ON PURPOSE, and measures the result. Whether a
+// browser honours a given move is not knowable up front:
+//   • opener-driven `handle.moveTo()` works only for windows THIS document
+//     opened, and those handles die on every reload of the opener;
+//   • a pop-out moving ITSELF (told where to go over a BroadcastChannel)
+//     survives opener reloads and covers windows opened in a previous session.
+// Chromium's rules for which is permitted vary, and BOTH fail SILENTLY when
+// refused — which is how this shipped three times looking like it worked while
+// nothing moved. So we issue both, wait, and then verify against the position
+// the pop-out reports for itself, reporting honestly when we came up short.
 //
-// Instead every pop-out MOVES ITSELF: the opener broadcasts a rectangle over a
-// BroadcastChannel and each pop-out applies it to its own window. A window can
-// always move/resize itself, so this survives opener reloads, works for windows
-// opened in a previous session, and lets a pop-out spawned from another pop-out
-// join in. The channel doubles as the liveness registry behind the indicator.
+// Orphans (live pop-outs this document never opened) are re-adopted by NAME:
+// `window.open('', name)` returns the existing named window without navigating
+// it. The channel doubles as the liveness registry behind the indicator.
 
 import { computed, ref } from 'vue';
 
@@ -28,6 +30,8 @@ const CHANNEL = 'lurker:popouts';
 const CENSUS_MS = 300;
 /** Cap on the multi-screen probe — see the warning in tileArea(). */
 const SCREEN_DETAILS_MS = 1500;
+/** Grace for moves + acks to land before measuring — see phase 2 of tilePopouts. */
+const PLACE_SETTLE_MS = 450;
 
 type Msg =
   | { t: 'hello'; id: string; key: string }
@@ -35,6 +39,7 @@ type Msg =
   | { t: 'census' }
   | { t: 'here'; id: string; key: string }
   | { t: 'place'; id: string; rect: TileRect }
+  | { t: 'placed'; id: string; x: number; y: number }
   | { t: 'focus'; key: string };
 
 export interface TileRect {
@@ -51,6 +56,8 @@ let selfKey: string | null = null;
 
 /** id → buffer key, for every pop-out that has announced itself. */
 const live = new Map<string, string>();
+/** id → where a pop-out reported it actually landed after a 'place'. */
+const acks = new Map<string, { x: number; y: number }>();
 const version = ref(0);
 /** Handles for windows this context opened — used ONLY to focus on re-click. */
 const handles = new Map<string, Window>();
@@ -90,7 +97,17 @@ function ensureChannel(): BroadcastChannel | null {
         if (selfId && selfKey) post({ t: 'here', id: selfId, key: selfKey });
         break;
       case 'place':
-        if (selfId && m.id === selfId) applyRect(m.rect);
+        if (selfId && m.id === selfId) {
+          applyRect(m.rect);
+          // Ack with where we ACTUALLY ended up. The opener can't measure this
+          // itself: it reads a handle synchronously, but this message arrives
+          // asynchronously, so a correct self-move still looks like a failure
+          // from over there. Only the window itself knows the truth.
+          post({ t: 'placed', id: selfId, x: window.screenX, y: window.screenY });
+        }
+        break;
+      case 'placed':
+        acks.set(m.id, { x: m.x, y: m.y });
         break;
       case 'focus':
         if (selfKey && m.key === selfKey) window.focus();
@@ -277,18 +294,21 @@ export async function tilePopouts(): Promise<TileResult> {
   const idByKey = new Map<string, string>();
   for (const [id, key] of live) idByKey.set(key, id);
 
-  // Diagnostics: how many we could get a handle to, how many verifiably moved,
-  // and one example of what went wrong. Reported to the user so a silent
-  // failure can't masquerade as success.
   let handled = 0;
-  let moved = 0;
   let sample = '';
+  acks.clear();
 
   const cols = Math.ceil(Math.sqrt(keys.length));
   const rows = Math.ceil(keys.length / cols);
   const w = Math.floor(area.width / cols);
   const h = Math.floor(area.height / rows);
+  const rects = new Map<string, TileRect>();
 
+  // ── Phase 1: ask, both ways ──────────────────────────────────────────────
+  // Fire BOTH routes for every window and measure afterwards. Which one a given
+  // browser honours isn't knowable up front — Chromium's rules for moving a
+  // popup differ by who opened it and when — so issue both and let the
+  // verification below say what actually happened.
   keys.forEach((key, i) => {
     const rect: TileRect = {
       left: area.left + (i % cols) * w,
@@ -296,16 +316,19 @@ export async function tilePopouts(): Promise<TileResult> {
       width: w,
       height: h,
     };
+    rects.set(key, rect);
 
-    // 1. Opener-driven move — the path that actually works. Chromium honours
-    //    moveTo/resizeTo from the document that OPENED a popup, but quietly
-    //    ignores a popup moving itself, so this has to be the primary route.
+    // Broadcast first so the pop-out's own move is already in flight while we
+    // try the opener-driven one.
+    const id = idByKey.get(key);
+    if (id) post({ t: 'place', id, rect });
+
     let win = handles.get(key);
     if ((!win || win.closed) && idByKey.has(key)) {
       // Orphan (opened before this document loaded, so we hold no handle).
-      // Re-acquire it by name: window.open with an EMPTY url returns the
-      // existing window with that name without navigating or reloading it.
-      // Safe because the census just proved a window with this key is live.
+      // Re-acquire by name: window.open with an EMPTY url returns the existing
+      // window with that name without navigating or reloading it. Safe because
+      // the census just proved a window with this key is live.
       const [netPart] = key.split('::');
       const target = key.slice(netPart.length + 2);
       const reacquired = window.open('', windowNameFor(netPart, target));
@@ -319,28 +342,39 @@ export async function tilePopouts(): Promise<TileResult> {
       try {
         win.moveTo(Math.round(rect.left), Math.round(rect.top));
         win.resizeTo(Math.round(rect.width), Math.round(rect.height));
-        // Read the position back. moveTo/resizeTo fail SILENTLY when the
-        // browser declines them (Brave's fingerprinting protection, a
-        // non-popup window, a re-acquired handle we don't really control), and
-        // a tile action that reports success while nothing moves is worse than
-        // one that admits it couldn't. Tolerance covers window-chrome padding
-        // and the browser clamping to a minimum size.
-        const dx = Math.abs(win.screenX - Math.round(rect.left));
-        const dy = Math.abs(win.screenY - Math.round(rect.top));
-        if (dx <= 40 && dy <= 40) moved++;
-        else if (!sample) {
-          sample = `wanted ${Math.round(rect.left)},${Math.round(rect.top)} · got ${win.screenX},${win.screenY}`;
-        }
       } catch (e) {
         if (!sample) sample = e instanceof Error ? e.message : String(e);
       }
     }
-
-    // 2. Broadcast as backstop, for anything we still couldn't get a handle to.
-    //    Same rect, so a window that honours both ends up in the same cell.
-    const id = idByKey.get(key);
-    if (id) post({ t: 'place', id, rect });
   });
+
+  // ── Phase 2: let it land, THEN measure ───────────────────────────────────
+  // ⚠ The previous version read positions back synchronously, right after
+  // moveTo — before any broadcast could arrive. A pop-out that placed itself
+  // perfectly still measured as a failure. Wait for both routes to settle.
+  await new Promise((r) => setTimeout(r, PLACE_SETTLE_MS));
+
+  let moved = 0;
+  for (const key of keys) {
+    const rect = rects.get(key)!;
+    const id = idByKey.get(key);
+    // Prefer the pop-out's own ack — it's the only observer that can't be
+    // fooled by a stale handle.
+    const ack = id ? acks.get(id) : undefined;
+    const win = handles.get(key);
+    const pos = ack ?? (win && !win.closed ? { x: win.screenX, y: win.screenY } : null);
+    if (!pos) continue;
+    // Tolerance covers window-chrome padding and the browser clamping a window
+    // to a minimum size or onto the work area.
+    if (
+      Math.abs(pos.x - Math.round(rect.left)) <= 60 &&
+      Math.abs(pos.y - Math.round(rect.top)) <= 60
+    ) {
+      moved++;
+    } else if (!sample) {
+      sample = `wanted ${Math.round(rect.left)},${Math.round(rect.top)} · got ${pos.x},${pos.y}`;
+    }
+  }
 
   version.value++;
   return { total: keys.length, handled, moved, sample };
