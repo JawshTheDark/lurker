@@ -25,9 +25,18 @@ import {
   webhookCallRoom,
   liveCallCount,
   listActiveCalls,
+  guestIdentity,
   type CallPresenceChange,
 } from '../services/voice.js';
 import { getPolicy, setPolicy, isMinJoinMode } from '../db/voicePolicy.js';
+import {
+  createGuestLink,
+  listActiveGuestLinks,
+  revokeGuestLink,
+  getUsableGuestLink,
+  bumpGuestLinkUse,
+} from '../db/voiceLinks.js';
+import { publicOrigin } from '../utils/publicOrigin.js';
 
 // Voice control surface. Lurker is the token authority + call moderator (see
 // services/voice.ts); it never carries media. Two routers:
@@ -257,6 +266,87 @@ router.put('/policy', (req: Request, res: Response) => {
   res.json({ minJoinMode });
 });
 
+// ─── Guest links: op-minted capability URLs for people without an account ───
+//
+// Channels only. A DM room is named for its two nicks, so a guest link into one
+// would be a way to join a private conversation you were never part of; a
+// channel already has a membership concept an op is entitled to extend.
+
+/** Resolve the caller + channel and require op (q/a/o) on it. */
+function resolveOpChannel(
+  req: Request,
+  res: Response,
+): { ctx: CallCtx; folded: string; host: string } | null {
+  const networkId = Number(req.body?.networkId ?? req.query?.networkId);
+  const raw = req.body?.target ?? req.query?.target;
+  const target = typeof raw === 'string' ? raw.trim() : '';
+  const ctx = resolveCall(req, res, networkId);
+  if (!ctx) return null;
+  if (!target || !isChannelTarget(target)) {
+    res.status(400).json({ error: 'a channel target is required' });
+    return null;
+  }
+  if (!ctx.conn.isChannelJoined(target)) {
+    res.status(403).json({ error: 'not a member of that channel' });
+    return null;
+  }
+  if (!canAdminCall(memberModes(ctx.conn, target, ctx.nick))) {
+    res.status(403).json({ error: 'only channel operators can manage guest links' });
+    return null;
+  }
+  return {
+    ctx,
+    folded: foldTargetFor(ctx.network.id, target),
+    host: foldKey(ctx.network.host),
+  };
+}
+
+/** The full URL for a link — PUBLIC_BASE_URL first; see utils/publicOrigin. */
+function guestUrl(req: Request, token: string): string {
+  const origin = publicOrigin(req);
+  const path = `/call/${encodeURIComponent(token)}`;
+  return origin ? origin + path : path;
+}
+
+router.post('/guest-link', (req: Request, res: Response) => {
+  const r = resolveOpChannel(req, res);
+  if (!r) return;
+  // Same fold for the room as /token, so a link can only open its own room.
+  const room = roomFor(r.ctx.network.host, r.folded, foldTargetFor(r.ctx.network.id, r.ctx.nick));
+  const link = createGuestLink({
+    host: r.host,
+    channelFolded: r.folded,
+    room,
+    // Default listen-only=false (they can talk); an op opts into a muted guest.
+    canPublish: req.body?.canPublish !== false,
+    byNick: r.ctx.nick,
+  });
+  res.json({ ...link, url: guestUrl(req, link.token) });
+});
+
+router.get('/guest-link', (req: Request, res: Response) => {
+  const r = resolveOpChannel(req, res);
+  if (!r) return;
+  const links = listActiveGuestLinks(r.host, r.folded).map((l) => ({
+    ...l,
+    url: guestUrl(req, l.token),
+  }));
+  res.json({ links });
+});
+
+router.delete('/guest-link', (req: Request, res: Response) => {
+  const r = resolveOpChannel(req, res);
+  if (!r) return;
+  const token = typeof req.body?.token === 'string' ? req.body.token : '';
+  if (!token) {
+    res.status(400).json({ error: 'token required' });
+    return;
+  }
+  // Scoped to the channel the caller ops, so a guessed token from elsewhere
+  // can't be revoked here.
+  res.json({ revoked: revokeGuestLink(token, r.host, r.folded) });
+});
+
 // ─── Public router (no cookie auth) — the LiveKit webhook ───────────────────
 export const voicePublicRouter = Router();
 
@@ -288,6 +378,75 @@ voicePublicRouter.post(
     broadcastCallPresence({ ...trigger, count, active: count > 0 });
   },
 );
+
+// ─── Public: redeem a guest link for a room-scoped LiveKit token ────────────
+//
+// No cookie: the opaque link token IS the capability. It grants exactly one
+// room, with the publish right the minting op chose — the SFU enforces
+// listen-only, so a guest editing their client can't talk their way in.
+
+// ip → recent redemption timestamps.
+//
+// ⚠ Entries are EVICTED, not just filtered. Keeping a key per IP that ever
+// touched the endpoint makes an unauthenticated request grow server memory
+// forever — a slow leak any stranger can drive, on the one route that has no
+// account behind it.
+const guestHits = new Map<string, number[]>();
+const GUEST_WINDOW_MS = 60_000;
+const GUEST_MAX_PER_WINDOW = 10;
+let guestSweepAt = 0;
+
+function guestRateLimited(ip: string, now: number): boolean {
+  // Opportunistic sweep of IPs that have gone quiet — O(n) but at most once a
+  // minute, and n is bounded by distinct IPs seen in that minute.
+  if (now - guestSweepAt > GUEST_WINDOW_MS) {
+    guestSweepAt = now;
+    for (const [k, times] of guestHits) {
+      if (times.length === 0 || now - times[times.length - 1]! >= GUEST_WINDOW_MS) {
+        guestHits.delete(k);
+      }
+    }
+  }
+  const recent = (guestHits.get(ip) ?? []).filter((t) => now - t < GUEST_WINDOW_MS);
+  recent.push(now);
+  guestHits.set(ip, recent);
+  return recent.length > GUEST_MAX_PER_WINDOW;
+}
+
+voicePublicRouter.post('/guest-token', express.json(), async (req: Request, res: Response) => {
+  if (!voiceEnabled()) {
+    res.status(503).json({ error: 'voice not enabled on this server' });
+    return;
+  }
+  if (guestRateLimited(req.ip ?? 'unknown', Date.now())) {
+    res.status(429).json({ error: 'too many requests — try again in a minute' });
+    return;
+  }
+  const token = typeof req.body?.token === 'string' ? req.body.token : '';
+  const name = typeof req.body?.name === 'string' ? req.body.name : '';
+  const link = getUsableGuestLink(token);
+  if (!link) {
+    // One message for missing / expired / revoked: distinguishing them tells a
+    // stranger which tokens ever existed.
+    res.status(404).json({ error: 'this guest link is invalid, expired, or revoked' });
+    return;
+  }
+  try {
+    const minted = await mintVoiceToken({
+      identity: guestIdentity(name || 'guest'),
+      room: link.room,
+      canPublish: link.canPublish,
+      // Longer than a member's 2h: a guest has no session to re-mint from, so
+      // an expiry mid-call would drop them with no way back in.
+      ttlSeconds: 4 * 60 * 60,
+    });
+    bumpGuestLinkUse(token);
+    res.json({ token: minted.token, url: minted.url, canPublish: link.canPublish });
+  } catch (err) {
+    console.error('[voice] guest token mint failed:', err);
+    res.status(500).json({ error: 'failed to mint token' });
+  }
+});
 
 /** Notify every local account currently in this channel (any of their tabs)
  *  that a call's participant count changed, so they can show/hide the badge.

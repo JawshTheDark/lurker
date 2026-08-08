@@ -637,6 +637,25 @@ function migrate() {
       PRIMARY KEY (network_host, channel_folded)
     );
 
+    -- Guest links for voice calls: a capability URL an op mints so someone
+    -- WITHOUT an account can join one channel's call. Scoped like the room and
+    -- the join policy (folded host + folded channel). All timestamps ISO-8601
+    -- UTC — see the note in db/voiceLinks.ts for why that is load-bearing.
+    CREATE TABLE IF NOT EXISTS voice_guest_link (
+      token TEXT PRIMARY KEY,
+      network_host TEXT NOT NULL,
+      channel_folded TEXT NOT NULL,
+      room TEXT NOT NULL,
+      can_publish INTEGER NOT NULL DEFAULT 1,
+      created_by TEXT,
+      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+      expires_at TEXT NOT NULL,
+      revoked_at TEXT,
+      use_count INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_voice_guest_link_channel
+      ON voice_guest_link (network_host, channel_folded);
+
     -- Per-user data-export jobs. A request to export account data spawns a
     -- background worker (separate readonly SQLite connection) that builds the
     -- .lurk archive to disk under data/exports/<token>.lurk; the row tracks

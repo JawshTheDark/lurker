@@ -20,6 +20,7 @@
 // put the two ends in two different rooms. So DM rooms are keyed by the
 // *canonical* (sorted) nick pair instead.
 
+import crypto from 'crypto';
 import { AccessToken, RoomServiceClient, WebhookReceiver } from 'livekit-server-sdk';
 import type { WebhookEvent } from 'livekit-server-sdk';
 import { isChannelTarget } from '../../shared/channels.js';
@@ -134,6 +135,17 @@ export function parseRoom(room: string): { host: string; channel: string } | nul
   return { host: foldAscii(m[1]!), channel: foldAscii(m[2]!) };
 }
 
+/** A namespaced LiveKit identity for a guest, so it can never collide with — or
+ *  impersonate — a real IRC nick: every member identity is a bare nick, and no
+ *  nick may contain '-'-delimited random hex in this shape. */
+export function guestIdentity(name: string): string {
+  const clean =
+    foldAscii(name)
+      .replace(/[^a-z0-9_-]/g, '')
+      .slice(0, 24) || 'guest';
+  return `guest-${clean}-${crypto.randomBytes(4).toString('hex')}`;
+}
+
 export interface MintedToken {
   /** The signed JWT the client passes to LiveKit. */
   token: string;
@@ -152,18 +164,27 @@ export interface MintedToken {
 export async function mintVoiceToken(args: {
   identity: string;
   room: string;
+  /** false → a LISTEN-ONLY token. The grant is the enforcement point: a
+   *  listen-only participant cannot publish audio, video or a screen share no
+   *  matter what its client asks for, because the SFU rejects the publish.
+   *  Used by guest links an op marked listen-only. Defaults to true. */
+  canPublish?: boolean;
+  /** Override the token lifetime. Guests get a longer one than the 2h default:
+   *  they have no session to silently re-mint from, so an expiry mid-call would
+   *  simply drop them with nothing to reconnect with. */
+  ttlSeconds?: number;
 }): Promise<MintedToken> {
   const cfg = liveKitConfig();
   if (!cfg) throw new Error('voice not configured');
 
   const at = new AccessToken(cfg.apiKey, cfg.apiSecret, {
     identity: args.identity,
-    ttl: 2 * 60 * 60, // 2h — a call comfortably outlives its join token
+    ttl: args.ttlSeconds ?? 2 * 60 * 60, // 2h — a call comfortably outlives its join token
   });
   at.addGrant({
     roomJoin: true,
     room: args.room,
-    canPublish: true,
+    canPublish: args.canPublish !== false,
     canSubscribe: true,
     canPublishData: true,
   });

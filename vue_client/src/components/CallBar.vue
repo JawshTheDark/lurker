@@ -32,6 +32,15 @@
     </div>
 
     <div v-if="voice.active || voice.connecting" class="call-body">
+      <div v-if="voice.videoTiles.length" class="video-grid">
+        <VideoTile
+          v-for="t in voice.videoTiles"
+          :key="`${t.identity}|${t.source}`"
+          :identity="t.identity"
+          :source="t.source"
+          :self="t.self"
+        />
+      </div>
       <ul v-if="voice.participants.length" class="call-parts">
         <li v-for="id in voice.participants" :key="id">
           <div class="part-row" :class="{ talking: voice.speaking.includes(id) }">
@@ -76,6 +85,18 @@
         :danger="voice.muted"
         @click="voice.toggleMute()"
       />
+      <IconButton
+        v-if="canPublish"
+        :icon="voice.cameraOn ? 'fa-video' : 'fa-video-slash'"
+        :label="voice.cameraOn ? 'Stop camera' : 'Start camera'"
+        @click="voice.toggleCamera()"
+      />
+      <IconButton
+        v-if="canPublish"
+        icon="fa-desktop"
+        :label="voice.screenOn ? 'Stop sharing screen' : 'Share screen'"
+        @click="voice.toggleScreen()"
+      />
       <IconButton icon="fa-phone-slash" label="Leave call" danger @click="voice.leave()" />
     </div>
 
@@ -92,6 +113,7 @@ import { useToastsStore } from '../stores/toasts.js';
 import { canModerateCall } from '../../../shared/voiceModes.js';
 import { api } from '../api.js';
 import IconButton from './IconButton.vue';
+import VideoTile from './VideoTile.vue';
 
 const voice = useVoiceStore();
 const buffers = useBuffersStore();
@@ -105,7 +127,14 @@ const statusText = computed(() => {
 
 // ─── Op moderation (the same shared gate the server enforces) ───────────────
 // The server enforces; showing the buttons only to ops is UX, not security.
+// A listen-only guest link mints canPublish:false, which the store reflects as
+// a mute it can't clear — no point offering camera/screen buttons the SFU will
+// refuse.
+const canPublish = computed(() => !(voice.isGuest && voice.muted));
+
 const amOp = computed(() => {
+  // Guests have no IRC session at all, so there are no channel modes to read.
+  if (voice.isGuest) return false;
   if (voice.networkId == null || !voice.target) return false;
   const b = buffers.byKey(bufferKey(voice.networkId, voice.target));
   const selfNick = networks.states[voice.networkId]?.nick;
@@ -188,6 +217,12 @@ function onVol(id: string, e: Event) {
   overflow-y: auto;
   padding: var(--space-3) var(--space-4);
   min-height: 0;
+}
+.video-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
 }
 .call-parts {
   list-style: none;

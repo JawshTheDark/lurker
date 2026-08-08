@@ -556,6 +556,12 @@ export const EXPORT_TABLES = Object.freeze({
     reason: 'per-channel voice-call join policy — instance/channel-scoped config, not user data',
   },
 
+  voice_guest_link: {
+    mode: 'skip',
+    reason:
+      'short-lived voice guest-link capabilities — instance/channel-scoped, and a bearer token that must not travel in an export',
+  },
+
   peer_presence_state: {
     mode: 'skip',
     reason: 'transient cache; rebuilt by IRC events on next connect',
