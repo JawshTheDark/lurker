@@ -134,6 +134,27 @@
                parity with the mobile topic bar. The server buffer has no
                per-buffer scope, so it's excluded. -->
           <template v-if="!isServerBuffer">
+            <!-- Pop this buffer into its own OS window. Must stay a direct
+                 click handler: window.open outside a user gesture is blocked. -->
+            <button
+              type="button"
+              class="link"
+              :title="popoutTitle"
+              aria-label="Pop out this buffer into its own window"
+              @click="popOutActive"
+            >
+              <i class="fa-solid fa-up-right-from-square"></i>
+            </button>
+            <button
+              v-if="popoutCount > 0"
+              type="button"
+              class="link"
+              :title="`Tile ${popoutCount} pop-out window${popoutCount === 1 ? '' : 's'}`"
+              aria-label="Tile pop-out windows"
+              @click="tileWindows"
+            >
+              <i class="fa-solid fa-table-cells-large"></i>
+            </button>
             <button
               type="button"
               class="link"
@@ -365,6 +386,13 @@ import { useMediaViewer } from '../composables/useMediaViewer.js';
 import { useNetworkEditor } from '../composables/useNetworkEditor.js';
 import { useJumpToMessage } from '../composables/useJumpToMessage.js';
 import { useNavHistoryStore } from '../stores/navHistory.js';
+import { useToastsStore } from '../stores/toasts.js';
+import {
+  popOutBuffer,
+  tilePopouts,
+  isPoppedOut,
+  popoutCount,
+} from '../composables/usePopoutWindows.js';
 
 const networks = useNetworksStore();
 const buffers = useBuffersStore();
@@ -394,6 +422,40 @@ const {
   hasInput,
   hasNicklist,
 } = useActiveBuffer();
+
+// ─── Pop-out windows ───────────────────────────────────────────────────────
+const popoutTitle = computed(() =>
+  active.value && isPoppedOut(active.value.networkId, active.value.target)
+    ? 'Focus this buffer’s window'
+    : 'Pop out into its own window',
+);
+
+function popOutActive(): void {
+  if (!active.value) return;
+  const { networkId, target } = active.value;
+  // Null means the popup blocker ate it. That failure is invisible, so say so
+  // rather than leaving the button looking dead.
+  if (!popOutBuffer(networkId, target)) {
+    useToastsStore().push({
+      kind: 'error',
+      title: 'Pop-out blocked',
+      body: 'Your browser blocked the new window. Allow pop-ups for this site and try again.',
+      ttlMs: 8000,
+    });
+  }
+}
+
+async function tileWindows(): Promise<void> {
+  const n = await tilePopouts();
+  if (n === 0) {
+    useToastsStore().push({
+      kind: 'info',
+      title: 'Nothing to tile',
+      body: 'Pop a channel out into its own window first.',
+      ttlMs: 5000,
+    });
+  }
+}
 
 const settings = useSettingsStore();
 const auth = useAuthStore();

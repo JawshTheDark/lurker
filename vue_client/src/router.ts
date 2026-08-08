@@ -25,6 +25,16 @@ const routes: RouteRecordRaw[] = [
     meta: { requiresAuth: true },
   },
   {
+    // One buffer, alone in its own browser window (the "Pop out" action).
+    // `target` is encodeURIComponent'd by the opener — a channel's leading '#'
+    // is a URL fragment delimiter and would otherwise truncate the path.
+    // Same origin, so the session cookie authenticates it like any other route.
+    path: '/b/:networkId/:target',
+    name: 'buffer-window',
+    component: () => import('./views/BufferWindow.vue'),
+    meta: { requiresAuth: true },
+  },
+  {
     path: '/settings/:category?',
     name: 'settings',
     component: () => import('./views/Settings.vue'),
