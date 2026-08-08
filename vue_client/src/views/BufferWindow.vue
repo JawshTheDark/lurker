@@ -53,7 +53,7 @@ import StatusBar from '../components/StatusBar.vue';
 import { useBuffersStore } from '../stores/buffers.js';
 import { useActiveBuffer } from '../composables/useActiveBuffer.js';
 import { useChatBootstrap } from '../composables/useChatBootstrap.js';
-import { connected } from '../composables/useSocket.js';
+import { connected, useSocket } from '../composables/useSocket.js';
 
 const route = useRoute();
 const buffers = useBuffersStore();
@@ -64,6 +64,12 @@ const buffers = useBuffersStore();
 // its own hydration reconciler. No `onJump`: a pop-out is pinned to one buffer
 // and must never navigate itself somewhere else on a notification click.
 useChatBootstrap();
+// ⚠ REQUIRED, and easy to miss: useChatBootstrap() only starts the reporters —
+// it's useSocket()'s onMounted that actually OPENS the WebSocket. Every other
+// view that needs a live connection calls this too (DesktopChat, MobileChat,
+// Settings, Admin). Without it the socket never opens, `connected` stays false,
+// and the pop-out sits on "connecting…" forever.
+useSocket();
 
 const networkId = computed(() => Number(route.params.networkId));
 // Encoded by the opener because a channel's leading '#' is a URL fragment
@@ -86,21 +92,45 @@ const canActivate = computed(
     buffers.isOpen(networkId.value, target.value),
 );
 
+let fallback: ReturnType<typeof setTimeout> | null = null;
+
 function activate(): void {
-  buffers.activate(networkId.value, target.value);
+  if (ready.value) return;
   ready.value = true;
+  if (fallback) {
+    clearTimeout(fallback);
+    fallback = null;
+  }
+  buffers.activate(networkId.value, target.value);
 }
 
 const stop = watch(
   canActivate,
   (ok) => {
-    if (!ok || ready.value) return;
-    activate();
-    stop();
+    if (ok) activate();
   },
   { immediate: true },
 );
-onBeforeUnmount(stop);
+
+// Fail open. `isOpen` is false for a buffer that is closed, was never in this
+// account's registry, or simply hasn't arrived in the snapshot yet — and
+// waiting on it forever is how this window ends up stuck on "connecting…".
+// activate() sets activeKey regardless (canonicalizing case), so after a grace
+// period we just go, and let hydration fill the pane in.
+const stopFallback = watch(
+  connected,
+  (up) => {
+    if (!up || ready.value || fallback) return;
+    fallback = setTimeout(activate, 3000);
+  },
+  { immediate: true },
+);
+
+onBeforeUnmount(() => {
+  stop();
+  stopFallback();
+  if (fallback) clearTimeout(fallback);
+});
 
 // Name the OS window after the buffer — with several pop-outs tiled across a
 // screen, the title bar / taskbar entry is how you tell them apart.
