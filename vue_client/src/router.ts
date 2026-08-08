@@ -54,6 +54,17 @@ const routes: RouteRecordRaw[] = [
     meta: { requiresAuth: true },
   },
   {
+    // One buffer, alone in its own browser window (the "Pop out" action). Keyed
+    // by bufferId for the same reasons `/buffer/:id` is: no sigil encoding, and
+    // no channel or DM name leaking into history, PWA recents or Referer.
+    // Deliberately NOT `chatShell` — a pop-out has no sidebar and must never
+    // navigate itself to another buffer.
+    path: '/popout/:id',
+    name: 'popout',
+    component: () => import('./views/BufferWindow.vue'),
+    meta: { requiresAuth: true },
+  },
+  {
     path: '/settings/:category?',
     name: 'settings',
     component: () => import('./views/Settings.vue'),

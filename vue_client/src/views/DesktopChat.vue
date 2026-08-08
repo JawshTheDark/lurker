@@ -134,6 +134,28 @@
                parity with the mobile topic bar. The server buffer has no
                per-buffer scope, so it's excluded. -->
           <template v-if="!isServerBuffer">
+            <!-- Pop this buffer into its own OS window. Must stay a direct
+                 click handler: window.open outside a user gesture is blocked. -->
+            <button
+              v-if="popoutId != null"
+              type="button"
+              class="link"
+              :title="popoutTitle"
+              aria-label="Pop out this buffer into its own window"
+              @click="popOutActive"
+            >
+              <i class="fa-solid fa-up-right-from-square"></i>
+            </button>
+            <button
+              v-if="popoutCount > 0"
+              type="button"
+              class="link"
+              :title="`Tile ${popoutCount} pop-out window${popoutCount === 1 ? '' : 's'}`"
+              aria-label="Tile pop-out windows"
+              @click="tileWindows"
+            >
+              <i class="fa-solid fa-table-cells-large"></i>
+            </button>
             <button
               type="button"
               class="link"
@@ -367,6 +389,14 @@ import { useMediaViewer } from '../composables/useMediaViewer.js';
 import { useNetworkEditor } from '../composables/useNetworkEditor.js';
 import { useJumpToMessage } from '../composables/useJumpToMessage.js';
 import { useNavHistoryStore } from '../stores/navHistory.js';
+import { useToastsStore } from '../stores/toasts.js';
+import {
+  popOutBuffer,
+  tilePopouts,
+  isPoppedOut,
+  popoutCount,
+  refreshPopoutRegistry,
+} from '../composables/usePopoutWindows.js';
 
 const networks = useNetworksStore();
 const buffers = useBuffersStore();
@@ -388,6 +418,66 @@ const {
   hasInput,
   hasNicklist,
 } = useActiveBuffer();
+
+// ─── Pop-out windows ───────────────────────────────────────────────────────
+// Addressed by bufferId, like the /buffer/:id routes. An optimistic buffer that
+// the server hasn't assigned an id to yet simply can't be popped out (the
+// button hides) rather than opening a window that could never resolve.
+const popoutId = computed(() => (activeBuf.value as { id?: number } | null)?.id ?? null);
+const popoutTitle = computed(() =>
+  isPoppedOut(popoutId.value) ? 'Focus this buffer’s window' : 'Pop out into its own window',
+);
+
+function popOutActive(): void {
+  const id = popoutId.value;
+  if (id == null) return;
+  // Null means the popup blocker ate it. That failure is invisible, so say so
+  // rather than leaving the button looking dead.
+  if (!popOutBuffer(id)) {
+    useToastsStore().push({
+      kind: 'error',
+      title: 'Pop-out blocked',
+      body: 'Your browser blocked the new window. Allow pop-ups for this site and try again.',
+      ttlMs: 8000,
+    });
+  }
+}
+
+async function tileWindows(): Promise<void> {
+  // Always report. A tile action that quietly does nothing — because no window
+  // answered, or because the browser ignored the move — is indistinguishable
+  // from a broken button.
+  const toasts = useToastsStore();
+  try {
+    const r = await tilePopouts();
+    if (r.total === 0) {
+      toasts.push({
+        kind: 'info',
+        title: 'Nothing to tile',
+        body: 'No pop-out windows responded. Open one with the pop-out button, then try again.',
+        ttlMs: 6000,
+      });
+    } else if (r.moved === r.total) {
+      toasts.push({ kind: 'info', title: `Tiled ${r.total} windows`, body: '', ttlMs: 3000 });
+    } else {
+      toasts.push({
+        kind: 'warn',
+        title: `Tiled ${r.moved} of ${r.total}`,
+        body:
+          `Reached ${r.handled}/${r.total} windows; ${r.moved} actually moved.` +
+          (r.sample ? ` (${r.sample})` : ''),
+        ttlMs: 12000,
+      });
+    }
+  } catch (e) {
+    toasts.push({
+      kind: 'error',
+      title: "Couldn't tile the windows",
+      body: e instanceof Error ? e.message : 'Unknown error',
+      ttlMs: 8000,
+    });
+  }
+}
 
 const settings = useSettingsStore();
 const auth = useAuthStore();
@@ -512,6 +602,10 @@ watch(showChannels, async (open) => {
   void measureFootWrap();
 });
 onMounted(measureFootWrap);
+// Pop-outs opened before this document loaded (or before it last reloaded) are
+// invisible to us until they answer a census — without this the Tile button
+// stays hidden and the pop-out indicator is wrong after a refresh.
+onMounted(refreshPopoutRegistry);
 
 // True when the active buffer is a DM (not a channel, not the network's
 // server buffer). Drives the clickable DM header that opens the user
