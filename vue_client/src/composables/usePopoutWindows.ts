@@ -257,39 +257,60 @@ export async function tilePopouts(): Promise<number> {
   const area = await tileArea();
   await new Promise((r) => setTimeout(r, CENSUS_MS));
 
-  const ids = [...live.keys()].sort(); // stable order → stable placement
-  // Windows THIS document opened, as a fallback path: if the broadcast route
-  // fails (a pop-out on older code with no channel listener, or a browser that
-  // ignores a self-move), we can still place these directly. Belt and braces —
-  // the two sets usually overlap completely and a double-placement is harmless.
-  const direct = [...handles.entries()].filter(([, w]) => !w.closed);
-  const count = Math.max(ids.length, direct.length);
-  if (count === 0) return 0;
+  // Slot by BUFFER KEY, not by broadcast id: it's the one identifier both the
+  // opener and the pop-out know, so the direct and broadcast paths below agree
+  // on which window belongs in which cell and can safely both fire.
+  const keys = [...new Set([...live.values(), ...handles.keys()])].sort();
+  if (keys.length === 0) return 0;
 
-  const cols = Math.ceil(Math.sqrt(count));
-  const rows = Math.ceil(count / cols);
+  const idByKey = new Map<string, string>();
+  for (const [id, key] of live) idByKey.set(key, id);
+
+  const cols = Math.ceil(Math.sqrt(keys.length));
+  const rows = Math.ceil(keys.length / cols);
   const w = Math.floor(area.width / cols);
   const h = Math.floor(area.height / rows);
-  const rectAt = (i: number): TileRect => ({
-    left: area.left + (i % cols) * w,
-    top: area.top + Math.floor(i / cols) * h,
-    width: w,
-    height: h,
-  });
 
-  ids.forEach((id, i) => post({ t: 'place', id, rect: rectAt(i) }));
+  keys.forEach((key, i) => {
+    const rect: TileRect = {
+      left: area.left + (i % cols) * w,
+      top: area.top + Math.floor(i / cols) * h,
+      width: w,
+      height: h,
+    };
 
-  // Only place directly for slots the broadcast didn't cover, so a window that
-  // already moved itself isn't yanked to a different cell.
-  direct.forEach(([, win], i) => {
-    if (i < ids.length) return;
-    const r = rectAt(i);
-    try {
-      win.moveTo(Math.round(r.left), Math.round(r.top));
-      win.resizeTo(Math.round(r.width), Math.round(r.height));
-    } catch {
-      /* not scriptable */
+    // 1. Opener-driven move — the path that actually works. Chromium honours
+    //    moveTo/resizeTo from the document that OPENED a popup, but quietly
+    //    ignores a popup moving itself, so this has to be the primary route.
+    let win = handles.get(key);
+    if ((!win || win.closed) && idByKey.has(key)) {
+      // Orphan (opened before this document loaded, so we hold no handle).
+      // Re-acquire it by name: window.open with an EMPTY url returns the
+      // existing window with that name without navigating or reloading it.
+      // Safe because the census just proved a window with this key is live.
+      const [netPart] = key.split('::');
+      const target = key.slice(netPart.length + 2);
+      const reacquired = window.open('', windowNameFor(netPart, target));
+      if (reacquired && !reacquired.closed) {
+        handles.set(key, reacquired);
+        win = reacquired;
+      }
     }
+    if (win && !win.closed) {
+      try {
+        win.moveTo(Math.round(rect.left), Math.round(rect.top));
+        win.resizeTo(Math.round(rect.width), Math.round(rect.height));
+      } catch {
+        /* fall through to the broadcast below */
+      }
+    }
+
+    // 2. Broadcast as backstop, for anything we still couldn't get a handle to.
+    //    Same rect, so a window that honours both ends up in the same cell.
+    const id = idByKey.get(key);
+    if (id) post({ t: 'place', id, rect });
   });
-  return count;
+
+  version.value++;
+  return keys.length;
 }
