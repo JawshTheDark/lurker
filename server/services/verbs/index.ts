@@ -25,4 +25,3 @@ import './connectNetwork.js';
 import './disconnectNetwork.js';
 import './getTopic.js';
 import './setTopic.js';
-import './sendDccFile.js';

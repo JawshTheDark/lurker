@@ -665,10 +665,4 @@ describe('agent control verbs — batch 2', () => {
       callVerb('set_topic', rwCtx(owner.id), { networkId: net.id, channel: '#x', topic: 'hi' }),
     ).toEqual({ ok: false, error: 'not-connected' });
   });
-
-  it('send_dcc_file: requires an fserve root (unset in tests)', () => {
-    expect(
-      callVerb('send_dcc_file', rwCtx(owner.id), { networkId: net.id, nick: 'bob', path: 'a.txt' }),
-    ).toEqual({ ok: false, error: 'no-fserve-root' });
-  });
 });
