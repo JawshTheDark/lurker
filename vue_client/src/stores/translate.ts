@@ -67,6 +67,12 @@ interface BufferPrefs {
   read?: boolean;
   /** Translate outgoing messages before sending (with approval). */
   post?: boolean;
+  /** The language to translate outgoing messages INTO for this conversation.
+   *  Distinct from the global target_lang (which is the language you READ in):
+   *  posting is about the language the *other* people here speak, so it is a
+   *  per-conversation choice. Absent until posting is first enabled, then
+   *  seeded from target_lang so the picker is never empty. */
+  postLang?: string;
 }
 
 function loadPrefs(): Record<string, BufferPrefs> {
@@ -129,6 +135,15 @@ export const useTranslateStore = defineStore('translate', {
         bufferId != null && state.prefs[String(bufferId)]?.post === true;
     },
 
+    /** The outgoing target language for a conversation, or null if unset. Falls
+     *  back to the global reading target only at the send site (a no-op there —
+     *  translating into your own language yields "unchanged" and sends the
+     *  original), never here, so the picker can show "not chosen" honestly. */
+    postLangFor(state) {
+      return (bufferId: number | null | undefined): string | null =>
+        (bufferId != null && state.prefs[String(bufferId)]?.postLang) || null;
+    },
+
     /** The overlay for a rendered row, or null. Null for: feature off, reading
      *  off for the buffer, no verdict yet, or a verdict with nothing to show. */
     overlayFor() {
@@ -166,7 +181,19 @@ export const useTranslateStore = defineStore('translate', {
 
     setPosting(bufferId: number, on: boolean) {
       const k = String(bufferId);
-      this.prefs[k] = { ...this.prefs[k], post: on };
+      const prev = this.prefs[k];
+      // Seed the outgoing language on first enable so the picker opens with a
+      // concrete value rather than empty. Default to the reading target: a safe
+      // no-op (translating into your own language sends the original) that the
+      // user immediately overrides with the language actually spoken here.
+      const postLang = on && !prev?.postLang ? this.config?.targetLang || 'en' : prev?.postLang;
+      this.prefs[k] = { ...prev, post: on, postLang };
+      this.persistPrefs();
+    },
+
+    setPostLang(bufferId: number, lang: string) {
+      const k = String(bufferId);
+      this.prefs[k] = { ...this.prefs[k], postLang: lang };
       this.persistPrefs();
     },
 
