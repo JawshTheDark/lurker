@@ -196,6 +196,27 @@ describe('store rules', () => {
     expect(f).not.toHaveBeenCalled();
   });
 
+  it('translates notices (ChanServ, bots) but not protocol events', async () => {
+    const store = await makeStore();
+    const f = fetchOk({
+      translatedText: 'Welcome to the channel',
+      detectedLanguage: { language: 'es', confidence: 95 },
+    });
+    vi.stubGlobal('fetch', f);
+    // A ChanServ welcome notice is prose in another language — translate it.
+    store.request({ id: 20, text: 'Bienvenidos al canal', type: 'notice' });
+    // A join has no prose to translate — must never hit the wire.
+    store.request({ id: 21, text: '', type: 'join' });
+    await settle();
+    expect(store.verdicts['20|en']).toEqual({
+      kind: 'translated',
+      text: 'Welcome to the channel',
+      srcLang: 'es',
+    });
+    expect(store.verdicts['21|en']).toBeUndefined();
+    expect(f).toHaveBeenCalledTimes(1);
+  });
+
   it('rule 10 — low-confidence caches permanently; transient failures cache nothing', async () => {
     const store = await makeStore();
     // First: a low-confidence detection → permanent negative verdict.
