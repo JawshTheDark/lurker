@@ -4000,13 +4000,19 @@ textarea::placeholder {
   border-bottom: 1px dashed var(--border);
 }
 .tr-preview .tr-text {
-  flex: 1;
+  /* Natural width, not flex:1 — growing it to fill the strip stranded a short
+     translation on the far left with the hint pushed to the opposite edge. Sit
+     right after the badge; the hint follows immediately after the text. */
   min-width: 0;
   color: var(--fg);
+  font-weight: 600;
   overflow-wrap: anywhere;
 }
 .tr-preview .tr-hint {
+  /* Sits right after the text (parent gap spaces it), not shoved to the far
+     edge — the strip reads as one phrase: "‹translation› — Send again…". */
   white-space: nowrap;
+  opacity: 0.85;
 }
 .tr-preview.tr-failed {
   color: var(--bad);
