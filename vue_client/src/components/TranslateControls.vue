@@ -91,18 +91,65 @@ function onLang(e: Event) {
 </script>
 
 <style scoped>
+/* The topic-bar button styles (.link desktop, .icon mobile) are scoped to their
+   host VIEWS, so they do NOT reach a child component's elements — the buttons
+   would fall back to the browser default (a boxed control that doesn't match the
+   toolbar). Mirror both rulesets here, keyed by the same class the host passes,
+   so the shared control looks native in either toolbar. Kept byte-identical to
+   the view definitions on purpose; if those change, change these. */
+.link {
+  background: none;
+  border: none;
+  color: var(--accent);
+  padding: 0 var(--space-2);
+  cursor: pointer;
+  font: inherit;
+  text-decoration: none;
+}
+.link:hover {
+  color: var(--fg);
+}
+.icon {
+  background: none;
+  border: none;
+  color: var(--accent);
+  padding: var(--space-2) var(--space-4);
+  cursor: pointer;
+  font: inherit;
+  text-decoration: none;
+  min-width: 36px;
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.icon:hover {
+  color: var(--fg);
+}
+.tr-on {
+  color: var(--accent);
+}
+
+/* Themed to the app, not the OS default white the native control renders. The
+   <option> popup itself is OS-drawn and only partly styleable, but background +
+   color land on Chromium/Firefox and stop the jarring white panel. */
 .tr-lang {
   height: 1.9rem;
   max-width: 9rem;
   padding: 0 0.35rem;
   border-radius: 6px;
-  border: 1px solid var(--border, rgba(128, 128, 128, 0.35));
-  background: var(--input-bg, transparent);
-  color: inherit;
+  border: 1px solid var(--border);
+  background: var(--bg-soft);
+  color: var(--fg);
+  font: inherit;
   font-size: 0.85rem;
   cursor: pointer;
 }
 .tr-lang:hover {
-  border-color: var(--accent, #7c5cff);
+  border-color: var(--accent);
+}
+.tr-lang option {
+  background: var(--bg-soft);
+  color: var(--fg);
 }
 </style>
