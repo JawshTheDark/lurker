@@ -98,6 +98,11 @@
         >
           <i class="fa-regular fa-bell"></i>
         </button>
+        <TranslateControls
+          v-if="!isVirtual && !isServerBuffer"
+          :buffer-id="active?.id ?? null"
+          button-class="icon"
+        />
         <template v-if="isServerBuffer">
           <button
             class="icon"
@@ -235,6 +240,7 @@ import { useSocket } from '../composables/useSocket.js';
 import { useChatBootstrap } from '../composables/useChatBootstrap.js';
 import { pushBuffer } from '../composables/useBufferRoute.js';
 import { useActiveBuffer } from '../composables/useActiveBuffer.js';
+import TranslateControls from '../components/TranslateControls.vue';
 import { useBufferSearchScope } from '../composables/useBufferSearchScope.js';
 import { useBufferActions } from '../composables/useBufferActions.js';
 import { useContextMenu } from '../composables/useContextMenu.js';

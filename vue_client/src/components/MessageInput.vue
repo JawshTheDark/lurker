@@ -2389,7 +2389,10 @@ async function submit() {
     }
     try {
       trBusy.value = true;
-      const out = await translate.translateOutgoing(plainOut);
+      const out = await translate.translateOutgoing(
+        plainOut,
+        translate.postLangFor(activeBufferId.value) ?? undefined,
+      );
       trBusy.value = false;
       // Identical result skips approval (rule 7) — nothing to inspect.
       if (!genuinelyChanged(plainOut, out)) {
