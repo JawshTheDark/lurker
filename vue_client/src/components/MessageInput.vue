@@ -4004,6 +4004,13 @@ function handleCommand(line: string, networkId: number | null, target: string): 
 <style scoped>
 .input {
   display: flex;
+  /* wrap so the full-width translation preview strip takes its OWN line ABOVE
+     the composer row. Without it the strip (flex-basis:100%) sat on the same
+     row and squeezed the textarea to near-zero width — and a near-zero-width
+     textarea with `field-sizing: content` wraps its content over many lines and
+     grows to the 16-row cap, ballooning the whole composer. The normal
+     (no-strip) row still doesn't wrap: prompt + textarea + send fit on one line. */
+  flex-wrap: wrap;
   /* flex-start so the prompt label stays pinned to the first line as the
      textarea grows downward across multiple lines. The send button overrides
      this (align-self: flex-end) to track the bottom of the input area. */
@@ -4117,7 +4124,10 @@ textarea::placeholder {
   display: flex;
   align-items: baseline;
   gap: var(--space-2);
-  width: 100%;
+  /* Own its own line above the composer (the .input form is flex-wrap:wrap):
+     basis 100% forces the wrap, no-grow/no-shrink keeps it exactly one row tall
+     so it can't compress the textarea's width. */
+  flex: 0 0 100%;
   padding: var(--space-1) var(--space-3);
   font-size: 0.9em;
   color: var(--fg-muted);
