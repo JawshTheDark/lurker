@@ -222,8 +222,12 @@ export const useTranslateStore = defineStore('translate', {
       const msgId = msg.id;
       const text = typeof msg.text === 'string' ? msg.text : '';
       if (msgId == null || !text) return;
-      // Only chat-shaped rows: joins/quits/topics are protocol events, not prose.
-      if (msg.type !== 'message' && msg.type !== 'action') return;
+      // Only prose-bearing rows. joins/quits/nick/mode are protocol events with
+      // no user prose to translate; message/action/notice all carry text a
+      // human wrote (a ChanServ welcome, a bot announcement, a /me) and can be
+      // in any language — this must stay in lockstep with hasInlineText() in
+      // MessageList, which decides which rows even render a body + overlay.
+      if (msg.type !== 'message' && msg.type !== 'action' && msg.type !== 'notice') return;
       // Rule 1: NEVER the user's own messages. Auto-detection on your own text
       // produces false positives ("that's not even the right language") and
       // there is no reader-side value: you wrote it, you can read it.
