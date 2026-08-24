@@ -7,13 +7,30 @@
   <div
     class="chat"
     :class="{
-      'sidebar-collapsed': !showChannels,
+      'sidebar-collapsed': !showChannels && !discordLayout,
       'members-collapsed': !showMembers,
       'system-active': isSystemBuffer,
+      'discord-layout': discordLayout,
     }"
     @click="onChatClick"
   >
-    <aside class="sidebar" :class="{ collapsed: !showChannels }">
+    <!-- Discord-style shell (look.layout.style = 'discord'): a network icon rail
+         plus the selected network's channel list, in place of the combined
+         BufferList. Everything downstream (topic bar, MessageList, members,
+         input) is shared with the classic layout. -->
+    <template v-if="discordLayout">
+      <NetworkRail @add-network="openAddNetwork" />
+      <ChannelSidebar
+        @add-network="openAddNetwork"
+        @add-channel="(netId) => joinChannelModal.open(netId)"
+        @open-settings="openSettings"
+        @search="openSearch(false)"
+        @highlights="openHighlights(false)"
+        @bookmarks="showBookmarks = true"
+        @uploads="showUploads = true"
+      />
+    </template>
+    <aside v-else class="sidebar" :class="{ collapsed: !showChannels }">
       <!-- The "lurker" header + connection dot live in BufferList's LURKER row
            (#355); the collapse control lives there too. When collapsed the list
            is unmounted, so the expand control returns to the top of the rail. -->
@@ -320,6 +337,8 @@ import { useHighlightChip } from '../composables/useHighlightChip.js';
 import { useSettingsStore } from '../stores/settings.js';
 import { useAuthStore } from '../stores/auth.js';
 import BufferList from '../components/BufferList.vue';
+import NetworkRail from '../components/NetworkRail.vue';
+import ChannelSidebar from '../components/ChannelSidebar.vue';
 import MessageList from '../components/MessageList.vue';
 import MessageInput from '../components/MessageInput.vue';
 import MemberList from '../components/MemberList.vue';
@@ -456,6 +475,7 @@ useKeyboardShortcuts({
   },
 });
 
+const discordLayout = computed(() => settings.effective('look.layout.style') === 'discord');
 const showChannels = computed(() => settings.effective('look.layout.show_channel_list'));
 
 // Sidebar-foot wrap detector. At large `look.font.size` settings the six icons
@@ -720,6 +740,23 @@ useChatBootstrap({ onJump: onJumpToMessage });
    border there so it stays visually divided from the message list. */
 .chat.system-active .input {
   border-top: 1px solid var(--border);
+}
+/* Discord-style shell: a network icon rail becomes a new far-left column, and
+   the channel sidebar sits between it and the content. The topic/messages/status/
+   input/members areas are identical to the classic grid, so everything mounted
+   there is layout-agnostic. Rail surfaces are darker than the app ground, the way
+   Discord's server column is. */
+.chat.discord-layout {
+  --rail-w: 68px;
+  grid-template-columns: var(--rail-w) var(--sidebar-w) 1fr var(--members-w);
+  grid-template-areas:
+    'rail sidebar topic    topic'
+    'rail sidebar divider  divider'
+    'rail sidebar messages members'
+    'rail sidebar status   status'
+    'rail sidebar input    input';
+  --rail-bg: color-mix(in srgb, var(--bg) 80%, #000 20%);
+  --rail-btn-bg: color-mix(in srgb, var(--bg-soft) 88%, var(--fg) 12%);
 }
 /* min-height/min-width 0 lets flex/scrolling children stay inside their row. */
 .chat > * {
