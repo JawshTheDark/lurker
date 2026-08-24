@@ -565,12 +565,13 @@ const memberCount = computed(() => {
 // member list at all, so the toggle and panel are hidden for them entirely.
 const showMembers = computed(() => {
   if (!isChannel.value || !active.value) return false;
+  // Discord layout always shows the member list on channels (the concept does),
+  // ignoring both the global default and any stale per-buffer collapsed override
+  // — that override was what kept the column at 0px and MemberList unmounted.
+  if (discordLayout.value) return true;
   const { networkId, target } = active.value;
   const override = nicklistCollapse.override(networkId, target);
   if (override !== undefined) return !override;
-  // The Discord layout shows members by default (the concept always does),
-  // regardless of the classic global default. The per-buffer toggle still wins.
-  if (discordLayout.value) return true;
   return settings.effective('look.layout.show_member_list');
 });
 
