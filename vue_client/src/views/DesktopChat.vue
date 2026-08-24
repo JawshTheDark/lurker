@@ -753,6 +753,9 @@ useChatBootstrap({ onJump: onJumpToMessage });
 .chat.discord-layout {
   --rail-w: 68px;
   grid-template-columns: var(--rail-w) var(--sidebar-w) 1fr var(--members-w);
+  /* minmax(0, 1fr) so the messages/members row takes the free space and can't be
+     forced taller by content — the same guard the classic grid relies on. */
+  grid-template-rows: auto auto minmax(0, 1fr) auto auto;
   grid-template-areas:
     'rail sidebar topic    topic'
     'rail sidebar divider  divider'
@@ -792,6 +795,15 @@ useChatBootstrap({ onJump: onJumpToMessage });
    below the feed. Hide both in discord mode (classic keeps them). */
 .chat.discord-layout .status-bar {
   display: none;
+}
+/* MemberList's root uses height:100%, which only resolves against a definite
+   grid-area height — in this shell it resolved to 0 and the list rendered at
+   zero height. Fill via grid-stretch instead (height:auto + default align-self:
+   stretch), exactly how the message list fills its half of the same row. */
+.chat.discord-layout .members {
+  height: auto;
+  align-self: stretch;
+  min-height: 0;
 }
 /* Discord-style top bar: a clean channel header — bolder name, the topic set off
    behind a hairline divider, a solid ground with one bottom border. Markup is
