@@ -568,6 +568,9 @@ const showMembers = computed(() => {
   const { networkId, target } = active.value;
   const override = nicklistCollapse.override(networkId, target);
   if (override !== undefined) return !override;
+  // The Discord layout shows members by default (the concept always does),
+  // regardless of the classic global default. The per-buffer toggle still wins.
+  if (discordLayout.value) return true;
   return settings.effective('look.layout.show_member_list');
 });
 
