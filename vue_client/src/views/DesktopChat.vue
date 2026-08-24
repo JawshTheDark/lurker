@@ -791,15 +791,24 @@ useChatBootstrap({ onJump: onJumpToMessage });
   --rail-bg: #e4e1ec;
   --rail-btn-bg: #ffffff;
 }
-/* The concept has no status bar or separate divider row — the composer sits just
-   below the feed. Hide both in discord mode (classic keeps them). */
+/* The concept has no status bar or separate divider row — but they must NOT be
+   `display:none`: that removes them as grid ITEMS and vacates their cells, and
+   the message list then auto-places into the freed divider cell (row 2) instead
+   of the messages area — which left the member list alone in row 3 with no free
+   space, collapsing it to 0px. Keep them as zero-height items so their rows stay
+   occupied; hide them visually with height:0 + overflow:hidden. */
 .chat.discord-layout .status-bar {
-  display: none;
+  height: 0;
+  min-height: 0;
+  padding: 0;
+  border: none;
+  overflow: hidden;
 }
-/* MemberList's root uses height:100%, which only resolves against a definite
-   grid-area height — in this shell it resolved to 0 and the list rendered at
-   zero height. Fill via grid-stretch instead (height:auto + default align-self:
-   stretch), exactly how the message list fills its half of the same row. */
+.chat.discord-layout .topic-divider {
+  height: 0;
+  border: none;
+}
+/* Fill the row via grid-stretch (belt-and-suspenders with the row fix above). */
 .chat.discord-layout .members {
   height: auto;
   align-self: stretch;
@@ -824,10 +833,6 @@ useChatBootstrap({ onJump: onJumpToMessage });
   margin-left: 6px;
   color: var(--fg-muted);
   font-size: 13px;
-}
-/* The topic/messages divider row is redundant against the bar's own border. */
-.chat.discord-layout .topic-divider {
-  display: none;
 }
 /* min-height/min-width 0 lets flex/scrolling children stay inside their row. */
 .chat > * {
