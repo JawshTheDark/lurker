@@ -13,6 +13,13 @@
         @click="onRowClick($event, m)"
         @contextmenu.prevent="onRowContextMenu($event, m)"
       >
+        <span
+          v-if="discordMode"
+          class="m-avatar"
+          :style="{ background: avatarColor(m) }"
+          aria-hidden="true"
+          >{{ avatarInitial(m) }}</span
+        >
         <span class="prefix">{{ prefixOf(m) }}</span>
         <span class="nick" :style="nickStyle(m)" :title="nickOf(m)">{{ nickOf(m) }}</span>
         <button
@@ -45,6 +52,8 @@ import { useBuffersStore, type BufferMember } from '../stores/buffers.js';
 import { useNickColors } from '../composables/useNickColors.js';
 import { useMemberActions } from '../composables/useMemberActions.js';
 import { useIgnoresStore } from '../stores/ignores.js';
+import { useSettingsStore } from '../stores/settings.js';
+import { useViewport } from '../composables/useViewport.js';
 import {
   PREFIX_ORDER,
   prefixOf as modePrefixOf,
@@ -57,6 +66,21 @@ const buffers = useBuffersStore();
 const nicks = useNickColors();
 const memberActions = useMemberActions();
 const ignores = useIgnoresStore();
+const settings = useSettingsStore();
+const { isMobile } = useViewport();
+
+// Discord-style member rows carry an avatar (desktop only, same setting as the
+// layout). Purely presentational — sorting/actions are unchanged.
+const discordMode = computed(
+  () => !isMobile.value && settings.effective('look.layout.style') === 'discord',
+);
+function avatarColor(m: BufferMember): string {
+  if (isSelf(m)) return nicks.selfColor.value;
+  return nicks.color(nickOf(m)) || 'var(--accent)';
+}
+function avatarInitial(m: BufferMember): string {
+  return (nickOf(m).replace(/[^a-zA-Z0-9]/g, '')[0] || '?').toUpperCase();
+}
 const modalMember = ref<BufferMember | null>(null);
 const listEl = ref<HTMLElement | null>(null);
 
@@ -211,6 +235,28 @@ li {
 }
 li:hover {
   background: var(--bg-soft);
+}
+
+/* Discord-style rows: an avatar leads each member, and rows relax to center
+   alignment + a little more height so the 24px avatar sits comfortably. */
+.m-avatar {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  user-select: none;
+}
+.members li:has(.m-avatar) {
+  align-items: center;
+  gap: var(--space-2);
+  padding-top: 2px;
+  padding-bottom: 2px;
 }
 
 /* Hover affordance — floats over the right edge of the row instead of taking

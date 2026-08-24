@@ -7,7 +7,7 @@
   <div
     ref="scroller"
     class="message-list"
-    :class="{ compact: compactMode }"
+    :class="{ compact: compactMode, discord: discordMode }"
     @scroll="onScroll"
     @wheel="onWheel"
   >
@@ -104,7 +104,66 @@
         :data-msg-id="row.m?.id ?? null"
         @click="onMessageRowClick($event, row.m)"
       >
-        <template v-if="compactMode && row.m?.type === 'message'">
+        <!-- Discord-style avatar gutter (look.layout.style = 'discord', desktop).
+             Only chat-shaped rows get the avatar treatment; protocol events fall
+             through to the standard chain below and are styled subtly via CSS.
+             Grouping reuses row.continuationAuthor — a run of the same author
+             shows one avatar + header, the rest indent under it. -->
+        <template v-if="discordMode && dcChat(row.m)">
+          <div class="dc-gutter">
+            <div
+              v-if="!row.continuationAuthor"
+              class="dc-avatar"
+              :style="{ background: dcAvatarColor(row.m) }"
+              aria-hidden="true"
+            >
+              {{ dcAvatarInitial(row.m) }}
+            </div>
+            <span v-else class="dc-hovertime">{{ time(row.m?.time) }}</span>
+          </div>
+          <div class="dc-body">
+            <div v-if="!row.continuationAuthor" class="dc-head">
+              <NickRef
+                :nick="row.m?.nick ?? ''"
+                :modes="authorModes(row.m)"
+                :show-prefix="showModePrefix"
+                interactive
+                @click.stop.prevent="onNickMenu($event, row.m?.nick, row.m)"
+              />
+              <span class="dc-time">{{ time(row.m?.time) }}</span>
+            </div>
+            <span
+              v-if="row.m?.relaySource && !row.continuationAuthor"
+              class="relay-via"
+              :title="'Relayed via ' + row.m.relayBot"
+              >[{{ relayLabel(row.m) }}]</span
+            ><MessageBody
+              v-if="previewBody(row.m)"
+              :text="row.m?.text"
+              :segments="textSegments(row.m)"
+              :self-color="selfColor"
+              :network-id="buffer?.networkId ?? null"
+              interactive-nicks
+              @nick-click="onMentionMenu"
+              @measured="repinAfterPreviewGrowth(true)"
+            /><RenderSegments
+              v-else
+              :segments="textSegments(row.m)"
+              :self-color="selfColor"
+              :network-id="buffer?.networkId ?? null"
+              interactive-nicks
+              @nick-click="onMentionMenu"
+            />
+            <span
+              v-if="translationFor(row.m)"
+              class="tr-overlay"
+              :title="'Translated from ' + badgeLang(translationFor(row.m)?.srcLang)"
+              ><span class="tr-badge">{{ badgeLang(translationFor(row.m)?.srcLang) }}→</span
+              >{{ translationFor(row.m)?.text }}</span
+            >
+          </div>
+        </template>
+        <template v-else-if="compactMode && row.m?.type === 'message'">
           <!-- Compact-mode message rows (IRCCloud-style): nick on its own
              head line above the body; body row carries the body and a
              right-aligned timestamp. The head is omitted entirely on
@@ -535,6 +594,23 @@ function translationFor(m: unknown): { text: string; srcLang: string | null } | 
   return translateStore.overlayFor(bufId, msg.id ?? null);
 }
 const nicks = useNickColors();
+
+// Discord-style avatar-grouped rendering. Desktop only (mobile keeps its own
+// shell); driven by the same setting the layout is. Chat-shaped rows get the
+// avatar gutter; events fall through to the standard renderer.
+const discordMode = computed(
+  () => !isMobile.value && settings.effective('look.layout.style') === 'discord',
+);
+function dcChat(m: { type?: string } | undefined | null): boolean {
+  return m?.type === 'message' || m?.type === 'action' || m?.type === 'notice';
+}
+function dcAvatarColor(m: { nick?: string | null } | undefined | null): string {
+  return nicks.color(m?.nick ?? '') || 'var(--accent)';
+}
+function dcAvatarInitial(m: { nick?: string | null } | undefined | null): string {
+  const n = (m?.nick ?? '').replace(/[^a-zA-Z0-9]/g, '');
+  return (n[0] || '?').toUpperCase();
+}
 const { isMobile, canHover } = useViewport();
 
 const actionItalic = computed(() => !!settings.effective('look.action.italic'));
@@ -2716,6 +2792,88 @@ watch(
    right — with messages getting a nick-only head line above. Only the
    outer scroller and per-line layout change; the scroll/history machinery
    is untouched. */
+/* ── Discord-style avatar grouping (look.layout.style = 'discord') ─────────
+   Chat rows become an avatar gutter + body; a run of the same author shows one
+   avatar and header (the rest are .cont-author and indent under it). Events and
+   the scroll/history machinery are untouched. */
+.message-list.discord {
+  grid-template-columns: minmax(0, 1fr);
+  padding: var(--space-2) 0 var(--space-4);
+}
+.message-list.discord .line {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 1px 16px;
+  margin: 0;
+}
+/* First message of a group gets breathing room; continuations stay tight. */
+.message-list.discord .line.type-message:not(.cont-author),
+.message-list.discord .line.type-action:not(.cont-author),
+.message-list.discord .line.type-notice:not(.cont-author) {
+  margin-top: 14px;
+}
+.message-list.discord .line:hover {
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+}
+.message-list.discord .line.highlight {
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+}
+.dc-gutter {
+  width: 40px;
+  flex-shrink: 0;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+}
+.dc-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-weight: 700;
+  font-size: 16px;
+  margin-top: 2px;
+  user-select: none;
+}
+.dc-hovertime {
+  font-size: 10px;
+  color: var(--fg-muted);
+  opacity: 0;
+  line-height: 1.6;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.message-list.discord .line:hover .dc-hovertime {
+  opacity: 0.7;
+}
+.dc-body {
+  flex: 1;
+  min-width: 0;
+}
+.dc-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 1px;
+}
+.dc-time {
+  font-size: 11.5px;
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+/* Protocol events (join/quit/nick/…) in discord mode: quiet, indented to align
+   under the message column, no avatar. */
+.message-list.discord .line:not(.type-message):not(.type-action):not(.type-notice) {
+  padding-left: 70px;
+  color: var(--fg-muted);
+  font-size: 13px;
+  min-height: 0;
+}
+
 .message-list.compact {
   /* Single content column — the 3-col subgrid alignment goes away. */
   grid-template-columns: minmax(0, 1fr);
