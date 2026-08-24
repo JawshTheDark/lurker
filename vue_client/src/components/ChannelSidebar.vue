@@ -80,26 +80,26 @@
       <span class="av me-av">{{ ini(myNick) }}</span>
       <div class="me-who">
         <b :title="myNick">{{ myNick }}</b>
-        <span>{{ stateLabel }}</span>
+        <span>connected · {{ netCount }} {{ netCount === 1 ? 'net' : 'nets' }}</span>
       </div>
-      <button class="link" title="Search messages" aria-label="Search messages" @click="$emit('search')">
-        <i class="fa-solid fa-magnifying-glass"></i>
+      <button class="link" title="Saved, uploads & highlights" aria-label="More" @click="moreMenu = !moreMenu">
+        <i class="fa-solid fa-ellipsis"></i>
       </button>
-      <button class="link" title="Highlights" aria-label="Highlights" @click="$emit('highlights')">
-        <i class="fa-regular fa-bell"></i>
+      <button class="link" title="Settings" aria-label="Settings" @click="$emit('open-settings')">
+        <i class="fa-solid fa-gear"></i>
       </button>
-      <button class="link" title="Saved messages" aria-label="Saved messages" @click="$emit('bookmarks')">
-        <i class="fa-regular fa-bookmark"></i>
-      </button>
-      <button class="link" title="Recent uploads" aria-label="Recent uploads" @click="$emit('uploads')">
-        <i class="fa-solid fa-arrow-up-from-bracket"></i>
-      </button>
+      <div v-if="moreMenu" class="csb-more" @click="moreMenu = false">
+        <button @click="$emit('search')"><i class="fa-solid fa-magnifying-glass"></i> Search</button>
+        <button @click="$emit('highlights')"><i class="fa-regular fa-bell"></i> Highlights</button>
+        <button @click="$emit('bookmarks')"><i class="fa-regular fa-bookmark"></i> Saved</button>
+        <button @click="$emit('uploads')"><i class="fa-solid fa-arrow-up-from-bracket"></i> Uploads</button>
+      </div>
     </footer>
   </aside>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import { useNetworksStore } from '../stores/networks.js';
 import { useBuffersStore, type Buffer } from '../stores/buffers.js';
 import { useFavoritesStore } from '../stores/favorites.js';
@@ -123,6 +123,9 @@ const buffers = useBuffersStore();
 const favorites = useFavoritesStore();
 const pins = usePinsStore();
 
+const moreMenu = ref(false);
+const netCount = computed(() => networks.networks.length);
+
 // The network to show: the active one, or the first configured network when a
 // virtual/system buffer is focused (so the list is never empty for no reason).
 const displayNetId = computed(() => {
@@ -141,9 +144,6 @@ const stateClass = computed<'good' | 'warn' | 'bad'>(() => {
   if (s === 'connecting' || s === 'reconnecting') return 'warn';
   return 'bad';
 });
-const stateLabel = computed(
-  () => ({ good: 'connected', warn: 'connecting…', bad: 'offline' })[stateClass.value],
-);
 
 function isFav(b: Buffer): boolean {
   return b.networkId != null && favorites.favoriteKeys.has(`${b.networkId}::${b.target.toLowerCase()}`);
@@ -393,14 +393,54 @@ function avColor(s: string): string {
 }
 
 .csb-me {
+  position: relative;
   height: 54px;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 0 8px;
+  gap: 6px;
+  padding: 0 6px;
   background: color-mix(in srgb, var(--bg) 55%, transparent);
   border-top: 1px solid var(--border);
   flex-shrink: 0;
+}
+/* Overflow menu for the utilities that used to crowd the footer (search,
+   highlights, saved, uploads) — keeps the footer clean like the concept while
+   preserving access. */
+.csb-more {
+  position: absolute;
+  bottom: 52px;
+  right: 6px;
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 4px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 150px;
+  z-index: 20;
+}
+.csb-more button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: none;
+  background: none;
+  color: var(--fg);
+  font: inherit;
+  font-size: 13.5px;
+  text-align: left;
+  border-radius: 7px;
+  cursor: pointer;
+}
+.csb-more button:hover {
+  background: var(--border);
+}
+.csb-more button i {
+  width: 15px;
+  color: var(--fg-muted);
 }
 .me-av {
   width: 32px;
