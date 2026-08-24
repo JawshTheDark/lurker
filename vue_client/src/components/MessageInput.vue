@@ -26,6 +26,18 @@
       <i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i>
       <span class="tr-text">Translation failed — Send again to send the original text.</span>
     </div>
+    <!-- Discord-style round + (opens the file picker), replacing the identity
+         prompt which is hidden in discord mode. -->
+    <button
+      v-if="discordMode"
+      type="button"
+      class="dc-plus"
+      title="Attach a file"
+      aria-label="Attach a file"
+      @click="fileInputEl?.click()"
+    >
+      +
+    </button>
     <span class="prompt"
       ><template v-if="!isMobile"
         >{{ promptLabelNoModes }}<span v-if="promptModes" class="modes">{{ promptModes }}</span
@@ -477,6 +489,8 @@ const placeholder = computed(() => {
     const self = promptLabelNoModes.value;
     return awayLabel.value ? `${self} ${awayLabel.value}` : self;
   }
+  // Discord layout drops the identity prompt for a Discord-style placeholder.
+  if (discordMode.value && active.value) return `Message ${active.value.target}`;
   return 'try /commands';
 });
 // HTML attribute values for the system text features. spellcheck is the only
@@ -4044,6 +4058,29 @@ function handleCommand(line: string, networkId: number | null, target: string): 
   border: none;
   border-bottom: 1px solid var(--border);
   background: color-mix(in srgb, var(--fg) 4%, transparent);
+}
+/* Concept composer: no identity prompt, a round + on the left. */
+.input.discord .prompt {
+  display: none;
+}
+.input.discord .dc-plus {
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: none;
+  background: var(--fg-muted);
+  color: var(--bg-soft);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+.input.discord .dc-plus:hover {
+  background: var(--fg);
 }
 .input.drag-over {
   outline: 1px dashed var(--accent);
