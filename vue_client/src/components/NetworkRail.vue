@@ -33,7 +33,7 @@
       :key="net.id"
       type="button"
       class="rail-btn"
-      :class="{ active: net.id === activeNetworkId }"
+      :class="{ active: net.id === activeNetworkId, unread: netUnread(net.id) > 0 }"
       :style="netStyle(net)"
       :title="net.name + ' — ' + stateLabel(net.id)"
       :aria-label="'Open ' + net.name"
@@ -43,9 +43,6 @@
       <span class="conn" :class="stateClass(net.id)"></span>
       <span v-if="netHighlights(net.id) > 0" class="badge">{{
         unreadLabel(netHighlights(net.id))
-      }}</span>
-      <span v-else-if="netUnread(net.id) > 0" class="badge soft">{{
-        unreadLabel(netUnread(net.id))
       }}</span>
     </button>
 
@@ -193,9 +190,11 @@ function initials(name: string): string {
 .rail-btn.active {
   border-radius: 13px;
 }
-/* The Discord "pill" — a tab marker on the rail's left edge. */
-.rail-btn.active::before,
-.rail-btn:hover::before {
+/* The Discord left-edge pill: a small nub for unread, medium on hover, tall when
+   active — the same marker growing to signal more. */
+.rail-btn.unread::before,
+.rail-btn:hover::before,
+.rail-btn.active::before {
   content: '';
   position: absolute;
   left: -10px;
@@ -204,6 +203,9 @@ function initials(name: string): string {
   width: 4px;
   border-radius: 0 4px 4px 0;
   background: var(--fg);
+  height: 8px;
+}
+.rail-btn:hover::before {
   height: 20px;
 }
 .rail-btn.active::before {
@@ -273,8 +275,5 @@ function initials(name: string): string {
   text-align: center;
   border: 3px solid var(--rail-bg);
   font-variant-numeric: tabular-nums;
-}
-.badge.soft {
-  background: var(--fg-muted);
 }
 </style>

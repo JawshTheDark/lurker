@@ -1055,11 +1055,11 @@ function onMentionMenu(nick: string, e: MouseEvent): void {
 // for this device class; everything below it only tunes the survivors.
 const eventMode = computed(() => {
   const saved = asEventMode(settings.effective(eventModeKey(isMobile.value)));
-  // Discord layout wants a clean feed: promote the verbose 'all' tier to smart
-  // filtering (hides join/quit churn from nicks who never speak). An explicit
-  // 'none' is even quieter and is respected as-is; this never makes the feed
-  // noisier than the user asked for.
-  if (discordMode.value && saved === 'all') return 'smart';
+  // Discord layout matches the concept: a clean chat feed with no join/part/quit/
+  // nick churn at all. Force 'none' in discord regardless of the saved tier
+  // (classic keeps the user's choice). smart-filtering proved too permissive —
+  // it still shows churn around anyone who ever spoke.
+  if (discordMode.value) return 'none';
   return saved;
 });
 const smartFilterEnabled = computed(() => eventMode.value === 'smart');
