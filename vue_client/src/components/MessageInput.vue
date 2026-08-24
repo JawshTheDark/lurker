@@ -7,7 +7,7 @@
   <form
     ref="formEl"
     class="input"
-    :class="{ 'drag-over': dragOver }"
+    :class="{ 'drag-over': dragOver, discord: discordMode }"
     @dragover.prevent="onDragOver"
     @dragleave.prevent="onDragLeave"
     @drop.prevent="onDrop"
@@ -507,6 +507,12 @@ const systemFeatures = computed(() => {
 // network/channel rather than the self identity.
 const { promptLabelNoModes, promptModes, awayLabel } = useSelfLabel();
 const { isMobile } = useViewport();
+
+// Discord-style composer: a rounded, elevated input box (desktop only, same
+// setting as the layout). Purely presentational — the send path is unchanged.
+const discordMode = computed(
+  () => !isMobile.value && settings.effective('look.layout.style') === 'discord',
+);
 
 let typingState: string | null = null;
 let lastActiveSentAt = 0;
@@ -4020,6 +4026,24 @@ function handleCommand(line: string, networkId: number | null, target: string): 
   /* Containing block for the desktop NickPicker's anchor logic — the
      position:fixed picker still reads coordinates off the form. */
   position: relative;
+}
+/* Discord-style composer: a rounded, elevated box floating above the bottom
+   edge, instead of the flush-to-edge classic bar. The translation preview strip
+   (flex-basis:100% first child) still wraps onto its own line above the row. */
+.input.discord {
+  margin: 0 16px 18px;
+  padding: 10px 14px;
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  gap: 10px;
+}
+.input.discord .tr-preview {
+  margin: -10px -14px 8px;
+  border-radius: 12px 12px 0 0;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
 }
 .input.drag-over {
   outline: 1px dashed var(--accent);

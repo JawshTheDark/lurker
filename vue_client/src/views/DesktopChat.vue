@@ -755,8 +755,63 @@ useChatBootstrap({ onJump: onJumpToMessage });
     'rail sidebar messages members'
     'rail sidebar status   status'
     'rail sidebar input    input';
-  --rail-bg: color-mix(in srgb, var(--bg) 80%, #000 20%);
-  --rail-btn-bg: color-mix(in srgb, var(--bg-soft) 88%, var(--fg) 12%);
+  /* The concept's exact palette. Overriding the core theme tokens HERE cascades
+     through every child component (CSS custom properties inherit across scoped
+     boundaries), so the rail, sidebar, messages, members, and composer all snap
+     to the concept look from one place. Dark is the concept's signature. */
+  --bg: #1a1723;
+  --bg-soft: #14111c;
+  --fg: #e9e6f0;
+  --fg-muted: #9a94a9;
+  --accent: #7c5cff;
+  --border: rgba(255, 255, 255, 0.07);
+  --good: #46c46a;
+  --warn: #f0b23a;
+  --bad: #ec4a54;
+  --rail-bg: #0c0a12;
+  --rail-btn-bg: #241f30;
+}
+:root[data-theme='light'] .chat.discord-layout {
+  --bg: #faf9fc;
+  --bg-soft: #efedf3;
+  --fg: #211d2b;
+  --fg-muted: #6a6478;
+  --accent: #6b46e0;
+  --border: rgba(20, 16, 30, 0.09);
+  --good: #1f9d52;
+  --warn: #b8860b;
+  --bad: #d43f4a;
+  --rail-bg: #e4e1ec;
+  --rail-btn-bg: #ffffff;
+}
+/* The concept has no status bar or separate divider row — the composer sits just
+   below the feed. Hide both in discord mode (classic keeps them). */
+.chat.discord-layout .status-bar {
+  display: none;
+}
+/* Discord-style top bar: a clean channel header — bolder name, the topic set off
+   behind a hairline divider, a solid ground with one bottom border. Markup is
+   shared with classic; only the discord scope restyles it. */
+.chat.discord-layout .topic {
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.05);
+}
+.chat.discord-layout .topic-meta .buffer {
+  font-weight: 700;
+  font-size: 15.5px;
+  letter-spacing: -0.01em;
+}
+.chat.discord-layout .topic-text {
+  border-left: 1px solid var(--border);
+  padding-left: 10px;
+  margin-left: 6px;
+  color: var(--fg-muted);
+  font-size: 13px;
+}
+/* The topic/messages divider row is redundant against the bar's own border. */
+.chat.discord-layout .topic-divider {
+  display: none;
 }
 /* min-height/min-width 0 lets flex/scrolling children stay inside their row. */
 .chat > * {

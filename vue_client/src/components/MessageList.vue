@@ -1053,7 +1053,15 @@ function onMentionMenu(nick: string, e: MouseEvent): void {
 
 // The event-noise tier (#666). One enum answers "which presence events survive"
 // for this device class; everything below it only tunes the survivors.
-const eventMode = computed(() => asEventMode(settings.effective(eventModeKey(isMobile.value))));
+const eventMode = computed(() => {
+  const saved = asEventMode(settings.effective(eventModeKey(isMobile.value)));
+  // Discord layout wants a clean feed: promote the verbose 'all' tier to smart
+  // filtering (hides join/quit churn from nicks who never speak). An explicit
+  // 'none' is even quieter and is respected as-is; this never makes the feed
+  // noisier than the user asked for.
+  if (discordMode.value && saved === 'all') return 'smart';
+  return saved;
+});
 const smartFilterEnabled = computed(() => eventMode.value === 'smart');
 const smartFilterDelayMs = computed(
   () => ((settings.effective('chat.smart_filter_delay') as number) || 0) * 60_000,
