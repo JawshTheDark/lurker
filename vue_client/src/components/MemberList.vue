@@ -4,7 +4,8 @@
 -->
 
 <template>
-  <div class="members">
+  <div class="members" :class="{ discord: discordMode }">
+    <div v-if="discordMode" class="m-online">Online — {{ sorted.length }}</div>
     <ul ref="listEl">
       <li
         v-for="m in sorted"
@@ -237,11 +238,21 @@ li:hover {
   background: var(--bg-soft);
 }
 
-/* Discord-style rows: an avatar leads each member, and rows relax to center
-   alignment + a little more height so the 24px avatar sits comfortably. */
+/* Discord-style rows: a group header, then an avatar (with a presence dot) per
+   member; rows relax to center alignment for the 24px avatar. */
+.m-online {
+  padding: 4px var(--space-5) 6px;
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+  flex-shrink: 0;
+}
 .m-avatar {
-  width: 24px;
-  height: 24px;
+  position: relative;
+  width: 26px;
+  height: 26px;
   border-radius: 50%;
   flex-shrink: 0;
   display: flex;
@@ -252,11 +263,27 @@ li:hover {
   font-weight: 700;
   user-select: none;
 }
+/* Presence dot — everyone in an IRC channel is present, so it's always shown. */
+.m-avatar::after {
+  content: '';
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--good);
+  border: 2px solid var(--bg-soft);
+}
 .members li:has(.m-avatar) {
   align-items: center;
   gap: var(--space-2);
-  padding-top: 2px;
-  padding-bottom: 2px;
+  padding-top: 3px;
+  padding-bottom: 3px;
+}
+.members.discord .nick {
+  font-size: 14px;
+  font-weight: 500;
 }
 
 /* Hover affordance — floats over the right edge of the row instead of taking
