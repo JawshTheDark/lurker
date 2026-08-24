@@ -15,10 +15,25 @@
          user's view during a history fetch, shifting scrollTop and either
          throwing off the prepend anchor math or (with browser anchoring)
          leaving scrollTop near the top so maybeRequestHistory cascades. -->
+    <!-- Discord-style channel intro at the start of history: a big glyph, the
+         channel name, and a welcome line — replaces the notice in discord mode. -->
+    <div
+      v-if="discordMode && buffer?.target && !buffer?.hasMoreOlder"
+      class="dc-welcome"
+    >
+      <div class="dc-welcome-icon">{{ dcWelcomeGlyph }}</div>
+      <h2>{{ dcWelcomeTitle }}</h2>
+      <p>Welcome to the start of the {{ dcWelcomeTitle }} channel.</p>
+    </div>
     <!-- "no older", not "start of history": with retention the oldest stored
          line is usually not the first line ever said, and claiming it is
          would be a lie the server can't even detect (lurker-dev/RETENTION_PLAN.md). -->
-    <div v-if="!buffer?.hasMoreOlder && messages.length" class="notice">— no older messages —</div>
+    <div
+      v-if="!discordMode && !buffer?.hasMoreOlder && messages.length"
+      class="notice"
+    >
+      — no older messages —
+    </div>
     <!-- Exactly one of these renders when there are no message rows, so the
          pane is never silently blank: a fetch in flight (or pending — an
          unhydrated shell awaiting the reconciler) says so, a hydrated-but-
@@ -26,7 +41,9 @@
          (e.g. an inconsistent /clear marker) gets a fallback instead of an
          empty scroller that looks broken. -->
     <p v-if="initialLoading" class="notice empty">Loading messages…</p>
-    <p v-else-if="!messages.length" class="notice empty">No messages yet.</p>
+    <p v-else-if="!messages.length" class="notice empty">
+      {{ discordMode ? 'No recent messages — say hello' : 'No messages yet.' }}
+    </p>
     <p v-else-if="!renderRows.length" class="notice empty">No messages to show.</p>
     <template v-for="row in renderRows" :key="row.key">
       <div v-if="row.divider === 'unread'" :ref="setUnreadDividerEl" class="notice unread-divider">
@@ -611,6 +628,13 @@ function dcAvatarInitial(m: { nick?: string | null } | undefined | null): string
   const n = (m?.nick ?? '').replace(/[^a-zA-Z0-9]/g, '');
   return (n[0] || '?').toUpperCase();
 }
+// Discord-style channel intro shown at the start of history.
+const dcWelcomeTitle = computed(() => buffer.value?.target ?? '');
+const dcWelcomeGlyph = computed(() => {
+  const t = buffer.value?.target ?? '';
+  if (t.startsWith('#')) return '#';
+  return (t.replace(/[^a-zA-Z0-9]/g, '')[0] || '#').toUpperCase();
+});
 const { isMobile, canHover } = useViewport();
 
 const actionItalic = computed(() => !!settings.effective('look.action.italic'));
@@ -2880,6 +2904,36 @@ watch(
   color: var(--fg-muted);
   font-size: 13px;
   min-height: 0;
+}
+
+/* Discord-style channel intro at the top of the feed. */
+.dc-welcome {
+  padding: 22px 18px 10px;
+}
+.dc-welcome-icon {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 30px;
+  font-weight: 700;
+  margin-bottom: 12px;
+}
+.dc-welcome h2 {
+  margin: 0 0 4px;
+  font-size: 28px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: var(--fg);
+}
+.dc-welcome p {
+  margin: 0;
+  color: var(--fg-muted);
+  font-size: 15px;
 }
 
 .message-list.compact {
