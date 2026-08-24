@@ -792,6 +792,21 @@ export const REGISTRY: readonly SettingOption[] = Object.freeze([
 
   // ─── Layout (collapsible side panels on desktop) ───────────────────────
   {
+    key: 'look.layout.style',
+    label: 'Desktop layout',
+    category: 'appearance',
+    group: 'layout',
+    type: 'enum',
+    choices: ['classic', 'discord'],
+    choiceLabels: { classic: 'Classic', discord: 'Network rail (Discord-style)' },
+    default: 'classic',
+    description:
+      'Classic keeps the combined network + channel sidebar. Network rail splits ' +
+      'networks into a slim icon rail on the far left, with the selected network’s ' +
+      'channels beside it and larger avatar-grouped messages — closer to Discord. ' +
+      'Has no effect on mobile.',
+  },
+  {
     key: 'look.layout.show_channel_list',
     label: 'Show channel list (desktop)',
     category: 'appearance',
